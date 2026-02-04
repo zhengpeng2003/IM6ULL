@@ -1,0 +1,12 @@
+build/
+debug/
+release/
+.vs/
+*.pdb
+*.obj
+*.exe
+*.ipch
+*.log
+*.user
+*.user.*
+*.qmake.stash
