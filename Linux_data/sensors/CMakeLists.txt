@@ -7,5 +7,5 @@ add_library(sensors STATIC
 target_include_directories(sensors PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_link_libraries(sensors modbus_master data_protocol ipc)
+target_link_libraries(sensors modbus_master data_protocol ipc mqttwrapper)
 

@@ -10,7 +10,7 @@ extern "C" {
 void *rs485_1_thread(void *arg);
 void *rs485_2_thread(void *arg);
 void *ipc_server_thread(void *arg);
-
+void *mqtt_server_thread(void *arg);
 #ifdef __cplusplus
 }
 #endif

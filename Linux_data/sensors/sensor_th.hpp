@@ -1,6 +1,7 @@
 #pragma once
 #include "modbus_master.hpp"
 #include "data_packer.h"
+#include "mqtt_wrapper.h"
 
 class SensorTH
 {

@@ -1,6 +1,7 @@
 // relay_controller.hpp
 #pragma once
 #include "modbus_master.hpp"
+#include "mqtt_wrapper.h"
 #include <cstdint>
 #include <unistd.h>
 #include <cstdio>

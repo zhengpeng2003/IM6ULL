@@ -131,12 +131,14 @@ void ModbusMaster::pollSlaves()
 int ModbusMaster::readRegisters(int slave, int addr, int nb, uint16_t *out)
 {
     if (!ctx_) return -1;
+    std::lock_guard<std::mutex> lock(io_mutex_);
     modbus_set_slave(ctx_, slave);
     return modbus_read_registers(ctx_, addr, nb, out);
 }
 int ModbusMaster::readCoils(int slave, int addr, int nb, uint8_t *out)
 {
     if (!ctx_) return -1;
+    std::lock_guard<std::mutex> lock(io_mutex_);
     modbus_set_slave(ctx_, slave);
     return modbus_read_bits(ctx_, addr, nb, out);
 }
@@ -144,6 +146,7 @@ int ModbusMaster::readCoils(int slave, int addr, int nb, uint8_t *out)
 int ModbusMaster::writeRegister(int slave, int addr, uint16_t value)
 {
     if (!ctx_) return -1;
+    std::lock_guard<std::mutex> lock(io_mutex_);
     modbus_set_slave(ctx_, slave);
     return modbus_write_register(ctx_, addr, value);
 }
@@ -151,6 +154,7 @@ int ModbusMaster::writeRegister(int slave, int addr, uint16_t value)
 int ModbusMaster::writeCoils(int slave, int addr, int nb, const uint8_t *data)
 {
     if (!ctx_) return -1;
+    std::lock_guard<std::mutex> lock(io_mutex_);
     modbus_set_slave(ctx_, slave);
     return modbus_write_bits(ctx_, addr, nb, data);
 }

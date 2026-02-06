@@ -6,11 +6,12 @@
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #define IPC_SOCK_PATH "/tmp/device_ipc.sock"
 #define BUF_SIZE 1024
 static int server_fd = -1;
 static int client_fd = -1;
-
+static pthread_mutex_t ipc_send_lock = PTHREAD_MUTEX_INITIALIZER;
 int ipc_server_init(void)
 {
     struct sockaddr_un addr;
@@ -76,8 +77,10 @@ void ipc_server_loop(void)
 void ipc_server_send(const char *msg)
 {
     if (client_fd < 0) return;
-
+    pthread_mutex_lock(&ipc_send_lock);
+    /* 中间 return / 出错 / goto 都要小心 */
     write(client_fd, msg, strlen(msg));
     write(client_fd, "\n", 1);
+    pthread_mutex_unlock(&ipc_send_lock);
 }
 

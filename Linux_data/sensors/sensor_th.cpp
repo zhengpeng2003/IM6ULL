@@ -1,7 +1,7 @@
 #include "sensor_th.hpp"
 #include "data_packer.h"
 #include "ipc_server.h"
-
+#include "data_packer.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -70,7 +70,8 @@ void SensorTH::poll()
     data_pack_t pack = data_pack_single(&dev);
     int len = data_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
-        ipc_server_send(json);
+    ipc_server_send(json);
+	mqtt_send("imx6ull/device/data",json);
         printf("[TH] id=%d temp=%.1f humi=%.1f\n",
                slave_id_, this->temp, this->humi);
     }

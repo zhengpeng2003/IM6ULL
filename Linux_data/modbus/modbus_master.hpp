@@ -5,7 +5,7 @@
 #include <functional>
 #include <map>
 #include <modbus/modbus.h>
-
+#include <mutex>
 enum class RtsMode {
     DEFAULT,   // libmodbus 默认
     CUSTOM     // 自定义 GPIO + 回调
@@ -31,8 +31,8 @@ public:
 int readCoils(int slave, int addr, int nb, uint8_t *out);
 
 private:
+    std::mutex io_mutex_;//读写锁
     bool gpioInit();
-
     static void rtsCallback(modbus_t *ctx, int on);
     static void registerCtx(modbus_t *ctx, ModbusMaster *self);
     static void unregisterCtx(modbus_t *ctx);

@@ -10,4 +10,5 @@ target_include_directories(mqttwrapper
         ${CMAKE_CURRENT_SOURCE_DIR}  # 当前目录（包含 mqtt_wrapper.h）
 )
 # 依赖底层的 mqttclient
-target_link_libraries(mqttwrapper mqttclient)
+target_link_libraries(mqttwrapper mqttclient data_protocol salof)
+
