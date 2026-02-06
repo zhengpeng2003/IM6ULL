@@ -63,7 +63,11 @@ void ipc_server_loop(void)
             int n = read(client_fd, buf, sizeof(buf) - 1);
             if (n > 0) {
                 buf[n] = '\0';
-		 printf("前端发送数据过来\n");
+		        printf("前端发送数据过来\n");
+            if(mqtt_send("imx6ull/device/data",buf)==0)
+	        {
+		printf("继电器MQTT信息发送成功\n");
+	    }
                 // 只传给 Data 层，不在这里做类型判断
                 data_process_message(buf);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {

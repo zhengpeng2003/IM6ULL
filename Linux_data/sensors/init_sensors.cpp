@@ -14,7 +14,7 @@ void init_sensors()
     RS485_1.addSlave(1, [] (int){
    
     sensor1.poll();
-    sleep(100);
+    sleep(1000);
   });
 }
 

@@ -71,8 +71,7 @@ void SensorTH::poll()
     int len = data_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
     ipc_server_send(json);
-	mqtt_send("imx6ull/device/data",json);
-        printf("[TH] id=%d temp=%.1f humi=%.1f\n",
+    printf("[TH] id=%d temp=%.1f humi=%.1f\n",
                slave_id_, this->temp, this->humi);
     }
 }

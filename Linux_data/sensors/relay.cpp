@@ -45,6 +45,7 @@ void RelayController::allOff()
 }
 // Poll 函数，轮流测试继电器
 void RelayController::poll(int delay_sec)
+
 {
         device_data_t dev;
     memset(&dev, 0, sizeof(dev));
@@ -75,12 +76,7 @@ void RelayController::poll(int delay_sec)
     int len = data_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
         ipc_server_send(json);
-
-	if(mqtt_send("imx6ull/device/data",json))
-	{
-		printf("继电器MQTT信息发送成功\n");
-	}
-    }
+}
 }
 //单个读
 bool RelayController::getRelay(int index)
