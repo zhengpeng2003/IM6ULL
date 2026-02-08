@@ -21,7 +21,7 @@ typedef struct {
 
 /* ================= 内部状态 ================= */
 
-static mqtt_client_t *g_client = NULL;
+mqtt_client_t *g_client = NULL;
 static int g_connected = 0;
 static int g_subscribed = 0;  // 新增：订阅状态标志
 
@@ -82,12 +82,30 @@ static int queue_pop(mqtt_item_t *out)
 // 新增：消息接收回调函数
 static void mqtt_message_handler(void *client, message_data_t *msg)
 {
-    (void)client;
-    if (msg && msg->topic_name && msg->message && msg->message->payload) {
-        printf("[MQTT] Received: topic=%s, payload=%.*s\n", 
-               msg->topic_name, 
-               msg->message->payloadlen, 
-               (char*)msg->message->payload);
+        (void)client;
+    if (!msg || !msg->topic_name || !msg->message || !msg->message->payload)
+        return;
+
+    const char *topic = msg->topic_name;
+    const char *payload = (const char*)msg->message->payload;
+    int payloadlen = msg->message->payloadlen;
+
+    printf("[MQTT] Received: topic=%s, payload=%.*s\n", 
+           topic, payloadlen, payload);
+
+    /* ⭐⭐ 消息分类处理 ⭐⭐ */
+    if (strstr(topic, "/gpio/")) {
+        /* GPIO 控制命令 */
+        mqtt_gpio_dispatch(topic, payload, payloadlen);
+    }
+    else if (strstr(topic, "/device/data")) {
+        /* 温度/传感器数据 - 这里处理或忽略 */
+        printf("[MQTT] Sensor data received, skip GPIO dispatch\n");
+        // 如果需要处理传感器数据，在这里添加逻辑
+        // 或者转发给其他模块
+    }
+    else {
+        printf("[MQTT] Unknown topic: %s\n", topic);
     }
 }
 
@@ -147,12 +165,17 @@ void mqtt_poll(void)
         }
     }
 
-    /* 2. 订阅主题（只在连接成功且未订阅时执行一次） */
-    if (g_connected && !g_subscribed) {
-        mqtt_subscribe(g_client, "imx6ull/device/data", QOS0, mqtt_message_handler);
-        printf("[MQTT] Subscribed to imx6ull/device/data\n");
-        g_subscribed = 1;
-    }
+    /* 2. 订阅主题（修改：同时订阅数据上报和控制命令） */
+if (g_connected && !g_subscribed) {
+    // 订阅温度数据（如果你需要接收其他设备的数据）
+    mqtt_subscribe(g_client, "imx6ull/device/data", QOS0, mqtt_message_handler);
+    
+    // ⭐⭐ 新增：订阅 GPIO 控制命令（通配符，一次订阅多个）⭐⭐
+    mqtt_subscribe(g_client, "imx6ull/gpio/+/set", QOS0, mqtt_message_handler);
+    
+    printf("[MQTT] Subscribed to device/data and gpio/+/set\n");
+    g_subscribed = 1;
+}
 
     /* 3. 心跳 */
     mqtt_keep_alive(g_client);

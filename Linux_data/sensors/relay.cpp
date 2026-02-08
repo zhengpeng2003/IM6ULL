@@ -75,6 +75,10 @@ void RelayController::poll(int delay_sec)
     char json[256];
     int len = data_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
+    if(mqtt_send("imx6ull/device/data",json)==0)
+	{
+	printf("MQTT温湿度数据发送\n");
+	}
         ipc_server_send(json);
 }
 }

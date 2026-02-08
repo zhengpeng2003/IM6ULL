@@ -50,6 +50,7 @@ void SensorTH::poll()
         data_pack_t pack = data_pack_single(&dev);
         data_pack_to_json(&pack, json, sizeof(json));
         ipc_server_send(json);
+
         return;
     }
 
@@ -73,6 +74,10 @@ void SensorTH::poll()
     ipc_server_send(json);
     printf("[TH] id=%d temp=%.1f humi=%.1f\n",
                slave_id_, this->temp, this->humi);
+    if(mqtt_send("imx6ull/device/data",json)==0)
+	{
+	printf("MQTT温湿度数据发送\n");
+	}           
     }
 }
 
