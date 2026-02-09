@@ -1,0 +1,48 @@
+[Unit]
+Description=Qt HMI Application
+After=qt-object.service systemd-udev-settle.service
+Requires=qt-object.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=simple
+User=root
+
+# === 工作目录（解决 ./qt_hmi 问题）===
+WorkingDirectory=/usr/local/qt-app/app
+
+# === 环境变量（从你脚本里搬过来）===
+Environment=APP_DIR=/usr/local/qt-app
+Environment=QT_QPA_PLATFORM=linuxfb:fb=/dev/fb0
+Environment=QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib/plugins
+Environment=QT_QPA_FONTDIR=/usr/lib/fonts
+
+Environment=TSLIB_TSDEVICE=/dev/input/event2
+Environment=TSLIB_CONFFILE=/etc/ts.conf
+Environment=TSLIB_CALIBFILE=/etc/pointercal
+Environment=TSLIB_FBDEVICE=/dev/fb0
+Environment=QT_QPA_GENERIC_PLUGINS=tslib
+Environment=QT_QPA_FB_TSLIB=1
+
+# ⚠️ systemd 下不要用 $USER
+Environment=XDG_RUNTIME_DIR=/tmp/runtime-root
+
+# === 启动前准备（替代 sudo）===
+ExecStartPre=/bin/chmod 666 /dev/fb0
+ExecStartPre=/bin/chmod 666 /dev/input/event2
+ExecStartPre=/bin/mkdir -p /tmp/runtime-root
+ExecStartPre=/bin/chmod 700 /tmp/runtime-root
+
+# === 启动你的 Qt 程序 ===
+ExecStart=/usr/local/qt-app/app/qt_hmi
+# ExecStart=/usr/local/qt-app/app/notepad
+
+Restart=always
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

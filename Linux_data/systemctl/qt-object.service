@@ -1,0 +1,20 @@
+[Unit]
+Description=Qt Object Backend Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/debian/q1/build
+ExecStart=/home/debian/q1/build/qt_object
+
+Restart=always
+RestartSec=2
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
