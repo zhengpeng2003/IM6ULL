@@ -1,5 +1,6 @@
 add_library(device STATIC
     device_info.cpp
+   
 )
 
 target_include_directories(device PUBLIC

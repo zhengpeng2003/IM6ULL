@@ -1,4 +1,5 @@
 #include "ipc_server.h"
+#include "device_info.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -56,6 +57,7 @@ void ipc_server_loop(void)
             if (client_fd >= 0) {
                 fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) | O_NONBLOCK);
                 printf("IPC client connected\n");
+		Deviceinfo_send();
             }
         }
 

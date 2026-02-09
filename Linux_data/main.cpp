@@ -5,7 +5,6 @@
 #include "service_threads.h"
 #include "mqtt/wrapper/mqtt_wrapper.h"
 #include "sensors/init_sensors.hpp"
-#include "device/device_info.hpp"
 int main()
 {
     /* === 系统服务初始化 === */

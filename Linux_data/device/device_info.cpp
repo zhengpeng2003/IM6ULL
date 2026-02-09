@@ -1,4 +1,4 @@
-#include "device_info.hpp"
+#include "device_info.h"
 
 #include <sys/utsname.h>
 #include <cstdio>
@@ -67,7 +67,7 @@ static void get_fb_resolution(int *w, int *h)
 }
 
 /* ================= 对外接口 ================= */
-
+extern "C" {
 void Deviceinfo_send()
 {
     device_data_t dev;
@@ -97,4 +97,4 @@ void Deviceinfo_send()
         ipc_server_send(json);
     }
 }
-
+}
