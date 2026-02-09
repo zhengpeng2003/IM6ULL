@@ -61,10 +61,24 @@ void GpioWidget::InitMyBtns()
 
     // ACK 回来更新按钮状态
     connect(MainWidget::mqttWidget, &MqttWidget::ledAckReceived,
-            ledBtn, &MyBtn::setState);
+            ledBtn, [ledBtn](bool success, bool actualState) {
+                if (success) {
+                    ledBtn->setState(actualState);
+                } else {
+                    // 操作失败，可以弹窗或恢复状态
+                    qDebug() << "LED operation failed!";
+                }
+            });
 
     connect(MainWidget::mqttWidget, &MqttWidget::buzzerAckReceived,
-            buzzerBtn, &MyBtn::setState);
+            buzzerBtn, [buzzerBtn](bool success, bool actualState) {
+                if (success) {
+                    buzzerBtn->setState(actualState);
+                } else {
+                    // 操作失败，可以弹窗或恢复状态
+                    qDebug() << "Buzzer operation failed!";
+                }
+            });
 
     // 添加按钮到列表管理
     m_buttons << ledBtn << buzzerBtn << exitBtn;

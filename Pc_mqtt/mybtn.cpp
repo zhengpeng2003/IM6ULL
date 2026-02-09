@@ -25,6 +25,5 @@ void MyBtn::updateIcon(bool on)
 void MyBtn::onClicked()  // 实现
 {
     m_currentState = !m_currentState;
-    updateIcon(m_currentState);
     emit gpioClicked(m_currentState);
 }

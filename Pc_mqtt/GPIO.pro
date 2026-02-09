@@ -1,4 +1,4 @@
-QT       += core gui network mqtt
+QT       += core gui network mqtt sql
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -11,6 +11,7 @@ CONFIG += c++17
 SOURCES += \
     GpioWidget.cpp \
     MqttWidget.cpp \
+    datasql.cpp \
     main.cpp \
     mainwidget.cpp \
     mybtn.cpp \
@@ -19,6 +20,7 @@ SOURCES += \
 HEADERS += \
     GpioWidget.h \
     MqttWidget.h \
+    datasql.h \
     mainwidget.h \
     mybtn.h \
     tempinfowidget.h
