@@ -10,3 +10,12 @@ release/
 *.user
 *.user.*
 *.qmake.stash
+*.pro.user
+Makefile
+Makefile.Debug
+Makefile.Release
+.qtc_clangd/
+ui_*.h
+debug/
+release/
+build/

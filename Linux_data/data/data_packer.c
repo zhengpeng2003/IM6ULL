@@ -100,7 +100,7 @@ int data_pack_to_json(const data_pack_t *pack,
     }
 
     off += snprintf(buf + off, buf_size - off,
-        "]}\n");   // \n 作为消息边界
+        "]}\n");   // \n 作为消息边界 //snprintf返回值本次“想要写入”的字符个数，不包含最后自动加的 \0
 
     if (off >= buf_size)
         return -1;
@@ -108,7 +108,7 @@ int data_pack_to_json(const data_pack_t *pack,
     return off;
 }
 
-data_pack_t data_pack_single(const device_data_t *dev)
+data_pack_t data_pack_single(const device_data_t *dev)//就是帮你生成这个外层包。
 {
     static uint32_t seq = 0;
     data_pack_t pack;

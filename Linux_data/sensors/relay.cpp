@@ -1,9 +1,8 @@
 // relay_controller.cpp
 #include "relay.hpp"
 #include <iostream>
-#include "data_packer.h"
 #include "ipc_server.h"
-#include "data_packer.h"
+#include "data_telemetry.h"
 #include <cstring>
 RelayController::RelayController(int slave_id, ModbusMaster &bus)
     : slave_id_(slave_id), bus_(bus)
@@ -70,10 +69,10 @@ void RelayController::poll(int delay_sec)
         dev.data.relay.relay_states = bitmap;
     }
 
-    data_pack_t pack = data_pack_single(&dev);
+    telemetry_pack_t pack = telemetry_pack_single(&dev);
 
     char json[256];
-    int len = data_pack_to_json(&pack, json, sizeof(json));
+    int len = telemetry_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
     if(mqtt_send("imx6ull/device/data",json)==0)
 	{

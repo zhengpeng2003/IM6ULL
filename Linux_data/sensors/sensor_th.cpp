@@ -1,9 +1,6 @@
 #include "sensor_th.hpp"
-#include "data_packer.h"
 #include "ipc_server.h"
-#include "data_packer.h"
 #include <stdio.h>
-#include <time.h>
 
 /*
  * ================================
@@ -40,15 +37,14 @@ void SensorTH::poll()
         device_data_t dev = {};
         dev.device_id = slave_id_;
         dev.type      = DEV_SENSOR_TH;
-        dev.timestamp = time(NULL);
         dev.valid     = (fail_count < 3);   // 连续 3 次失败才算无效
 
         // ⭐ 保留上一次有效数据
         dev.data.th.temperature = this->temp;
         dev.data.th.humidity    = this->humi;
 
-        data_pack_t pack = data_pack_single(&dev);
-        data_pack_to_json(&pack, json, sizeof(json));
+        telemetry_pack_t pack = telemetry_pack_single(&dev);
+        telemetry_pack_to_json(&pack, json, sizeof(json));
         ipc_server_send(json);
 
         return;
@@ -63,13 +59,12 @@ void SensorTH::poll()
     device_data_t dev = {};
     dev.device_id = slave_id_;
     dev.type      = DEV_SENSOR_TH;
-    dev.timestamp = time(NULL);
     dev.valid     = 1;
     dev.data.th.temperature = this->temp;
     dev.data.th.humidity    = this->humi;
 
-    data_pack_t pack = data_pack_single(&dev);
-    int len = data_pack_to_json(&pack, json, sizeof(json));
+    telemetry_pack_t pack = telemetry_pack_single(&dev);
+    int len = telemetry_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
     ipc_server_send(json);
     printf("[TH] id=%d temp=%.1f humi=%.1f\n",

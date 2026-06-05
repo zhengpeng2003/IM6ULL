@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "service_threads.h"
-#include "rs485_bus.hpp"
+#include "port_manager.h"
 #include "mqtt_wrapper.h"
 /* ⭐⭐ 关键：声明 C 接口 ⭐⭐ */
 extern "C" {
@@ -17,7 +17,7 @@ void *rs485_1_thread(void *arg)
 {
     (void)arg;
     while (1) {
-        RS485_1.pollSlaves();
+        port_manager_poll_slot(0);
         sleep(3);
     }
     return NULL;
@@ -30,7 +30,7 @@ void *rs485_2_thread(void *arg)
 {
     (void)arg;
     while (1) {
-        RS485_2.pollSlaves();
+        port_manager_poll_slot(1);
         sleep(2);
     } 
     return NULL;

@@ -5,7 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include "data_protocol.h"
-#include "data_packer.h"
+#include "data_telemetry.h"
 #include "ipc_server.h"
 using namespace std;
 /* ================= 内部工具函数 ================= */
@@ -88,10 +88,10 @@ void Deviceinfo_send()
     get_fb_resolution(&dev.data.sys.screen_w,
                       &dev.data.sys.screen_h);
 
-    data_pack_t pack = data_pack_single(&dev);
+    telemetry_pack_t pack = telemetry_pack_single(&dev);
 
     char json[512];
-    int len = data_pack_to_json(&pack, json, sizeof(json));
+    int len = telemetry_pack_to_json(&pack, json, sizeof(json));
     if (len > 0) {
 	   cout<<"数据已经发送"<<" "<<json<<endl;
         ipc_server_send(json);

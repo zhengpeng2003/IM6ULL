@@ -1,33 +1,39 @@
 #include "ipc_server.h"
 #include "device_info.h"
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdio.h>
+#include "data_command.h"
+#include "mqtt_wrapper.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #define IPC_SOCK_PATH "/tmp/device_ipc.sock"
 #define BUF_SIZE 1024
+#define RECV_BUF_SIZE 4096
+
 static int server_fd = -1;
 static int client_fd = -1;
+static char recv_buf[RECV_BUF_SIZE];
+static int recv_len = 0;
 static pthread_mutex_t ipc_send_lock = PTHREAD_MUTEX_INITIALIZER;
+
 int ipc_server_init(void)
 {
     struct sockaddr_un addr;
 
-    /* 1. 删除旧的 socket 文件 */
     unlink(IPC_SOCK_PATH);
 
-    /* 2. 创建 socket */
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("socket");
         return -1;
     }
 
-    /* 3. 绑定地址 */
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, IPC_SOCK_PATH);
@@ -37,16 +43,40 @@ int ipc_server_init(void)
         return -1;
     }
 
-    /* 4. 监听 */
     if (listen(server_fd, 1) < 0) {
         perror("listen");
         return -1;
     }
 
     printf("IPC server listening on %s\n", IPC_SOCK_PATH);
-
     return 0;
 }
+
+static void ipc_process_rx(const char *buf, int len)
+{
+    if (recv_len + len >= RECV_BUF_SIZE)
+        recv_len = 0;
+
+    memcpy(recv_buf + recv_len, buf, len);
+    recv_len += len;
+
+    int start = 0;
+    for (int i = 0; i < recv_len; ++i) {
+        if (recv_buf[i] != '\n')
+            continue;
+
+        recv_buf[i] = '\0';
+        if (i > start)
+            data_command_process_message(recv_buf + start);
+        start = i + 1;
+    }
+
+    if (start > 0) {
+        memmove(recv_buf, recv_buf + start, recv_len - start);
+        recv_len -= start;
+    }
+}
+
 void ipc_server_loop(void)
 {
     char buf[BUF_SIZE];
@@ -56,8 +86,9 @@ void ipc_server_loop(void)
             client_fd = accept(server_fd, NULL, NULL);
             if (client_fd >= 0) {
                 fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) | O_NONBLOCK);
+                recv_len = 0;
                 printf("IPC client connected\n");
-		Deviceinfo_send();
+                Deviceinfo_send();
             }
         }
 
@@ -65,28 +96,25 @@ void ipc_server_loop(void)
             int n = read(client_fd, buf, sizeof(buf) - 1);
             if (n > 0) {
                 buf[n] = '\0';
-		        printf("前端发送数据过来\n");
-            if(mqtt_send("imx6ull/device/data",buf)==0)
-	        {
-		printf("继电器MQTT信息发送成功\n");
-	    }
-                // 只传给 Data 层，不在这里做类型判断
-                data_process_message(buf);
+                printf("IPC recv: %s\n", buf);
+                mqtt_send("imx6ull/device/data", buf);
+                ipc_process_rx(buf, n);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
                 close(client_fd);
                 client_fd = -1;
+                recv_len = 0;
             }
         }
-        usleep(10000); // 10ms
+        usleep(10000);
     }
 }
+
 void ipc_server_send(const char *msg)
 {
     if (client_fd < 0) return;
+    //加锁避免数据混乱
     pthread_mutex_lock(&ipc_send_lock);
-    /* 中间 return / 出错 / goto 都要小心 */
     write(client_fd, msg, strlen(msg));
     write(client_fd, "\n", 1);
     pthread_mutex_unlock(&ipc_send_lock);
 }
-
