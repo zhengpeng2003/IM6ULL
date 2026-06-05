@@ -2,10 +2,12 @@
 #define IPC_CLIENT_H
 
 #include <QObject>
-#include <QSocketNotifier>
+#include <QLocalSocket>
 #include <QDebug>
+#include <QStringList>
 #include "data/data_protocol.h"
 #include "data/data_parser.h"
+
 class IpcClient : public QObject
 {
     Q_OBJECT
@@ -24,13 +26,21 @@ signals:
     void deviceinfo(const DataPack &pack);//linux info
     void devicesetting(const DataPack &pack);//setting
     void errorOccured(const QString &err);
+    void portsUpdated(const QStringList &ports);
+    void portStatusUpdated(int slot,
+                           const QString &port,
+                           const QString &deviceType,
+                           int baud,
+                           bool connected,
+                           const QString &message);
 
 private slots:
     void onReadyRead();
 
 private:
-    int m_fd;
-    QSocketNotifier *m_notifier;
+    QString serverNameFromPath(const QString &path) const;
+
+    QLocalSocket *m_socket;
     QByteArray m_recvBuf;//用于切包的
 };
 

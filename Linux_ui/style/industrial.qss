@@ -4,40 +4,131 @@ QWidget {
     font-size: 14px;
 }
 
-#TopStatusBar {
-    background-color: #2B2B2B;
-}
-
+#TopStatusBar,
 #BottomNavBar {
     background-color: #2B2B2B;
 }
 
 #NavButton {
     border: none;
-    font-size: 18px;
+    color: #D8DDE0;
+    font-size: 15px;
+    min-height: 44px;
 }
 
-#StatusGreen {
-    background-color: #00C853;
+#NavButton:pressed {
+    background-color: #3A3A3A;
+}
+
+#Row {
+    background-color: #252525;
+    border: 1px solid #3A3A3A;
     border-radius: 5px;
 }
+
 #ValueBox {
     background-color: #1F1F1F;
     border: 1px solid #3A3A3A;
     border-radius: 4px;
-    min-width: 110px;
+    min-width: 96px;
 }
 
 #ValueText {
     color: #E0E0E0;
     font-size: 14px;
 }
+
 #StatusGreen {
-    background-color: #2ecc71;
+    background-color: #2ECC71;
     border-radius: 5px;
 }
 
 #StatusGray {
-    background-color: #bdc3c7;
+    background-color: #777D82;
     border-radius: 5px;
+}
+
+#PortPanel {
+    background-color: #252525;
+    border: 1px solid #3A3A3A;
+    border-radius: 6px;
+}
+
+#SectionTitle {
+    color: #F0F0F0;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#HintText {
+    color: #AEB4B8;
+    font-size: 12px;
+}
+
+#ActionButton {
+    background-color: #1976D2;
+    border: 1px solid #2B82D9;
+    border-radius: 4px;
+    color: #FFFFFF;
+    min-height: 26px;
+    padding: 2px 8px;
+}
+
+#ActionButton:disabled {
+    background-color: #454545;
+    border-color: #555555;
+    color: #9A9A9A;
+}
+
+#GhostButton {
+    background-color: #2E2E2E;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    color: #E0E0E0;
+    min-height: 26px;
+    padding: 2px 8px;
+}
+
+#GhostButton:disabled {
+    color: #777777;
+}
+
+QComboBox {
+    background-color: #1F1F1F;
+    border: 1px solid #4A4A4A;
+    border-radius: 4px;
+    min-height: 24px;
+    padding-left: 6px;
+}
+
+QScrollArea {
+    border: none;
+}
+
+#EmptyHint {
+    background-color: #252525;
+    border: 1px solid #3A3A3A;
+    border-radius: 6px;
+    color: #AEB4B8;
+    font-size: 14px;
+    padding: 12px;
+}
+
+#EmptyHintSmall {
+    background-color: #202020;
+    border: 1px dashed #4A4A4A;
+    border-radius: 6px;
+    color: #AEB4B8;
+    font-size: 12px;
+    min-height: 54px;
+    padding: 8px;
+}
+
+#InfoLine {
+    background-color: #252525;
+    border: 1px solid #3A3A3A;
+    border-radius: 4px;
+    color: #E0E0E0;
+    min-height: 34px;
+    padding: 6px 8px;
 }

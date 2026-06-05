@@ -41,7 +41,7 @@ void Widget::initUI()
 
     connect(_Myclient,&IpcClient::devicetrend,pageTrend,&PageTrend::addData);
     connect(_Myclient,&IpcClient::deviceinfo,pageInfo,&Pageinfo::addInfo);
-    connect(_Myclient,&IpcClient::devicesetting,pageSetting,&PageSetting::addSetting);
+    //connect(_Myclient,&IpcClient::devicesetting,pageSetting,&PageSetting::addSetting);重复连接
     stack->setCurrentIndex(0);
 
     QVBoxLayout *layout = new QVBoxLayout(this);

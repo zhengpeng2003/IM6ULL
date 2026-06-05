@@ -1,8 +1,9 @@
 #ifndef PAGETREND_H
 #define PAGETREND_H
 
-#include <QWidget>
 #include <QVector>
+#include <QWidget>
+
 #include "data/data_protocol.h"
 
 class PageTrend : public QWidget
@@ -13,6 +14,12 @@ public:
 
 public slots:
     void addData(const DataPack &pack);
+    void onPortStatusUpdated(int slot,
+                             const QString &port,
+                             const QString &deviceType,
+                             int baud,
+                             bool connected,
+                             const QString &message);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -22,15 +29,12 @@ private:
     QVector<double> humiList;
 
     int maxPoints = 240;
-
-    /* ========= 基准值（第一次数据） ========= */
     bool baseInited = false;
+    bool sensorConnected = false;
     double tempBase = 0.0;
     double humiBase = 0.0;
-
-    /* ========= 显示比例（像素映射用） ========= */
-    double tempPixelScale = 3.0;   // ⭐ 1℃ = 3 像素（你可调）
-    double humiPixelScale = 2.0;   // ⭐ 1% = 2 像素
+    double tempPixelScale = 3.0;
+    double humiPixelScale = 2.0;
 };
 
 #endif // PAGETREND_H

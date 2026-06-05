@@ -1,14 +1,13 @@
 #pragma once
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QScrollArea>
-#include <qjsondocument.h>
-#include <qjsonobject.h>
-#include <QDebug>
+
 #include <QLabel>
+#include <QString>
+#include <QWidget>
+
+#include "data/data_protocol.h"
 #include "ipc/ipc_client.h"
 #include "ui/widget.h"
-#include "data/data_protocol.h"
+
 class PageStatus : public QWidget
 {
     Q_OBJECT
@@ -16,24 +15,40 @@ public:
     explicit PageStatus(QWidget *parent = nullptr);
 
 private:
-    void initUI();   // ⭐ 统一初始化
+    void initUI();
     void onDeviceStatus(const DataPack &pack);
+    void onPortStatusUpdated(int slot,
+                             const QString &port,
+                             const QString &deviceType,
+                             int baud,
+                             bool connected,
+                             const QString &message);
     QWidget *createRow(const QString &text, QLabel* &valueLabel, QWidget* &statusLight);
+    void refreshVisibleRows();
 
-    // 保存显示控件指针
-    QLabel* tempLabel;
-    QLabel* humLabel;
-    QLabel* relayLabel;
-    QLabel* fanLabel;
-    QLabel* ledLabel;
-    QLabel* buzzerLabel;
+    QLabel* emptyHintLabel = nullptr;
+    QLabel* tempLabel = nullptr;
+    QLabel* humLabel = nullptr;
+    QLabel* relayLabel = nullptr;
+    QLabel* fanLabel = nullptr;
+    QLabel* ledLabel = nullptr;
+    QLabel* buzzerLabel = nullptr;
 
-    QWidget* tempStatus;
-    QWidget* humStatus;
-    QWidget* relayStatus;
-    QWidget* fanStatus;
-    QWidget* ledStatus;
-    QWidget* buzzerStatus;
+    QWidget* tempStatus = nullptr;
+    QWidget* humStatus = nullptr;
+    QWidget* relayStatus = nullptr;
+    QWidget* fanStatus = nullptr;
+    QWidget* ledStatus = nullptr;
+    QWidget* buzzerStatus = nullptr;
 
+    QWidget* tempRow = nullptr;
+    QWidget* humRow = nullptr;
+    QWidget* relayRow = nullptr;
+    QWidget* fanRow = nullptr;
+    QWidget* ledRow = nullptr;
+    QWidget* buzzerRow = nullptr;
+
+    bool sensorConnected = false;
+    bool relayConnected = false;
+    QString slotDeviceTypes[2];
 };
-
