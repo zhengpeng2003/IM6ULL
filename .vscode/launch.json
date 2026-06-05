@@ -1,0 +1,54 @@
+﻿{
+    "version":  "0.2.0",
+    "configurations":  [
+                           {
+                               "name":  "Debug Qt qmake Project (MSVC)",
+                               "type":  "cppvsdbg",
+                               "request":  "launch",
+                               "program":  "${workspaceFolder}\\debug\\qt_hmi.exe",
+                               "args":  [
+
+                                        ],
+                               "stopAtEntry":  false,
+                               "cwd":  "${workspaceFolder}",
+                               "preLaunchTask":  "Build Qt qmake Project (MSVC)",
+                               "environment":  [
+                                                   {
+                                                       "name":  "QTDIR",
+                                                       "value":  "S:\\Qt 6\\6.5.3\\msvc2019_64"
+                                                   },
+                                                   {
+                                                       "name":  "QT_PLUGIN_PATH",
+                                                       "value":  "S:\\Qt 6\\6.5.3\\msvc2019_64\\plugins"
+                                                   },
+                                                   {
+                                                       "name":  "QML2_IMPORT_PATH",
+                                                       "value":  "S:\\Qt 6\\6.5.3\\msvc2019_64\\qml"
+                                                   },
+                                                   {
+                                                       "name":  "PATH",
+                                                       "value":  "S:\\Qt 6\\6.5.3\\msvc2019_64\\bin;${env:PATH}"
+                                                   }
+                                               ],
+                               "console":  "integratedTerminal"
+                           },
+                           {
+                               "name":  "Run Qt qmake Project (MSVC, no build)",
+                               "type":  "cppvsdbg",
+                               "request":  "launch",
+                               "program":  "${workspaceFolder}\\debug\\qt_hmi.exe",
+                               "args":  [
+
+                                        ],
+                               "stopAtEntry":  false,
+                               "cwd":  "${workspaceFolder}",
+                               "environment":  [
+                                                   {
+                                                       "name":  "PATH",
+                                                       "value":  "S:\\Qt 6\\6.5.3\\msvc2019_64\\bin;${env:PATH}"
+                                                   }
+                                               ],
+                               "console":  "integratedTerminal"
+                           }
+                       ]
+}

@@ -1,0 +1,25 @@
+﻿{
+    "version":  "2.0.0",
+    "tasks":  [
+                  {
+                      "label":  "Build Qt qmake Project (MSVC)",
+                      "type":  "shell",
+                      "command":  "cmd.exe",
+                      "args":  [
+                                   "/s",
+                                   "/c",
+                                   "call \"S:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat\" -arch=x64 -host_arch=x64 \u0026\u0026 set \"PATH=S:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64;S:\\Windows Kits\\10\\bin\\10.0.26100.0\\x64;S:\\Qt 6\\6.5.3\\msvc2019_64\\bin;%PATH%\" \u0026\u0026 qmake \"\\qt_hmi.pro\" -spec win32-msvc \"CONFIG+=debug\" \"CONFIG+=qml_debug\" \u0026\u0026 nmake -f Makefile.Debug"
+                               ],
+                      "options":  {
+                                      "cwd":  "${workspaceFolder}"
+                                  },
+                      "presentation":  {
+                                           "reveal":  "silent",
+                                           "panel":  "dedicated",
+                                           "clear":  true
+                                       },
+                      "problemMatcher":  "$msCompile",
+                      "group":  "build"
+                  }
+              ]
+}

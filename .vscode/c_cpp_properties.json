@@ -1,0 +1,32 @@
+﻿{
+    "version":  4,
+    "configurations":  [
+                           {
+                               "name":  "Qt qmake MSVC x64",
+                               "compileCommands":  "${workspaceFolder}/compile_commands.json",
+                               "intelliSenseMode":  "windows-msvc-x64",
+                               "cppStandard":  "c++17",
+                               "cStandard":  "c17",
+                               "defines":  [
+                                               "UNICODE",
+                                               "_UNICODE",
+                                               "QT_CORE_LIB",
+                                               "QT_GUI_LIB",
+                                               "QT_WIDGETS_LIB",
+                                               "QT_OPENGL_LIB",
+                                               "QT_OPENGLWIDGETS_LIB"
+                                           ],
+                               "includePath":  [
+                                                   "${workspaceFolder}",
+                                                   "${workspaceFolder}/debug"
+                                               ],
+                               "browse":  {
+                                              "path":  [
+                                                           "${workspaceFolder}",
+                                                           "${workspaceFolder}/debug"
+                                                       ],
+                                              "limitSymbolsToIncludedHeaders":  false
+                                          }
+                           }
+                       ]
+}
