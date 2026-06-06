@@ -52,7 +52,7 @@ int ipc_server_init(void)
     return 0;
 }
 
-static void ipc_process_rx(const char *buf, int len)
+static void ipc_process_received_data(const char *buf, int len)
 {
     if (recv_len + len >= RECV_BUF_SIZE)
         recv_len = 0;
@@ -66,8 +66,15 @@ static void ipc_process_rx(const char *buf, int len)
             continue;
 
         recv_buf[i] = '\0';
-        if (i > start)
-            data_command_process_message(recv_buf + start);
+        if (i > start) {
+            const char *msg = recv_buf + start;
+            int ret = data_command_process_message(msg);
+            if (ret == CMD_PROCESS_FORWARD_MQTT) {
+                mqtt_send("imx6ull/device/data", msg);
+            } else if (ret == CMD_PROCESS_ERROR) {
+                printf("IPC process failed, skip MQTT: %s\n", msg);
+            }
+        }
         start = i + 1;
     }
 
@@ -97,8 +104,7 @@ void ipc_server_loop(void)
             if (n > 0) {
                 buf[n] = '\0';
                 printf("IPC recv: %s\n", buf);
-                mqtt_send("imx6ull/device/data", buf);
-                ipc_process_rx(buf, n);
+                ipc_process_received_data(buf, n);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
                 close(client_fd);
                 client_fd = -1;

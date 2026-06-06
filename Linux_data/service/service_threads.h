@@ -7,8 +7,6 @@
 extern "C" {
 #endif
 
-void *rs485_1_thread(void *arg);
-void *rs485_2_thread(void *arg);
 void *ipc_server_thread(void *arg);
 void *mqtt_server_thread(void *arg);
 #ifdef __cplusplus
@@ -16,4 +14,3 @@ void *mqtt_server_thread(void *arg);
 #endif
 
 #endif // SERVICE_THREADS_H
-

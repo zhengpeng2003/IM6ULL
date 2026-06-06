@@ -94,6 +94,7 @@ int telemetry_pack_to_json(const telemetry_pack_t *pack,
 
     off += snprintf(buf + off, buf_size - off,
         "{"
+        "\"type\":\"telemetry\","
         "\"ver\":1,"
         "\"seq\":%u,"
         "\"time\":%ld,"

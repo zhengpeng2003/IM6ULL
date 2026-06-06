@@ -8,4 +8,7 @@ target_include_directories(ipc PUBLIC
     ${CMAKE_SOURCE_DIR}/data
     ${CMAKE_SOURCE_DIR}/mqtt/wrapper
 )
-target_link_libraries(device)
+
+target_link_libraries(ipc PUBLIC
+    mqttwrapper
+)

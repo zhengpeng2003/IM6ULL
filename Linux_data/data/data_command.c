@@ -1,56 +1,264 @@
 #include "data_command.h"
 
+/* Parses incoming JSON commands and dispatches them to the service/port layer. */
+#include "alarm_config.h"
+#include "data_ack.h"
 #include "data_protocol.h"
+#include "data_publish.h"
 #include "port_manager.h"
-#include "service.h"
 
 #include <json-c/json.h>
+#include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
-void data_command_process_message(const char *json_str)
+typedef int (*command_handler_t)(uint32_t seq,
+                                 struct json_object *root,
+                                 const char *cmd);
+
+typedef struct {
+    const char *cmd;
+    command_handler_t handler;
+} command_entry_t;
+
+static device_type_t parse_device_type(const char *type)
 {
-    if (!json_str)
-        return;
+    if (!type) return DEV_UNKNOWN;
+    if (strcmp(type, "sensor_th") == 0) return DEV_SENSOR_TH;
+    if (strcmp(type, "relay") == 0) return DEV_RELAY;
+    if (strcmp(type, "sysinfo") == 0) return DEV_SYSINFO;
+    return DEV_UNKNOWN;
+}
 
-    struct json_object *root = json_tokener_parse(json_str);
-    if (!root)
-        return;
+static int handle_scan_ports(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
 
-    struct json_object *cmd_obj;
-    if (json_object_object_get_ex(root, "cmd", &cmd_obj)) {
-        const char *cmd = json_object_get_string(cmd_obj);
+    port_manager_scan_ports(seq, cmd);
+    return CMD_PROCESS_HANDLED;
+}
 
-        if (strcmp(cmd, "scan_ports") == 0) {
-            port_manager_scan_ports();
-        } else if (strcmp(cmd, "connect_port") == 0) {
-            int slot = 0;
-            int baud = 9600;
-            const char *port = "";
-            const char *device_type = "unknown";
-            struct json_object *v;
+static int handle_connect_port(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    int slot = 0;
+    int baud = 9600;
+    const char *port = "";
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
 
-            if (json_object_object_get_ex(root, "slot", &v))
-                slot = json_object_get_int(v);
-            if (json_object_object_get_ex(root, "baud", &v))
-                baud = json_object_get_int(v);
-            if (json_object_object_get_ex(root, "port", &v))
-                port = json_object_get_string(v);
-            if (json_object_object_get_ex(root, "device_type", &v))
-                device_type = json_object_get_string(v);
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "baud", &v))
+        baud = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "port", &v))
+        port = json_object_get_string(v);
 
-            port_manager_connect(slot, port, device_type, baud);
-        } else if (strcmp(cmd, "disconnect_port") == 0) {
-            int slot = 0;
-            struct json_object *v;
+    int ret = port_manager_connect(slot, port, baud, reason, sizeof(reason));
+    data_ack_send_port_result(seq,
+                              cmd,
+                              ret == 0,
+                              ret == 0 ? "" : reason,
+                              ret == 0 ? "connected" : data_ack_message_from_reason(reason),
+                              slot,
+                              port,
+                              "unknown",
+                              baud,
+                              ret == 0);
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
 
-            if (json_object_object_get_ex(root, "slot", &v))
-                slot = json_object_get_int(v);
-            port_manager_disconnect(slot);
-        }
+static int handle_disconnect_port(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    int slot = 0;
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
 
-        json_object_put(root);
-        return;
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+
+    int ret = port_manager_disconnect(slot, reason, sizeof(reason));
+    data_ack_send_port_result(seq,
+                              cmd,
+                              ret == 0,
+                              ret == 0 ? "" : reason,
+                              ret == 0 ? "disconnected" : data_ack_message_from_reason(reason),
+                              slot,
+                              "",
+                              "unknown",
+                              0,
+                              0);
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_add_device(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    int slot = 0;
+    int slave_id = 0;
+    int poll_interval_ms = 0;
+    const char *device_type = "unknown";
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
+
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "device_type", &v))
+        device_type = json_object_get_string(v);
+    if (json_object_object_get_ex(root, "poll_interval_ms", &v))
+        poll_interval_ms = json_object_get_int(v);
+
+    int ret = port_manager_add_device(slot,
+                                      slave_id,
+                                      device_type,
+                                      poll_interval_ms,
+                                      reason,
+                                      sizeof(reason));
+    data_ack_send(seq,
+                  cmd,
+                  ret == 0,
+                  ret == 0 ? "" : reason,
+                  ret == 0 ? "device added" : data_ack_message_from_reason(reason));
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_remove_device(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    int slot = 0;
+    int slave_id = 0;
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
+
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+
+    int ret = port_manager_remove_device(slot, slave_id, reason, sizeof(reason));
+    data_ack_send(seq,
+                  cmd,
+                  ret == 0,
+                  ret == 0 ? "" : reason,
+                  ret == 0 ? "device removed" : data_ack_message_from_reason(reason));
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_get_alarm_config(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
+
+    float temp_high = 0.0f;
+    float humi_high = 0.0f;
+    alarm_config_get(&temp_high, &humi_high);
+    data_ack_send_alarm_config(seq, cmd, 1, "", "", temp_high, humi_high);
+    return CMD_PROCESS_HANDLED;
+}
+
+static int handle_set_alarm_config(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    struct json_object *v;
+    char reason[MAX_ACK_MSG_LEN] = "";
+
+    if (!json_object_object_get_ex(root, "temp_high", &v)) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
     }
+    float temp_high = (float)json_object_get_double(v);
+
+    if (!json_object_object_get_ex(root, "humi_high", &v)) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+    float humi_high = (float)json_object_get_double(v);
+
+    int ret = alarm_config_set(temp_high, humi_high, reason, sizeof(reason));
+    if (ret == 0)
+        alarm_config_get(&temp_high, &humi_high);
+    data_ack_send_alarm_config(seq,
+                               cmd,
+                               ret == 0,
+                               ret == 0 ? "" : reason,
+                               ret == 0 ? "alarm config saved" : data_ack_message_from_reason(reason),
+                               temp_high,
+                               humi_high);
+
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_set_relay(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
+    int slot = 0;
+    int slave_id = 1;
+
+    device_data_t dev;
+    memset(&dev, 0, sizeof(dev));
+    dev.device_id = 1;
+    dev.type = DEV_RELAY;
+    dev.valid = 1;
+
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "device_id", &v))
+        dev.device_id = json_object_get_int(v);
+    else
+        dev.device_id = slave_id;
+
+    if (!json_object_object_get_ex(root, "states", &v)) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+    dev.data.relay.relay_states = (uint16_t)json_object_get_int(v);
+
+    int ret = port_manager_handle_relay(slot, slave_id, &dev, reason, sizeof(reason));
+    data_ack_send(seq,
+                  cmd,
+                  ret == 0,
+                  ret == 0 ? "" : reason,
+                  ret == 0 ? "relay write success" : data_ack_message_from_reason(reason));
+    return ret == 0 ? CMD_PROCESS_FORWARD_MQTT : CMD_PROCESS_ERROR;
+}
+
+static const command_entry_t command_table[] = {
+    {"scan_ports", handle_scan_ports},
+    {"connect_port", handle_connect_port},
+    {"disconnect_port", handle_disconnect_port},
+    {"add_device", handle_add_device},
+    {"remove_device", handle_remove_device},
+    {"set_relay", handle_set_relay},
+    {"get_alarm_config", handle_get_alarm_config},
+    {"set_alarm_config", handle_set_alarm_config},
+};
+
+static int process_command_message(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    if (!cmd) {
+        data_ack_send(seq, "", 0, "invalid_request", data_ack_message_from_reason("invalid_request"));
+        return CMD_PROCESS_ERROR;
+    }
+
+    for (size_t i = 0; i < sizeof(command_table) / sizeof(command_table[0]); ++i) {
+        if (strcmp(cmd, command_table[i].cmd) == 0)
+            return command_table[i].handler(seq, root, cmd);
+    }
+
+    char reason[MAX_ACK_MSG_LEN] = "";
+    snprintf(reason, sizeof(reason), "unknown_command");
+    data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+    return CMD_PROCESS_ERROR;
+}
+
+static int process_device_message(uint32_t seq, struct json_object *root)
+{
+    int ret = CMD_PROCESS_HANDLED;
+    int handled_relay = 0;
+    char reason[MAX_ACK_MSG_LEN] = "";
 
     struct json_object *devices;
     if (json_object_object_get_ex(root, "devices", &devices)) {
@@ -58,19 +266,30 @@ void data_command_process_message(const char *json_str)
         for (int i = 0; i < count; i++) {
             struct json_object *d = json_object_array_get_idx(devices, i);
             struct json_object *type_obj = json_object_object_get(d, "type");
-            int type = json_object_get_int(type_obj);
+            device_type_t type = parse_device_type(json_object_get_string(type_obj));
 
             switch (type) {
             case DEV_RELAY: {
+                int slot = 0;
+                int slave_id = json_object_get_int(json_object_object_get(d, "id"));
+                struct json_object *slot_obj = json_object_object_get(d, "slot");
+                struct json_object *slave_obj = json_object_object_get(d, "slave_id");
+                if (slot_obj)
+                    slot = json_object_get_int(slot_obj);
+                if (slave_obj)
+                    slave_id = json_object_get_int(slave_obj);
+
                 device_data_t dev;
                 memset(&dev, 0, sizeof(dev));
-                dev.device_id = json_object_get_int(json_object_object_get(d, "id"));
+                dev.device_id = slave_id;
                 dev.type = DEV_RELAY;
                 dev.valid = json_object_get_boolean(json_object_object_get(d, "valid"));
                 dev.data.relay.relay_states =
                     json_object_get_int(json_object_object_get(d, "states"));
 
-                service_handle_relay(&dev);
+                handled_relay = 1;
+                if (port_manager_handle_relay(slot, slave_id, &dev, reason, sizeof(reason)) != 0)
+                    ret = CMD_PROCESS_ERROR;
                 break;
             }
 
@@ -85,7 +304,7 @@ void data_command_process_message(const char *json_str)
                 dev.data.th.humidity =
                     json_object_get_double(json_object_object_get(d, "humi"));
 
-                service_handle_sensor(&dev);
+                data_publish_device_status(&dev);
                 break;
             }
 
@@ -98,5 +317,60 @@ void data_command_process_message(const char *json_str)
         }
     }
 
+    if (handled_relay) {
+        data_ack_send(seq,
+                      "relay",
+                      ret != CMD_PROCESS_ERROR,
+                      ret != CMD_PROCESS_ERROR ? "" : reason,
+                      ret != CMD_PROCESS_ERROR ? "relay write success" : data_ack_message_from_reason(reason));
+        if (ret != CMD_PROCESS_ERROR)
+            ret = CMD_PROCESS_FORWARD_MQTT;
+    }
+
+    return ret;
+}
+
+int data_command_process_message(const char *json_str)
+{
+    if (!json_str)
+        return CMD_PROCESS_ERROR;
+
+    struct json_object *root = json_tokener_parse(json_str);
+    if (!root)
+        return CMD_PROCESS_ERROR;
+
+    uint32_t seq = 0;
+    struct json_object *seq_obj;
+    if (json_object_object_get_ex(root, "seq", &seq_obj))
+        seq = (uint32_t)json_object_get_int64(seq_obj);
+
+    int ret = CMD_PROCESS_ERROR;
+    const char *msg_type = "";
+    struct json_object *type_obj;
+    if (json_object_object_get_ex(root, "type", &type_obj))
+        msg_type = json_object_get_string(type_obj);
+
+    struct json_object *cmd_obj;
+    if (json_object_object_get_ex(root, "cmd", &cmd_obj)) {
+        if (msg_type && msg_type[0] != '\0' && strcmp(msg_type, "command") != 0) {
+            data_ack_send(seq, json_object_get_string(cmd_obj), 0,
+                          "invalid_request",
+                          data_ack_message_from_reason("invalid_request"));
+            json_object_put(root);
+            return CMD_PROCESS_ERROR;
+        }
+        ret = process_command_message(seq, root, json_object_get_string(cmd_obj));
+    } else {
+        if (msg_type && msg_type[0] != '\0') {
+            data_ack_send(seq, "", 0,
+                          "invalid_request",
+                          data_ack_message_from_reason("invalid_request"));
+            ret = CMD_PROCESS_ERROR;
+        } else {
+            ret = process_device_message(seq, root);
+        }
+    }
+
     json_object_put(root);
+    return ret;
 }

@@ -5,7 +5,11 @@
 extern "C" {
 #endif
 
-void data_command_process_message(const char *json_str);
+#define CMD_PROCESS_ERROR       -1
+#define CMD_PROCESS_HANDLED      0
+#define CMD_PROCESS_FORWARD_MQTT 1
+
+int data_command_process_message(const char *json_str);
 
 #ifdef __cplusplus
 }

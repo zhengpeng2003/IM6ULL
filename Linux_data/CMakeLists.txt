@@ -11,6 +11,7 @@ add_subdirectory(ipc)
 add_subdirectory(modbus)
 add_subdirectory(mqtt)
 add_subdirectory(sensors)
+add_subdirectory(port)
 add_subdirectory(service)
 add_subdirectory(data)
 
@@ -21,7 +22,7 @@ target_link_libraries(qt_object
     device
     ipc
     modbus
-    sensors
+    port_manager
     service
     data_protocol
     Threads::Threads
