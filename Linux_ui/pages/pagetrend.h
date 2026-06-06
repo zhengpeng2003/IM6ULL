@@ -3,8 +3,14 @@
 
 #include <QVector>
 #include <QWidget>
+#include <QStringList>
 
 #include "data/data_protocol.h"
+
+class QLabel;
+class QPushButton;
+class QComboBox;
+class TrendChartWidget;
 
 class PageTrend : public QWidget
 {
@@ -12,29 +18,46 @@ class PageTrend : public QWidget
 public:
     explicit PageTrend(QWidget *parent = nullptr);
 
+    void setMasterList(const QStringList &masters);
+    void setSlaveList(const QStringList &slaves);
+    void appendTemperature(double value);
+    void appendHumidity(double value);
+    void setTemperatureData(const QVector<double> &values);
+    void setHumidityData(const QVector<double> &values);
+
+signals:
+    void masterChanged(int index);
+    void slaveChanged(int index);
+    void timeRangeChanged(const QString &range);
+
 public slots:
     void addData(const DataPack &pack);
-    void onPortStatusUpdated(int slot,
-                             const QString &port,
-                             const QString &deviceType,
-                             int baud,
-                             bool connected,
-                             const QString &message);
-
-protected:
-    void paintEvent(QPaintEvent *event) override;
 
 private:
-    QVector<double> tempList;
-    QVector<double> humiList;
+    enum TrendMode {
+        TemperatureMode,
+        HumidityMode
+    };
 
-    int maxPoints = 240;
-    bool baseInited = false;
-    bool sensorConnected = false;
-    double tempBase = 0.0;
-    double humiBase = 0.0;
-    double tempPixelScale = 3.0;
-    double humiPixelScale = 2.0;
+    void initUI();
+    void switchTrendMode(TrendMode mode);
+    void updateModeButtons();
+    void updateChart();
+    void updateStats();
+    void trimData(QVector<double> &values);
+
+    QComboBox *masterCombo = nullptr;
+    QComboBox *slaveCombo = nullptr;
+    QComboBox *timeRangeCombo = nullptr;
+    QPushButton *temperatureButton = nullptr;
+    QPushButton *humidityButton = nullptr;
+    TrendChartWidget *chartWidget = nullptr;
+    QLabel *statsLabel = nullptr;
+
+    QVector<double> temperatureValues;
+    QVector<double> humidityValues;
+    TrendMode currentMode = TemperatureMode;
+    int maxPoints = 80;
 };
 
 #endif // PAGETREND_H

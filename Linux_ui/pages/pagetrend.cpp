@@ -1,115 +1,207 @@
 #include "pagetrend.h"
 
-#include <QPainter>
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <algorithm>
 
-#include "ipc/ipc_client.h"
-#include "ui/widget.h"
+#include "TrendChartWidget.h"
 
 PageTrend::PageTrend(QWidget *parent)
     : QWidget(parent)
 {
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    connect(Widget::_Myclient, &IpcClient::portStatusUpdated,
-            this, &PageTrend::onPortStatusUpdated);
+    setObjectName("PageArea");
+    initUI();
+    switchTrendMode(TemperatureMode);
+}
+
+void PageTrend::setMasterList(const QStringList &masters)
+{
+    masterCombo->blockSignals(true);
+    masterCombo->clear();
+    masterCombo->addItems(masters);
+    masterCombo->blockSignals(false);
+}
+
+void PageTrend::setSlaveList(const QStringList &slaves)
+{
+    slaveCombo->blockSignals(true);
+    slaveCombo->clear();
+    slaveCombo->addItems(slaves);
+    slaveCombo->blockSignals(false);
+}
+
+void PageTrend::appendTemperature(double value)
+{
+    temperatureValues.append(value);
+    trimData(temperatureValues);
+    if (currentMode == TemperatureMode)
+        updateChart();
+}
+
+void PageTrend::appendHumidity(double value)
+{
+    humidityValues.append(value);
+    trimData(humidityValues);
+    if (currentMode == HumidityMode)
+        updateChart();
+}
+
+void PageTrend::setTemperatureData(const QVector<double> &values)
+{
+    temperatureValues = values;
+    trimData(temperatureValues);
+    if (currentMode == TemperatureMode)
+        updateChart();
+}
+
+void PageTrend::setHumidityData(const QVector<double> &values)
+{
+    humidityValues = values;
+    trimData(humidityValues);
+    if (currentMode == HumidityMode)
+        updateChart();
 }
 
 void PageTrend::addData(const DataPack &pack)
 {
-    if (!sensorConnected)
-        return;
-
-    for (const auto &dev : pack.devices) {
-        if (dev.type != DEV_SENSOR_TH || !dev.valid)
+    for (const DeviceData &device : pack.devices) {
+        if (device.type != DEV_SENSOR_TH || !device.valid)
             continue;
 
-        if (!baseInited) {
-            tempBase = dev.temperature;
-            humiBase = dev.humidity;
-            baseInited = true;
-        }
-
-        tempList.append(dev.temperature);
-        humiList.append(dev.humidity);
+        appendTemperature(device.temperature);
+        appendHumidity(device.humidity);
     }
-
-    while (tempList.size() > maxPoints) {
-        tempList.remove(0);
-        humiList.remove(0);
-    }
-
-    update();
 }
 
-void PageTrend::onPortStatusUpdated(int slot,
-                                    const QString &port,
-                                    const QString &deviceType,
-                                    int baud,
-                                    bool connected,
-                                    const QString &message)
+void PageTrend::initUI()
 {
-    Q_UNUSED(slot)
-    Q_UNUSED(port)
-    Q_UNUSED(baud)
-    Q_UNUSED(message)
+    QLabel *titleLabel = new QLabel("Trend Analysis", this);
+    titleLabel->setObjectName("PanelTitle");
+    titleLabel->setFixedHeight(20);
 
-    if (deviceType != "sensor_th")
-        return;
+    QLabel *masterLabel = new QLabel("Master:", this);
+    QLabel *slaveLabel = new QLabel("Slave:", this);
 
-    sensorConnected = connected;
-    if (!connected) {
-        tempList.clear();
-        humiList.clear();
-        baseInited = false;
-    }
-    update();
+    masterCombo = new QComboBox(this);
+    slaveCombo = new QComboBox(this);
+    masterCombo->setObjectName("CompactCombo");
+    slaveCombo->setObjectName("CompactCombo");
+
+    QHBoxLayout *selectRow = new QHBoxLayout;
+    selectRow->setContentsMargins(0, 0, 0, 0);
+    selectRow->setSpacing(4);
+    selectRow->addWidget(masterLabel);
+    selectRow->addWidget(masterCombo, 1);
+    selectRow->addWidget(slaveLabel);
+    selectRow->addWidget(slaveCombo, 1);
+
+    temperatureButton = new QPushButton("Temperature", this);
+    humidityButton = new QPushButton("Humidity", this);
+    temperatureButton->setObjectName("ToggleButton");
+    humidityButton->setObjectName("ToggleButton");
+
+    QLabel *timeLabel = new QLabel("Range:", this);
+    timeRangeCombo = new QComboBox(this);
+    timeRangeCombo->setObjectName("CompactCombo");
+    timeRangeCombo->addItem("5 min");
+    timeRangeCombo->addItem("10 min");
+    timeRangeCombo->addItem("30 min");
+
+    QHBoxLayout *modeRow = new QHBoxLayout;
+    modeRow->setContentsMargins(0, 0, 0, 0);
+    modeRow->setSpacing(4);
+    modeRow->addWidget(temperatureButton);
+    modeRow->addWidget(humidityButton);
+    modeRow->addStretch();
+    modeRow->addWidget(timeLabel);
+    modeRow->addWidget(timeRangeCombo);
+
+    chartWidget = new TrendChartWidget(this);
+    chartWidget->setMinimumHeight(82);
+
+    statsLabel = new QLabel(this);
+    statsLabel->setObjectName("StatsBar");
+    statsLabel->setFixedHeight(22);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(6, 4, 6, 4);
+    mainLayout->setSpacing(4);
+    mainLayout->addWidget(titleLabel);
+    mainLayout->addLayout(selectRow);
+    mainLayout->addLayout(modeRow);
+    mainLayout->addWidget(chartWidget, 1);
+    mainLayout->addWidget(statsLabel);
+
+    connect(temperatureButton, &QPushButton::clicked, this, [this]() {
+        switchTrendMode(TemperatureMode);
+    });
+    connect(humidityButton, &QPushButton::clicked, this, [this]() {
+        switchTrendMode(HumidityMode);
+    });
+    connect(masterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PageTrend::masterChanged);
+    connect(slaveCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PageTrend::slaveChanged);
+    connect(timeRangeCombo, &QComboBox::currentTextChanged,
+            this, &PageTrend::timeRangeChanged);
 }
 
-void PageTrend::paintEvent(QPaintEvent *)
+void PageTrend::switchTrendMode(TrendMode mode)
 {
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.fillRect(rect(), QColor("#1E1E1E"));
+    currentMode = mode;
+    updateModeButtons();
+    updateChart();
+}
 
-    if (!sensorConnected) {
-        p.setPen(QColor("#AEB4B8"));
-        p.drawText(rect(), Qt::AlignCenter, "未连接温湿度设备\n连接后显示实时曲线");
+void PageTrend::updateModeButtons()
+{
+    temperatureButton->setProperty("checked", currentMode == TemperatureMode);
+    humidityButton->setProperty("checked", currentMode == HumidityMode);
+    temperatureButton->style()->unpolish(temperatureButton);
+    temperatureButton->style()->polish(temperatureButton);
+    humidityButton->style()->unpolish(humidityButton);
+    humidityButton->style()->polish(humidityButton);
+}
+
+void PageTrend::updateChart()
+{
+    if (currentMode == TemperatureMode) {
+        chartWidget->setRange(24.0, 30.0);
+        chartWidget->setData(temperatureValues, "C");
+    } else {
+        chartWidget->setRange(55.0, 70.0);
+        chartWidget->setData(humidityValues, "%");
+    }
+    updateStats();
+}
+
+void PageTrend::updateStats()
+{
+    const QVector<double> &values = currentMode == TemperatureMode ? temperatureValues : humidityValues;
+    const QString unit = currentMode == TemperatureMode ? "C" : "%";
+    if (values.isEmpty()) {
+        statsLabel->setText("Now:--  Max:--  Min:--  Avg:--");
         return;
     }
 
-    if (tempList.size() < 2 || !baseInited) {
-        p.setPen(QColor("#AEB4B8"));
-        p.drawText(rect(), Qt::AlignCenter, "等待温湿度数据...");
-        return;
-    }
+    const auto minMax = std::minmax_element(values.constBegin(), values.constEnd());
+    double sum = 0.0;
+    for (double value : values)
+        sum += value;
 
-    QRect tempRect(0, 60, width(), (height() - 60) / 2);
-    QRect humiRect(0, tempRect.bottom(), width(), (height() - 60) / 2);
+    statsLabel->setText(QString("Now:%1%2  Max:%3%2  Min:%4%2  Avg:%5%2")
+                            .arg(values.last(), 0, 'f', 1)
+                            .arg(unit)
+                            .arg(*minMax.second, 0, 'f', 1)
+                            .arg(*minMax.first, 0, 'f', 1)
+                            .arg(sum / values.size(), 0, 'f', 1));
+}
 
-    int tempMidY = tempRect.center().y();
-    int humiMidY = humiRect.center().y();
-
-    p.setPen(QPen(QColor("#F0F0F0"), 2));
-    for (int i = 1; i < tempList.size(); ++i) {
-        double x1 = (i - 1) * width() / double(maxPoints);
-        double x2 = i * width() / double(maxPoints);
-        double y1 = tempMidY - (tempList[i - 1] - tempBase) * tempPixelScale;
-        double y2 = tempMidY - (tempList[i] - tempBase) * tempPixelScale;
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
-    }
-
-    p.setPen(QPen(QColor("#4DA3FF"), 2));
-    for (int i = 1; i < humiList.size(); ++i) {
-        double x1 = (i - 1) * width() / double(maxPoints);
-        double x2 = i * width() / double(maxPoints);
-        double y1 = humiMidY - (humiList[i - 1] - humiBase) * humiPixelScale;
-        double y2 = humiMidY - (humiList[i] - humiBase) * humiPixelScale;
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
-    }
-
-    p.setPen(QPen(QColor("#565656"), 1));
-    p.drawLine(0, tempRect.bottom(), width(), tempRect.bottom());
-
-    p.setPen(QColor("#E0E0E0"));
-    p.drawText(10, 20, QString("Temp: %1 C").arg(tempList.last(), 0, 'f', 1));
-    p.drawText(10, 40, QString("Humi: %1 %").arg(humiList.last(), 0, 'f', 1));
+void PageTrend::trimData(QVector<double> &values)
+{
+    while (values.size() > maxPoints)
+        values.removeFirst();
 }

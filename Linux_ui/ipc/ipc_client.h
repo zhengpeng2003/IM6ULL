@@ -33,6 +33,18 @@ signals:
                            int baud,
                            bool connected,
                            const QString &message);
+    void commandAckReceived(quint32 seq,
+                            const QString &cmd,
+                            const QString &status,
+                            const QString &reason,
+                            const QString &message);
+    void alarmConfigReceived(double tempHigh, double humiHigh);
+    void emergencyReceived(int level,
+                           const QString &reason,
+                           double temp,
+                           double humi,
+                           double tempHigh,
+                           double humiHigh);
 
 private slots:
     void onReadyRead();

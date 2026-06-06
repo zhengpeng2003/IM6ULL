@@ -7,7 +7,7 @@ Widget::Widget(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName("MainWidget");
-    setFixedSize(272, 480);
+    setFixedSize(480, 272);
     initUI();
 
 }

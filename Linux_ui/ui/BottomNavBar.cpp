@@ -4,15 +4,15 @@ BottomNavBar::BottomNavBar(QWidget *parent)
     : QWidget(parent)
 {
     initUI();
-    setFixedHeight(48);
+    setFixedHeight(34);
 }
 
 void BottomNavBar::initUI()
 {
-    QPushButton *btnHome = new QPushButton("主页", this);
-    QPushButton *btnTrend = new QPushButton("趋势", this);
-    QPushButton *btnSet = new QPushButton("设置", this);
-    QPushButton *btnInfo = new QPushButton("信息", this);
+    QPushButton *btnHome = new QPushButton("Home", this);
+    QPushButton *btnTrend = new QPushButton("Trend", this);
+    QPushButton *btnSet = new QPushButton("Setting", this);
+    QPushButton *btnInfo = new QPushButton("Info", this);
 
     btnHome->setObjectName("NavButton");
     btnTrend->setObjectName("NavButton");

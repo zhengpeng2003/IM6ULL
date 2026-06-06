@@ -99,6 +99,42 @@ void IpcClient::onReadyRead()
         QJsonObject root = doc.object();
         const QString msgType = root.value("type").toString();
 
+        if (msgType == "ack") {
+            const QString cmd = root.value("cmd").toString();
+            const QString status = root.value("status").toString();
+            const QString reason = root.value("reason").toString();
+            const QString message = root.value("message").toString();
+
+            if ((cmd == "connect_port" || cmd == "disconnect_port") && root.contains("slot")) {
+                emit portStatusUpdated(root.value("slot").toInt(),
+                                       root.value("port").toString(),
+                                       root.value("device_type").toString(),
+                                       root.value("baud").toInt(),
+                                       root.value("connected").toBool(),
+                                       status == "ok" ? message : reason);
+            }
+
+            emit commandAckReceived(
+                static_cast<quint32>(root.value("seq").toVariant().toULongLong()),
+                cmd,
+                status,
+                reason,
+                message);
+
+            if (cmd == "scan_ports") {
+                QStringList ports;
+                for (const auto &v : root.value("ports").toArray())
+                    ports.append(v.toString());
+                emit portsUpdated(ports);
+            } else if ((cmd == "get_alarm_config" || cmd == "set_alarm_config") &&
+                       root.contains("temp_high") &&
+                       root.contains("humi_high")) {
+                emit alarmConfigReceived(root.value("temp_high").toDouble(),
+                                         root.value("humi_high").toDouble());
+            }
+            continue;
+        }
+
         if (msgType == "ports") {
             QStringList ports;
             for (const auto &v : root.value("ports").toArray())
@@ -107,13 +143,30 @@ void IpcClient::onReadyRead()
             continue;
         }
 
-        if (msgType == "port_status") {
+        if ((msgType == "command" && root.value("cmd").toString() == "port_status") ||
+            msgType == "port_status") {
             emit portStatusUpdated(root.value("slot").toInt(),
                                    root.value("port").toString(),
                                    root.value("device_type").toString(),
                                    root.value("baud").toInt(),
                                    root.value("connected").toBool(),
                                    root.value("message").toString());
+            continue;
+        }
+
+        if (msgType == "alarm_config") {
+            emit alarmConfigReceived(root.value("temp_high").toDouble(),
+                                     root.value("humi_high").toDouble());
+            continue;
+        }
+
+        if (msgType == "command" && root.value("cmd").toString() == "emergency") {
+            emit emergencyReceived(root.value("level").toInt(),
+                                   root.value("reason").toString(),
+                                   root.value("temp").toDouble(),
+                                   root.value("humi").toDouble(),
+                                   root.value("temp_high").toDouble(),
+                                   root.value("humi_high").toDouble());
             continue;
         }
 

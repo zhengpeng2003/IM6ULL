@@ -1,4 +1,5 @@
 #include "TopStatusBar.h"
+
 #include <QTime>
 
 TopStatusBar::TopStatusBar(QWidget *parent)
@@ -10,23 +11,23 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
 void TopStatusBar::initUI()
 {
-    setFixedHeight(40);
+    setFixedHeight(28);
     setObjectName("TopStatusBar");
 
-    titleLabel = new QLabel("系统 1.0");
-    timeLabel  = new QLabel("00:00");
-    statusDot  = new QLabel;
+    titleLabel = new QLabel("Industrial HMI");
+    timeLabel = new QLabel("00:00");
+    statusDot = new QLabel;
 
     statusDot->setFixedSize(10, 10);
     statusDot->setObjectName("StatusGreen");
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(10, 0, 10, 0);
+    layout->setContentsMargins(8, 0, 8, 0);
+    layout->setSpacing(6);
 
     layout->addWidget(titleLabel);
     layout->addStretch();
     layout->addWidget(timeLabel);
-    layout->addSpacing(10);
     layout->addWidget(statusDot);
 }
 
@@ -38,4 +39,3 @@ void TopStatusBar::initSignal()
     });
     timer->start(1000);
 }
-
