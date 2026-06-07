@@ -18,12 +18,12 @@ add_subdirectory(data)
 add_executable(qt_object main.cpp)
 
 target_link_libraries(qt_object
-    mqttwrapper
-    device
-    ipc
-    modbus
-    port_manager
-    service
     data_protocol
+    sensors
+    modbus_master
+    ipc
+    device
+    service
+    mqttwrapper
     Threads::Threads
 )

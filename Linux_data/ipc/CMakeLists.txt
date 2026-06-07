@@ -11,4 +11,5 @@ target_include_directories(ipc PUBLIC
 
 target_link_libraries(ipc PUBLIC
     mqttwrapper
+    device
 )
