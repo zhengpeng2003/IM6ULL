@@ -120,6 +120,7 @@ RelayUi::RelayUi(QWidget *parent)
     mainLayout->addWidget(ledRow);
     mainLayout->addWidget(fanRow);
     mainLayout->addWidget(buzzerRow);
+    controlRows << ledRow << fanRow << buzzerRow;
     mainLayout->addStretch();
     clearData();
     setControlEnabled(false);
@@ -151,6 +152,14 @@ void RelayUi::setRelayStates(bool ledOn, bool fanOn, bool buzzerOn, const QStrin
     fanLabel->setText(fanOn ? "On" : "Off");
     buzzerLabel->setText(buzzerOn ? "On" : "Off");
     updateTimeLabel->setText(updateTime);
+}
+
+void RelayUi::setControlsVisible(bool visible)
+{
+    for (QWidget *row : controlRows) {
+        if (row)
+            row->setVisible(visible);
+    }
 }
 
 void RelayUi::clearData()

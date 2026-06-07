@@ -3,10 +3,14 @@
 #include <QComboBox>
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QVariant>
 #include <QVBoxLayout>
 
+#include "slavedetaildialog.h"
+#include "slavelistdialog.h"
 #include "sensorui/sensorui.h"
 
 PageStatus::PageStatus(QWidget *parent)
@@ -30,24 +34,43 @@ void PageStatus::setMasterSummary(int masterCount,
                               .arg(mqttState));
 }
 
-void PageStatus::setMasterList(const QStringList &masters)
+void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters,
+                               int preferredMasterSlot)
 {
-    const QString current = masterCombo->currentText();
+    const int targetMasterSlot = preferredMasterSlot >= 0
+        ? preferredMasterSlot
+        : currentMasterSlot;
+
     masterCombo->blockSignals(true);
     masterCombo->clear();
-    masterCombo->addItems(masters);
-    const int index = masterCombo->findText(current);
+
+    for (const MasterStatusInfo &master : masters)
+        masterCombo->addItem(master.masterName, master.masterSlot);
+
+    int index = -1;
+    for (int i = 0; i < masterCombo->count(); ++i) {
+        if (masterCombo->itemData(i).toInt() == targetMasterSlot) {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0 && masterCombo->count() > 0)
+        index = 0;
     if (index >= 0)
         masterCombo->setCurrentIndex(index);
+
     masterCombo->blockSignals(false);
 
     if (masterCombo->count() > 0) {
-        currentMasterSlot = masterCombo->currentIndex();
+        currentMasterSlot = masterCombo->currentData().toInt();
         currentMasterName = masterCombo->currentText();
     } else {
         currentMasterSlot = -1;
         currentMasterName.clear();
     }
+
+    addSlaveButton->setEnabled(currentMasterSlot >= 0);
+    refreshMasterLabels();
 }
 
 void PageStatus::setCurrentMaster(const QString &masterName, int slaveCount)
@@ -63,11 +86,56 @@ void PageStatus::setCurrentMaster(const QString &masterName, int slaveCount)
 void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
 {
     slaves = slaveList;
+    for (const SlaveDeviceInfo &slave : slaves) {
+        SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
+        runtime.online = slave.online;
+        slaveRuntime.insert(runtimeKey(slave), runtime);
+    }
     currentSlaveIndex = slaves.isEmpty() ? -1 : 0;
     rebuildSlaveCards();
     refreshMasterLabels();
     if (currentSlaveIndex >= 0)
         selectSlave(currentSlaveIndex);
+    else
+        clearCurrentDetail();
+    updateOpenDialogs();
+}
+
+int PageStatus::currentMasterSlotValue() const
+{
+    return currentMasterSlot;
+}
+
+void PageStatus::updateSlaveOnline(int masterSlot,
+                                   int slaveAddr,
+                                   const QString &deviceType,
+                                   bool online)
+{
+    for (int i = 0; i < slaves.size(); ++i) {
+        SlaveDeviceInfo &slave = slaves[i];
+        if (slave.masterSlot != masterSlot ||
+            slave.slaveAddr != slaveAddr ||
+            slave.deviceType != deviceType) {
+            continue;
+        }
+
+        slave.online = online;
+        SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
+        runtime.online = online;
+        slaveRuntime.insert(runtimeKey(slave), runtime);
+        updateSlaveCardStyle(i, i == currentSlaveIndex);
+
+        if (i == currentSlaveIndex) {
+            if (deviceType == "sensor_th")
+                sensorThUi->setOnline(online);
+            else if (deviceType == "relay")
+                relayUi->setOnline(online);
+            else if (deviceType == "meter")
+                meterUi->setOnline(online);
+        }
+        updateOpenDialogs();
+        return;
+    }
 }
 
 void PageStatus::selectSlave(int index)
@@ -79,20 +147,32 @@ void PageStatus::selectSlave(int index)
     refreshSlaveCards();
 
     const SlaveDeviceInfo &slave = slaves.at(index);
+    const SlaveRuntimeInfo runtime = runtimeForSlave(slave);
     if (slave.deviceType == "sensor_th") {
         sensorThUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.slaveAddr);
         sensorThUi->clearData();
         sensorThUi->setOnline(slave.online);
+        if (runtime.hasSensorTh)
+            sensorThUi->setTemperatureHumidity(runtime.temperature, runtime.humidity, runtime.updateTime);
         detailStack->setCurrentWidget(sensorThUi);
     } else if (slave.deviceType == "relay") {
         relayUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.masterSlot, slave.slaveAddr);
         relayUi->clearData();
         relayUi->setOnline(slave.online);
+        if (runtime.hasRelay)
+            relayUi->setRelayStates(runtime.ledOn, runtime.fanOn, runtime.buzzerOn, runtime.updateTime);
         detailStack->setCurrentWidget(relayUi);
     } else if (slave.deviceType == "meter") {
         meterUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.slaveAddr);
         meterUi->clearData();
         meterUi->setOnline(slave.online);
+        if (runtime.hasMeter) {
+            meterUi->setMeterValues(runtime.voltage,
+                                    runtime.current,
+                                    runtime.power,
+                                    runtime.energy,
+                                    runtime.updateTime);
+        }
         detailStack->setCurrentWidget(meterUi);
     }
 
@@ -110,8 +190,17 @@ void PageStatus::setSensorThData(int masterSlot,
                                  double humidity,
                                  const QString &updateTime)
 {
+    SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(masterSlot, slaveAddr, "sensor_th"));
+    runtime.online = true;
+    runtime.hasSensorTh = true;
+    runtime.temperature = temperature;
+    runtime.humidity = humidity;
+    runtime.updateTime = updateTime;
+    slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "sensor_th"), runtime);
+
     if (isCurrentSlave(masterSlot, slaveAddr, "sensor_th"))
         sensorThUi->setTemperatureHumidity(temperature, humidity, updateTime);
+    updateOpenDialogs();
 }
 
 void PageStatus::setRelayStates(int masterSlot,
@@ -121,8 +210,18 @@ void PageStatus::setRelayStates(int masterSlot,
                                 bool buzzerOn,
                                 const QString &updateTime)
 {
+    SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(masterSlot, slaveAddr, "relay"));
+    runtime.online = true;
+    runtime.hasRelay = true;
+    runtime.ledOn = ledOn;
+    runtime.fanOn = fanOn;
+    runtime.buzzerOn = buzzerOn;
+    runtime.updateTime = updateTime;
+    slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "relay"), runtime);
+
     if (isCurrentSlave(masterSlot, slaveAddr, "relay"))
         relayUi->setRelayStates(ledOn, fanOn, buzzerOn, updateTime);
+    updateOpenDialogs();
 }
 
 void PageStatus::setMeterValues(int masterSlot,
@@ -133,8 +232,19 @@ void PageStatus::setMeterValues(int masterSlot,
                                 const QString &energy,
                                 const QString &updateTime)
 {
+    SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(masterSlot, slaveAddr, "meter"));
+    runtime.online = true;
+    runtime.hasMeter = true;
+    runtime.voltage = voltage;
+    runtime.current = current;
+    runtime.power = power;
+    runtime.energy = energy;
+    runtime.updateTime = updateTime;
+    slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "meter"), runtime);
+
     if (isCurrentSlave(masterSlot, slaveAddr, "meter"))
         meterUi->setMeterValues(voltage, current, power, energy, updateTime);
+    updateOpenDialogs();
 }
 
 bool PageStatus::eventFilter(QObject *watched, QEvent *event)
@@ -143,8 +253,19 @@ bool PageStatus::eventFilter(QObject *watched, QEvent *event)
         for (int i = 0; i < slaveCards.size(); ++i) {
             if (watched == slaveCards.at(i).frame) {
                 selectSlave(i);
+                openSlaveListDialog();
                 return true;
             }
+        }
+
+        if (watched == slaveListPanel) {
+            openSlaveListDialog();
+            return true;
+        }
+
+        if (watched == slaveScrollArea || watched == slaveScrollArea->viewport()) {
+            openSlaveListDialog();
+            return true;
         }
     }
 
@@ -170,6 +291,7 @@ void PageStatus::initUI()
     addSlaveButton = new QPushButton("+ Add Slave", this);
     addSlaveButton->setObjectName("ActionButton");
     addSlaveButton->setFixedWidth(76);
+    addSlaveButton->setEnabled(false);
 
     QHBoxLayout *masterRow = new QHBoxLayout;
     masterRow->setContentsMargins(0, 0, 0, 0);
@@ -180,21 +302,40 @@ void PageStatus::initUI()
     masterRow->addStretch();
     masterRow->addWidget(addSlaveButton);
 
-    QFrame *slaveListPanel = new QFrame(this);
+    slaveListPanel = new QFrame(this);
     slaveListPanel->setObjectName("Panel");
     slaveListPanel->setFixedWidth(150);
+    slaveListPanel->setCursor(Qt::PointingHandCursor);
+    slaveListPanel->installEventFilter(this);
 
-    QLabel *listTitle = new QLabel("Slave List", slaveListPanel);
-    listTitle->setObjectName("PanelTitle");
+    listTitleLabel = new QLabel("Slave List (0)", slaveListPanel);
+    listTitleLabel->setObjectName("PanelTitle");
+    listTitleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     emptyListLabel = new QLabel("No slave devices", slaveListPanel);
     emptyListLabel->setObjectName("HintText");
     emptyListLabel->setAlignment(Qt::AlignCenter);
+    emptyListLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-    slaveListLayout = new QVBoxLayout(slaveListPanel);
-    slaveListLayout->setContentsMargins(5, 5, 5, 5);
+    QWidget *slaveListContent = new QWidget(slaveListPanel);
+    slaveListContent->setObjectName("SlaveListContent");
+    slaveListLayout = new QVBoxLayout(slaveListContent);
+    slaveListLayout->setContentsMargins(0, 0, 0, 0);
     slaveListLayout->setSpacing(4);
-    slaveListLayout->addWidget(listTitle);
+
+    slaveScrollArea = new QScrollArea(slaveListPanel);
+    slaveScrollArea->setObjectName("SlaveListScrollArea");
+    slaveScrollArea->setWidgetResizable(true);
+    slaveScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    slaveScrollArea->setWidget(slaveListContent);
+    slaveScrollArea->installEventFilter(this);
+    slaveScrollArea->viewport()->installEventFilter(this);
+
+    QVBoxLayout *slavePanelLayout = new QVBoxLayout(slaveListPanel);
+    slavePanelLayout->setContentsMargins(5, 5, 5, 5);
+    slavePanelLayout->setSpacing(4);
+    slavePanelLayout->addWidget(listTitleLabel);
+    slavePanelLayout->addWidget(slaveScrollArea, 1);
 
     detailStack = new QStackedWidget(this);
     detailStack->setObjectName("DetailStack");
@@ -227,11 +368,16 @@ void PageStatus::initUI()
     mainLayout->addWidget(alarmLabel);
 
     connect(masterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        currentMasterSlot = index;
-        currentMasterName = masterCombo->currentText();
+        if (index >= 0) {
+            currentMasterSlot = masterCombo->itemData(index).toInt();
+            currentMasterName = masterCombo->itemText(index);
+        } else {
+            currentMasterSlot = -1;
+            currentMasterName.clear();
+        }
+
         refreshMasterLabels();
-        if (currentSlaveIndex >= 0)
-            selectSlave(currentSlaveIndex);
+        emit masterChanged(currentMasterSlot);
     });
 
     connect(addSlaveButton, &QPushButton::clicked, this, [this]() {
@@ -245,6 +391,8 @@ void PageStatus::initUI()
 void PageStatus::refreshMasterLabels()
 {
     slaveCountLabel->setText(QString("Slaves:%1").arg(slaves.size()));
+    if (listTitleLabel)
+        listTitleLabel->setText(QString("Slave List (%1)").arg(slaves.size()));
 }
 
 void PageStatus::refreshSlaveCards()
@@ -255,8 +403,8 @@ void PageStatus::refreshSlaveCards()
 
 void PageStatus::rebuildSlaveCards()
 {
-    while (slaveListLayout->count() > 1) {
-        QLayoutItem *item = slaveListLayout->takeAt(1);
+    while (slaveListLayout->count() > 0) {
+        QLayoutItem *item = slaveListLayout->takeAt(0);
         if (QWidget *widget = item->widget()) {
             if (widget != emptyListLabel)
                 widget->deleteLater();
@@ -273,6 +421,21 @@ void PageStatus::rebuildSlaveCards()
             slaveListLayout->addWidget(createSlaveCard(i));
         slaveListLayout->addStretch();
     }
+}
+
+void PageStatus::clearCurrentDetail()
+{
+    sensorThUi->setDeviceInfo("--", "--", 0);
+    sensorThUi->setOnline(false);
+    sensorThUi->clearData();
+
+    relayUi->setDeviceInfo("--", "--", -1, 0);
+    relayUi->setOnline(false);
+    relayUi->clearData();
+
+    meterUi->setDeviceInfo("--", "--", 0);
+    meterUi->setOnline(false);
+    meterUi->clearData();
 }
 
 void PageStatus::updateSlaveCardStyle(int index, bool selected)
@@ -300,7 +463,7 @@ void PageStatus::updateSlaveCardStyle(int index, bool selected)
 
 QFrame *PageStatus::createSlaveCard(int index)
 {
-    QFrame *frame = new QFrame(this);
+    QFrame *frame = new QFrame(slaveScrollArea);
     frame->setObjectName("SlaveCard");
     frame->setFixedHeight(38);
 
@@ -326,6 +489,77 @@ QFrame *PageStatus::createSlaveCard(int index)
     slaveCards.append(card);
     updateSlaveCardStyle(index, false);
     return frame;
+}
+
+void PageStatus::openSlaveListDialog()
+{
+    if (!slaveListDialog) {
+        slaveListDialog = new SlaveListDialog(this);
+        connect(slaveListDialog, &QObject::destroyed, this, [this]() {
+            slaveListDialog = nullptr;
+        });
+        connect(slaveListDialog,
+                &SlaveListDialog::slaveActivated,
+                this,
+                &PageStatus::openSlaveDetailDialog);
+    }
+
+    slaveListDialog->setSlaveList(slaves, slaveRuntime, currentMasterName);
+    slaveListDialog->show();
+    slaveListDialog->raise();
+    slaveListDialog->activateWindow();
+}
+
+void PageStatus::openSlaveDetailDialog(int index)
+{
+    if (index < 0 || index >= slaves.size())
+        return;
+
+    if (!slaveDetailDialog) {
+        slaveDetailDialog = new SlaveDetailDialog(this);
+        connect(slaveDetailDialog, &QObject::destroyed, this, [this]() {
+            slaveDetailDialog = nullptr;
+        });
+    }
+
+    const SlaveDeviceInfo &slave = slaves.at(index);
+    slaveDetailDialog->setSlave(slave, runtimeForSlave(slave), currentMasterName);
+    slaveDetailDialog->show();
+    slaveDetailDialog->raise();
+    slaveDetailDialog->activateWindow();
+}
+
+void PageStatus::updateOpenDialogs()
+{
+    if (slaveListDialog)
+        slaveListDialog->setSlaveList(slaves, slaveRuntime, currentMasterName);
+
+    if (!slaveDetailDialog)
+        return;
+
+    for (const SlaveDeviceInfo &slave : slaves) {
+        if (slaveDetailDialog->isShowingSlave(slave.masterSlot, slave.slaveAddr, slave.deviceType)) {
+            slaveDetailDialog->setSlave(slave, runtimeForSlave(slave), currentMasterName);
+            return;
+        }
+    }
+}
+
+QString PageStatus::runtimeKey(const SlaveDeviceInfo &slave) const
+{
+    return runtimeKey(slave.masterSlot, slave.slaveAddr, slave.deviceType);
+}
+
+QString PageStatus::runtimeKey(int masterSlot, int slaveAddr, const QString &deviceType) const
+{
+    return QString("%1:%2:%3").arg(masterSlot).arg(slaveAddr).arg(deviceType);
+}
+
+SlaveRuntimeInfo PageStatus::runtimeForSlave(const SlaveDeviceInfo &slave) const
+{
+    SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
+    runtime.online = slave.online || runtime.online;
+    return runtime;
 }
 
 bool PageStatus::isCurrentSlave(int masterSlot, int slaveAddr, const QString &deviceType) const

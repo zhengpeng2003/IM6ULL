@@ -6,6 +6,9 @@ CONFIG += c++17
 SOURCES += \
     data/data_parser.cpp \
     main.cpp \
+    pages/addslavedialog.cpp \
+    pages/slavedetaildialog.cpp \
+    pages/slavelistdialog.cpp \
     pages/TrendChartWidget.cpp \
     pages/pageinfo.cpp \
     pages/pagesetting.cpp \
@@ -22,6 +25,9 @@ SOURCES += \
 
 HEADERS += \
     data/data_parser.h \
+    pages/addslavedialog.h \
+    pages/slavedetaildialog.h \
+    pages/slavelistdialog.h \
     pages/TrendChartWidget.h \
     pages/pageinfo.h \
     pages/pagesetting.h \

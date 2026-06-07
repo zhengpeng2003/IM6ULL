@@ -1,45 +1,45 @@
 QWidget {
-    background-color: #101820;
-    color: #EAF2F8;
+    background-color: #F4F7FA;
+    color: #1F2A37;
     font-size: 11px;
 }
 
 #MainWidget,
 #PageArea {
-    background-color: #101820;
+    background-color: #F4F7FA;
 }
 
 #TopStatusBar,
 #BottomNavBar {
-    background-color: #111923;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
 }
 
 #TopStatusBar QLabel {
-    color: #EAF2F8;
+    color: #1F2A37;
     font-size: 12px;
 }
 
 #NavButton {
     border: none;
-    color: #95A5A6;
+    color: #64748B;
     font-size: 12px;
     min-height: 30px;
-    background-color: #111923;
+    background-color: #FFFFFF;
 }
 
 #NavButton:pressed,
 #NavButton:hover {
-    color: #00BFA5;
-    background-color: #1B2633;
+    color: #009E8E;
+    background-color: #E8F6F4;
 }
 
 #SummaryBar,
 #StatsBar {
-    background-color: #1B2633;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
     border-radius: 4px;
-    color: #EAF2F8;
+    color: #1F2A37;
     padding-left: 7px;
 }
 
@@ -48,77 +48,77 @@ QWidget {
 #PortCard,
 #EmptyPanel,
 #TrendChart {
-    background-color: #1B2633;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
     border-radius: 4px;
 }
 
 #PanelTitle,
 #SectionTitle {
-    color: #EAF2F8;
+    color: #1F2A37;
     font-size: 13px;
     font-weight: bold;
 }
 
 #DetailKey,
 #HintText {
-    color: #95A5A6;
+    color: #64748B;
     font-size: 10px;
 }
 
 #DetailValue {
-    color: #EAF2F8;
+    color: #1F2A37;
     font-size: 11px;
 }
 
 #DetailValue[state="online"],
 #SlaveState[state="online"],
 QLabel[state="online"] {
-    color: #00BFA5;
+    color: #009E8E;
 }
 
 #DetailValue[state="offline"],
 #SlaveState[state="offline"],
 QLabel[state="offline"] {
-    color: #95A5A6;
+    color: #64748B;
 }
 
 #SlaveCard {
-    background-color: #1B2633;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
     border-radius: 4px;
 }
 
 #SlaveCard[selected="true"] {
-    border: 1px solid #00BFA5;
-    background-color: #20323B;
+    border: 1px solid #009E8E;
+    background-color: #E8F6F4;
 }
 
 #SlaveTitle {
-    color: #EAF2F8;
+    color: #1F2A37;
     font-size: 11px;
     font-weight: bold;
 }
 
 #SlaveState {
-    color: #95A5A6;
+    color: #64748B;
     font-size: 10px;
 }
 
 #AlarmBar {
-    background-color: #4A1F24;
-    border: 1px solid #FF5252;
+    background-color: #FFF1F2;
+    border: 1px solid #EF4444;
     border-radius: 4px;
-    color: #FFB3B3;
+    color: #B91C1C;
     padding-left: 7px;
 }
 
 #ActionButton,
 #SmallActionButton {
-    background-color: #00BFA5;
-    border: 1px solid #00D7BB;
+    background-color: #009E8E;
+    border: 1px solid #00B3A1;
     border-radius: 4px;
-    color: #071313;
+    color: #FFFFFF;
     min-height: 22px;
     padding: 1px 7px;
 }
@@ -126,25 +126,25 @@ QLabel[state="offline"] {
 #GhostButton,
 #SmallGhostButton,
 #ToggleButton {
-    background-color: #1B2633;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
     border-radius: 4px;
-    color: #EAF2F8;
+    color: #1F2A37;
     min-height: 22px;
     padding: 1px 7px;
 }
 
 #ToggleButton[checked="true"] {
-    background-color: #00BFA5;
-    border-color: #00D7BB;
-    color: #071313;
+    background-color: #009E8E;
+    border-color: #00B3A1;
+    color: #FFFFFF;
 }
 
 #DangerButton {
-    background-color: #5A2A22;
-    border: 1px solid #C46A3A;
+    background-color: #FFF7ED;
+    border: 1px solid #F97316;
     border-radius: 4px;
-    color: #FFD4C2;
+    color: #C2410C;
     min-height: 22px;
     padding: 1px 7px;
 }
@@ -154,52 +154,105 @@ QLabel[state="offline"] {
 #SmallActionButton:disabled,
 #SmallGhostButton:disabled,
 #DangerButton:disabled {
-    background-color: #24313D;
-    border-color: #2E4053;
-    color: #647174;
+    background-color: #E5EAF0;
+    border-color: #D7DEE8;
+    color: #94A3B8;
 }
 
 QComboBox,
 #CompactCombo,
 QLineEdit,
 #CompactLineEdit {
-    background-color: #111923;
-    border: 1px solid #2E4053;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
     border-radius: 4px;
-    color: #EAF2F8;
+    color: #1F2A37;
     min-height: 20px;
     padding-left: 5px;
 }
 
 QComboBox:disabled,
 QLineEdit:disabled {
-    color: #95A5A6;
-    background-color: #18212B;
+    color: #94A3B8;
+    background-color: #E5EAF0;
 }
 
 QComboBox QAbstractItemView {
-    background-color: #111923;
-    border: 1px solid #2E4053;
-    selection-background-color: #00BFA5;
-    selection-color: #071313;
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
+    selection-background-color: #009E8E;
+    selection-color: #FFFFFF;
 }
 
 #EmptyTitle {
-    color: #EAF2F8;
+    color: #1F2A37;
     font-size: 14px;
     font-weight: bold;
 }
 
 #StatusGreen {
-    background-color: #00BFA5;
+    background-color: #009E8E;
     border-radius: 5px;
 }
 
 #StatusGray {
-    background-color: #95A5A6;
+    background-color: #94A3B8;
     border-radius: 5px;
 }
 
 QScrollArea {
+    border: none;
+}
+
+#SlaveListScrollArea,
+#PopupScrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+#SlaveListContent,
+#PopupListContent {
+    background-color: transparent;
+}
+
+#SlavePopup {
+    background-color: #F4F7FA;
+    border: 1px solid #D7DEE8;
+}
+
+#PopupTitle {
+    color: #1F2A37;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#PopupCloseButton {
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
+    border-radius: 4px;
+    color: #1F2A37;
+    font-size: 11px;
+}
+
+#PopupCloseButton:pressed,
+#PopupCloseButton:hover {
+    background-color: #FFF1F2;
+    border-color: #EF4444;
+    color: #B91C1C;
+}
+
+#SlavePopupRow {
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
+    border-radius: 4px;
+}
+
+#SlavePopupRow:hover {
+    border-color: #009E8E;
+    background-color: #E8F6F4;
+}
+
+#PopupDetailStack {
+    background-color: transparent;
     border: none;
 }

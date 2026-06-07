@@ -16,6 +16,7 @@ public:
     ~IpcClient();
 
     bool connectToServer(const QString &path);
+    bool isConnected() const;
     bool sendMessage(const QByteArray &msg);
 
 signals:
@@ -55,5 +56,6 @@ private:
     QLocalSocket *m_socket;
     QByteArray m_recvBuf;//用于切包的
 };
+
 
 #endif // IPC_CLIENT_H

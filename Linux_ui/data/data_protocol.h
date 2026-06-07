@@ -46,4 +46,3 @@ struct DataPack
 };
 
 #endif // DATA_PROTOCOL_H
-

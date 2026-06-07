@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QLabel>
+#include <QList>
 #include <QPushButton>
 #include <QWidget>
 
@@ -50,6 +51,7 @@ public:
                        int slaveAddr);
     void setOnline(bool online);
     void setRelayStates(bool ledOn, bool fanOn, bool buzzerOn, const QString &updateTime);
+    void setControlsVisible(bool visible);
     void clearData();
 
 signals:
@@ -79,6 +81,7 @@ private:
     QPushButton *fanOffButton = nullptr;
     QPushButton *buzzerOnButton = nullptr;
     QPushButton *buzzerOffButton = nullptr;
+    QList<QWidget *> controlRows;
     int currentMasterSlot = 0;
     int currentSlaveAddr = 0;
 };

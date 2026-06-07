@@ -55,6 +55,11 @@ bool IpcClient::connectToServer(const QString &path)
     return true;
 }
 
+bool IpcClient::isConnected() const
+{
+    return m_socket->state() == QLocalSocket::ConnectedState;
+}
+
 bool IpcClient::sendMessage(const QByteArray &msg)
 {
     if (m_socket->state() != QLocalSocket::ConnectedState)
@@ -171,8 +176,11 @@ void IpcClient::onReadyRead()
         }
 
         DataPack pack;
-        if (DataParser::parseJson(frame, pack))
+        if (DataParser::parseJson(frame, pack)) {
             emit deviceStatusUpdated(pack);
+            emit devicetrend(pack);
+            emit deviceinfo(pack);
+        }
     }
 }
 
