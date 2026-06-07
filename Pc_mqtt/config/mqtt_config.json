@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 1883,
+  "username": "",
+  "password": "",
+  "client_id": "pc_monitor_001",
+  "topic_prefix": "factory",
+  "auto_connect": false,
+  "auto_reconnect": true
+}

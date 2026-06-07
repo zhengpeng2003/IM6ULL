@@ -1,0 +1,110 @@
+QWidget {
+    font-family: "Microsoft YaHei";
+    font-size: 14px;
+    color: #111827;
+    background: #F5F7FA;
+}
+
+#TopBar {
+    background: #FFFFFF;
+    border-bottom: 1px solid #E5E7EB;
+}
+
+#TopTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0F172A;
+}
+
+#SideBar {
+    background: #1E293B;
+}
+
+#SideButton {
+    color: #CBD5E1;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding-left: 16px;
+    text-align: left;
+}
+
+#SideButton:hover {
+    background: #334155;
+    color: #FFFFFF;
+}
+
+#SideButton:checked {
+    background: #2563EB;
+    color: #FFFFFF;
+}
+
+#PageTitle, .PageTitle {
+    font-size: 22px;
+    font-weight: 700;
+    color: #0F172A;
+}
+
+#StatusCard {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+}
+
+#CardTitle {
+    color: #64748B;
+}
+
+#CardValue {
+    color: #2563EB;
+    font-size: 28px;
+    font-weight: 700;
+}
+
+#CardSubText {
+    color: #94A3B8;
+    font-size: 12px;
+}
+
+#DetailPanel {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+QPushButton {
+    background: #2563EB;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 14px;
+}
+
+QPushButton:hover {
+    background: #1D4ED8;
+}
+
+QTableWidget, QTreeWidget, QLineEdit, QComboBox {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QHeaderView::section {
+    background: #F1F5F9;
+    color: #111827;
+    padding: 6px;
+    border: none;
+}
+
+QLabel[state="online"] {
+    color: #16A34A;
+    font-weight: 600;
+}
+
+QLabel[state="offline"] {
+    color: #6B7280;
+    font-weight: 600;
+}
