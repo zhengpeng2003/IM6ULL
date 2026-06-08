@@ -1,0 +1,11 @@
+传感器 / 电表 / PLC / 变频器 / 仪表 / 继电器
+        ↓
+RS485 / RS232 / CAN / Ethernet / DI/DO / AI/AO
+        ↓
+工业网关 / 边缘网关 / PLC / 工控机
+        ↓
+MQTT / OPC UA / Modbus TCP / HTTP / 私有协议
+        ↓
+本地服务器 / SCADA / MES / 云平台 / 上位机
+        ↓
+数据库 / 报警 / 趋势图 / 报表 / 大屏

@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QMqttClient>
+#include <QDebug>
 #include "model/ConfigModel.h"
 
 class MqttClientManager : public QObject

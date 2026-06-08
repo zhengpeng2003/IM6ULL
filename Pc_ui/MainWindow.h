@@ -1,6 +1,9 @@
 #pragma once
 
+#include <QByteArray>
 #include <QMainWindow>
+#include <QJsonObject>
+#include <QMap>
 #include <QStackedWidget>
 
 class TopBar;
@@ -19,6 +22,8 @@ class AlarmManager;
 class CommandManager;
 class DatabaseManager;
 class ConfigManager;
+class IpcClient;
+class QTimer;
 
 class MainWindow : public QMainWindow
 {
@@ -32,6 +37,7 @@ private:
     void initUi();
     void initConnections();
     void loadInitialConfig();
+    void handleIpcMessage(const QByteArray &frame);
 
 private:
     TopBar *m_topBar = nullptr;
@@ -52,4 +58,11 @@ private:
     CommandManager *m_command = nullptr;
     DatabaseManager *m_database = nullptr;
     ConfigManager *m_config = nullptr;
+
+
+    //测试通信
+private:
+    IpcClient *m_ipcClient = nullptr;
+    QTimer *m_ipcTimer = nullptr;
+    QMap<QString, QJsonObject> m_latestPointMap;
 };

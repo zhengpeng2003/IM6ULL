@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Core Gui Sql Charts Mqtt)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Core Gui Sql Charts Mqtt Network)
 
 file(GLOB_RECURSE PROJECT_SOURCES
     "*.cpp"
@@ -26,4 +26,5 @@ target_link_libraries(Pc_mqtt PRIVATE
     Qt6::Sql
     Qt6::Charts
     Qt6::Mqtt
+    Qt6::Network
 )

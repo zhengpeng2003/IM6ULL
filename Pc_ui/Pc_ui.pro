@@ -1,13 +1,14 @@
-QT += core gui widgets sql charts mqtt
+QT += core gui widgets sql charts mqtt network
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++17
 
-TARGET = Pc_mqtt
+TARGET = Pc_ui
 TEMPLATE = app
 
 SOURCES += \
+    ipc/ipcclient.cpp \
     main.cpp \
     MainWindow.cpp \
     ui/TopBar.cpp \
@@ -37,6 +38,7 @@ SOURCES += \
 
 HEADERS += \
     MainWindow.h \
+    ipc/ipcclient.h \
     ui/TopBar.h \
     ui/SideBar.h \
     ui/StatusCard.h \

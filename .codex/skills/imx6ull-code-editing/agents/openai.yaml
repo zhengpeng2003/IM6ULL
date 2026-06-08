@@ -1,0 +1,7 @@
+interface:
+  display_name: "IMX6ULL Code Editing"
+  short_description: "Scoped edits with risk notes"
+  default_prompt: "Use $imx6ull-code-editing to edit this IMX6ULL/Qt repository without running builds or tests unless explicitly requested, then report changes, skipped validation, risks, and suggested checks."
+
+policy:
+  allow_implicit_invocation: true
