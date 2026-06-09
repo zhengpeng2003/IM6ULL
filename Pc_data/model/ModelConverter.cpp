@@ -24,6 +24,10 @@ std::vector<TelemetryPoint> ModelConverter::toTelemetryPoints(const TelemetryPac
             appendSysInfoPoints(pack, device, points);
             break;
 
+        case DeviceType::Unknown:
+            appendUnknownDevicePoint(pack, device, points);
+            break;
+
         default:
             break;
         }
@@ -299,4 +303,23 @@ void ModelConverter::appendSysInfoPoints(const TelemetryPack& pack,
 
         points.push_back(point);
     }
+}
+
+void ModelConverter::appendUnknownDevicePoint(const TelemetryPack& pack,
+                                              const DeviceData& device,
+                                              std::vector<TelemetryPoint>& points)
+{
+    TelemetryPoint point = makeBasePoint(pack, device);
+
+    point.pointKey = "unknown_status";
+    point.pointId = buildPointId(pack, device, point.pointKey);
+    point.pointName = "Unknown Device Status";
+    point.unit = "";
+    point.valueType = PointValueType::Text;
+    point.numberValue = 0.0;
+    point.textValue = device.errorMessage.empty() ? "unknown_device_type" : device.errorMessage;
+    point.valid = false;
+    point.errorMessage = point.textValue;
+
+    points.push_back(point);
 }

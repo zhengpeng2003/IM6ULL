@@ -46,7 +46,7 @@ public:
 
     // 生成模拟数据，用于当前阶段测试 model + service + IPC
     void generateMockData();
-
+    void generateMockDataExtraCases();
 private:
     mutable std::mutex m_mutex;
 

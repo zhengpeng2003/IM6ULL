@@ -62,6 +62,10 @@ private:
     static void appendSysInfoPoints(const TelemetryPack& pack,
                                     const DeviceData& device,
                                     std::vector<TelemetryPoint>& points);
+
+    static void appendUnknownDevicePoint(const TelemetryPack& pack,
+                                         const DeviceData& device,
+                                         std::vector<TelemetryPoint>& points);
 };
 
 #endif // MODEL_CONVERTER_HPP

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -40,6 +41,75 @@ static std::string jsonEscape(const std::string& input)
     }
 
     return output;
+}
+
+static std::int64_t currentTimeMs()
+{
+    using namespace std::chrono;
+
+    return duration_cast<milliseconds>(
+               system_clock::now().time_since_epoch()
+               ).count();
+}
+
+static std::string extractJsonStringValue(const std::string& json, const std::string& key)
+{
+    const std::string pattern = "\"" + key + "\"";
+    size_t pos = json.find(pattern);
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    pos = json.find(':', pos + pattern.size());
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    pos = json.find('"', pos + 1);
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    std::string result;
+    bool escaped = false;
+    for (size_t i = pos + 1; i < json.size(); ++i) {
+        const char ch = json[i];
+        if (escaped) {
+            result.push_back(ch);
+            escaped = false;
+            continue;
+        }
+
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (ch == '"') {
+            break;
+        }
+
+        result.push_back(ch);
+    }
+
+    return result;
+}
+
+static std::string buildCommandAckJson(const std::string& cmdId,
+                                       bool ok,
+                                       const std::string& reason)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"command_ack\",";
+    oss << "\"cmd_id\":\"" << jsonEscape(cmdId) << "\",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"timestamp\":" << currentTimeMs();
+    oss << "}";
+
+    return oss.str();
 }
 
 static std::string valueTypeToString(PointValueType type)
@@ -135,7 +205,7 @@ int main()
          *
          * dataService.handleTelemetryPack(pack);
          */
-        dataService.generateMockData();
+        dataService.generateMockDataExtraCases();
         cout << "generateMockData ok" << endl;
 
         std::vector<TelemetryPoint> testPoints = dataService.getLatestPoints();
@@ -174,6 +244,8 @@ int main()
             if (msg.find("get_latest_points") != std::string::npos ||
                 msg.find("get_snapshot") != std::string::npos) {
 
+                dataService.generateMockDataExtraCases();
+
                 std::vector<TelemetryPoint> points = dataService.getLatestPoints();
 
                 cout << "latest point count: " << points.size() << endl;
@@ -185,6 +257,12 @@ int main()
                 ipc.sendMessage(json);
 
                 cout << "send latest_points done" << endl;
+            } else if (msg.find("\"type\":\"command\"") != std::string::npos ||
+                       msg.find("\"msg_type\":\"command\"") != std::string::npos) {
+                const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
+                ipc.sendMessage(buildCommandAckJson(cmdId, true, ""));
+
+                cout << "send command_ack done, cmd_id: " << cmdId << endl;
             } else {
                 ipc.sendMessage(R"({"type":"ack","cmd":"unknown","status":"ok","message":"Pc_data received"})");
 
