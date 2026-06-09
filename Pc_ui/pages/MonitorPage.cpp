@@ -7,6 +7,43 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
+#include <algorithm>
+
+namespace {
+
+QString displayPointValue(const TelemetryPointData &point)
+{
+    if (!point.valid) {
+        return point.errorMessage.isEmpty()
+            ? QStringLiteral("无效")
+            : QStringLiteral("无效(%1)").arg(point.errorMessage);
+    }
+
+    if (point.valueType == "text") {
+        return point.textValue;
+    }
+
+    if (point.valueType == "boolean") {
+        return point.numberValue != 0.0 ? QStringLiteral("ON") : QStringLiteral("OFF");
+    }
+
+    QString text = QString::number(point.numberValue, 'f', 2);
+    if (!point.unit.isEmpty()) {
+        text += QStringLiteral(" ") + point.unit;
+    }
+    return text;
+}
+
+QString displayPointName(const TelemetryPointData &point)
+{
+    if (!point.pointName.isEmpty()) {
+        return point.pointName;
+    }
+
+    return point.pointKey;
+}
+
+} // namespace
 
 MonitorPage::MonitorPage(DataManager *data, CommandManager *command, QWidget *parent)
     : QWidget(parent), m_data(data), m_command(command)
@@ -53,7 +90,12 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command, QWidget *pa
 
 void MonitorPage::refreshDeviceTree()
 {
-    m_tree->setDevices(m_data->deviceTreeSnapshot());
+    const QList<DeviceNode> devices = m_data->deviceTreeSnapshot();
+    m_tree->setDevices(devices);
+    if (devices.isEmpty()) {
+        setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
+    }
+    //m_tree->expandAll();
 }
 
 void MonitorPage::onDeviceSelected(const QString &deviceKey)
@@ -64,9 +106,20 @@ void MonitorPage::onDeviceSelected(const QString &deviceKey)
 
 void MonitorPage::refreshDetail()
 {
-    if (m_currentKey.isEmpty()) return;
+    if (m_currentKey.isEmpty()) {
+        if (m_data->deviceTreeSnapshot().isEmpty()) {
+            setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
+        }
+        return;
+    }
+
     const auto d = m_data->deviceData(m_currentKey);
     const auto &n = d.node;
+    if (n.factoryId.isEmpty()) {
+        setDetailText(QStringLiteral("当前设备暂无实时数据"));
+        return;
+    }
+
     QString text;
     text += QStringLiteral("工厂: %1\n厂房: %2\n网关: %3\n主站: RS485-%4 %5\n从站地址: %6\n设备名称: %7\n设备类型: %8\n在线状态: %9\n更新时间: %10\n\n")
         .arg(n.factoryId, n.areaName, n.gatewayId)
@@ -75,15 +128,34 @@ void MonitorPage::refreshDetail()
         .arg(n.online ? QStringLiteral("在线") : QStringLiteral("离线"))
         .arg(d.timestamp);
 
-    if (n.deviceType == "sensor_th") {
-        text += QStringLiteral("温度: %1 ℃\n湿度: %2 %\n").arg(d.sensorTh.temperature).arg(d.sensorTh.humidity);
-    } else if (n.deviceType == "relay") {
-        text += QStringLiteral("LED: %1\nFAN: %2\nBUZZER: %3\n")
-            .arg(d.relay.led ? "ON" : "OFF", d.relay.fan ? "ON" : "OFF", d.relay.buzzer ? "ON" : "OFF");
-    } else if (n.deviceType == "meter") {
-        text += QStringLiteral("电压: %1 V\n电流: %2 A\n功率: %3 W\n电能: %4 kWh\n")
-            .arg(d.meter.voltage).arg(d.meter.current).arg(d.meter.power).arg(d.meter.energy);
+    text += QStringLiteral("解析状态: %1\n").arg(d.statusText.isEmpty() ? QStringLiteral("未知") : d.statusText);
+    text += QStringLiteral("状态等级: %1\n").arg(d.statusLevel.isEmpty() ? QStringLiteral("unknown") : d.statusLevel);
+    text += QStringLiteral("数据有效: %1\n").arg(d.valid ? QStringLiteral("是") : QStringLiteral("否"));
+    if (!d.errorMessage.isEmpty()) {
+        text += QStringLiteral("异常原因: %1\n").arg(d.errorMessage);
     }
+
+    if (d.points.isEmpty()) {
+        text += QStringLiteral("\n测点: 暂无\n");
+        setDetailText(text);
+        return;
+    }
+
+    QList<TelemetryPointData> points = d.points;
+    std::sort(points.begin(), points.end(), [](const TelemetryPointData &left, const TelemetryPointData &right) {
+        return left.pointKey < right.pointKey;
+    });
+
+    text += QStringLiteral("\n测点列表:\n");
+    for (const TelemetryPointData &point : points) {
+        text += QStringLiteral("- %1 [%2]: %3")
+            .arg(displayPointName(point), point.pointKey, displayPointValue(point));
+        if (!point.valid && !point.errorMessage.isEmpty()) {
+            text += QStringLiteral("  原因: %1").arg(point.errorMessage);
+        }
+        text += QStringLiteral("\n");
+    }
+
     setDetailText(text);
 }
 

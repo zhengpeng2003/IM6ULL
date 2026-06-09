@@ -23,11 +23,10 @@
 #include <QStatusBar>
 #include <QDebug>
 #include <QTimer>
-#include <QJsonArray>
+#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
-#include <QJsonValue>
 
 #include "ipc/ipcclient.h"
 
@@ -38,23 +37,29 @@ MainWindow::MainWindow(QWidget *parent)
     initUi();
     initConnections();
     loadInitialConfig();
+    initIpc();
+}
+MainWindow::~MainWindow() = default;
 
+void MainWindow::initIpc()
+{
     m_ipcClient = new IpcClient(this);
     m_ipcTimer = new QTimer(this);
+    m_ipcWatchdogTimer = new QTimer(this);
 
     connect(m_ipcClient, &IpcClient::connected, this, [this]() {
         qDebug() << "Pc_ui IPC connected";
-        m_ipcClient->sendMessage(QString(R"({"type":"get_latest_points"})"));
-        m_ipcTimer->start(1000);
+        requestLatestPoints();
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
         qDebug() << "Pc_ui IPC disconnected";
-        m_ipcTimer->stop();
+        markIpcDataOffline();
     });
 
-    connect(m_ipcClient, &IpcClient::errorOccured, this, [](const QString &err) {
+    connect(m_ipcClient, &IpcClient::errorOccured, this, [this](const QString &err) {
         qDebug() << "IPC error:" << err;
+        markIpcDataOffline();
     });
 
     connect(m_ipcClient, &IpcClient::messageReceived,
@@ -66,16 +71,40 @@ MainWindow::MainWindow(QWidget *parent)
         }
 
         if (!m_ipcClient->isConnected()) {
+            m_ipcClient->connectToServer();
             return;
         }
 
-        m_ipcClient->sendMessage(QString(R"({"type":"get_latest_points"})"));
+        requestLatestPoints();
 
     });
 
+    connect(m_ipcWatchdogTimer, &QTimer::timeout, this, [this]() {
+        if (m_lastLatestPointsMs <= 0) {
+            markIpcDataOffline();
+            return;
+        }
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now - m_lastLatestPointsMs > 6000) {
+            markIpcDataOffline();
+        }
+    });
+
+    connect(m_command, &CommandManager::commandReadyForIpc, this, [this](const QByteArray &payload) {
+        if (!m_ipcClient || !m_ipcClient->isConnected()) {
+            qDebug() << "IPC command send skipped: client is not connected.";
+            markIpcDataOffline();
+            return;
+        }
+
+        m_ipcClient->sendMessage(payload);
+    });
+
+    m_ipcTimer->start(2000);
+    m_ipcWatchdogTimer->start(1000);
     m_ipcClient->connectToServer();
 }
-MainWindow::~MainWindow() = default;
 
 void MainWindow::handleIpcMessage(const QByteArray &frame)
 {
@@ -102,74 +131,34 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
     }
 
     if (type == "latest_points") {
-        const int count = root.value("count").toInt();
-        const QJsonArray points = root.value("points").toArray();
+        m_lastLatestPointsMs = QDateTime::currentMSecsSinceEpoch();
+        m_data->onLatestPointsMessage(root);
+        return;
+    }
 
-        qDebug() << "latest_points count =" << count
-                 << "array size =" << points.size();
-
-        for (const QJsonValue &value : points) {
-            if (!value.isObject()) {
-                continue;
-            }
-
-            const QJsonObject obj = value.toObject();
-
-            const QString pointId = obj.value("pointId").toString();
-            const QString deviceName = obj.value("deviceName").toString();
-            const QString pointKey = obj.value("pointKey").toString();
-            const QString pointName = obj.value("pointName").toString();
-            const QString unit = obj.value("unit").toString();
-            const QString valueType = obj.value("valueType").toString();
-            const bool valid = obj.value("valid").toBool();
-
-            if (pointId.isEmpty()) {
-                qDebug() << "latest_points item missing pointId:" << obj;
-                continue;
-            }
-
-            m_latestPointMap[pointId] = obj;
-
-            if (!valid) {
-                qDebug() << "[INVALID]"
-                         << deviceName
-                         << pointName
-                         << obj.value("errorMessage").toString();
-                continue;
-            }
-
-            if (valueType == "number" || valueType == "boolean") {
-                const double numberValue = obj.value("numberValue").toDouble();
-
-                qDebug() << deviceName
-                         << pointName
-                         << "="
-                         << numberValue
-                         << unit
-                         << "pointId:"
-                         << pointId;
-            } else if (valueType == "text") {
-                const QString textValue = obj.value("textValue").toString();
-
-                qDebug() << deviceName
-                         << pointName
-                         << "="
-                         << textValue
-                         << "pointId:"
-                         << pointId;
-            } else {
-                qDebug() << "unknown valueType:"
-                         << valueType
-                         << pointKey
-                         << pointId;
-            }
-        }
-
+    if (type == "ack" || type == "command_ack") {
+        m_command->onCommandAck(root);
         return;
     }
 
     qDebug() << "unknown IPC message type:" << type
              << "frame:" << frame;
+}
+
+void MainWindow::requestLatestPoints()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+
+    m_ipcClient->sendMessage(QString(R"({"type":"get_latest_points"})"));
+}
+
+void MainWindow::markIpcDataOffline()
+{
+    if (m_data) {
+        m_data->markAllDevicesOffline();
+    }
 }
 
 void MainWindow::initManagers()
@@ -254,9 +243,6 @@ void MainWindow::initConnections()
     connect(m_device, &DeviceManager::onlineDeviceCountChanged,
             m_topBar, &TopBar::setOnlineDeviceCount);
 
-    connect(m_command, &CommandManager::commandReadyToPublish,
-            m_mqtt, &MqttClientManager::publishMessage);
-
     connect(m_command, &CommandManager::commandForDb,
             m_database, &DatabaseManager::enqueueCommand);
 }
@@ -265,8 +251,6 @@ void MainWindow::loadInitialConfig()
 {
     m_database->openDatabase(m_config->loadDatabasePath());
     m_database->initTables();
-
-    m_data->loadDemoData();
 
     const MqttConfig cfg = m_config->loadMqttConfig();
     if (cfg.autoConnect) {

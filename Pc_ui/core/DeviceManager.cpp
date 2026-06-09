@@ -16,6 +16,8 @@ void DeviceManager::upsertDevice(const DeviceNode &node)
 {
     m_devices.insert(node.key(), node);
     emit deviceConfigChanged();
+    emit onlineGatewayCountChanged(onlineGatewayCount());
+    emit onlineDeviceCountChanged(onlineDeviceCount());
 }
 
 QList<DeviceNode> DeviceManager::allDevices() const

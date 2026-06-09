@@ -5,6 +5,7 @@ class DeviceManager;
 class AlarmManager;
 class StatusCard;
 class QTimer;
+class QTabWidget;
 class QTableWidget;
 
 class DashboardPage : public QWidget
@@ -25,6 +26,8 @@ private:
     StatusCard *m_slaveCard = nullptr;
     StatusCard *m_alarmCard = nullptr;
     QTableWidget *m_masterTable = nullptr;
+    QTabWidget *m_infoTabWidget = nullptr;
     QTableWidget *m_alarmTable = nullptr;
+    QTableWidget *m_errorTable = nullptr;
     QTimer *m_timer = nullptr;
 };

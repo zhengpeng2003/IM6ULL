@@ -1,4 +1,5 @@
 #pragma once
+#include <QByteArray>
 #include <QObject>
 #include <QHash>
 #include <QJsonObject>
@@ -18,6 +19,7 @@ public slots:
     void onCommandAck(const QJsonObject &obj);
 
 signals:
+    void commandReadyForIpc(const QByteArray &payload);
     void commandReadyToPublish(const QString &topic, const QByteArray &payload, int qos, bool retain);
     void commandStateChanged(const QString &cmdId, const QString &state);
     void commandTimeout(const QString &cmdId);

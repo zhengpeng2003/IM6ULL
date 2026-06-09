@@ -5,6 +5,23 @@
 
 CommandManager::CommandManager(QObject *parent) : QObject(parent) {}
 
+static QString ipcRelayChannel(const QString &channel)
+{
+    if (channel == "led") {
+        return "relay_1";
+    }
+
+    if (channel == "fan") {
+        return "relay_2";
+    }
+
+    if (channel == "buzzer") {
+        return "relay_3";
+    }
+
+    return channel;
+}
+
 void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &channel, bool value)
 {
     CommandRecord rec;
@@ -19,10 +36,11 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     rec.command = "set_relay";
     rec.state = "pending";
 
-    QJsonObject params{{"channel", channel}, {"value", value}};
+    QJsonObject params{{"channel", ipcRelayChannel(channel)}, {"value", value}};
     rec.paramsJson = QString::fromUtf8(QJsonDocument(params).toJson(QJsonDocument::Compact));
 
     QJsonObject obj;
+    obj["type"] = "command";
     obj["msg_type"] = "command";
     obj["version"] = 1;
     obj["cmd_id"] = rec.cmdId;
@@ -30,8 +48,10 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["factory_id"] = rec.factoryId;
     obj["area_id"] = rec.areaId;
     obj["gateway_id"] = rec.gatewayId;
+    obj["port_id"] = device.port;
     obj["master_slot"] = rec.masterSlot;
     obj["slave_addr"] = rec.slaveAddr;
+    obj["device_id"] = device.deviceId;
     obj["device_type"] = rec.deviceType;
     obj["command"] = rec.command;
     obj["params"] = params;
@@ -39,7 +59,7 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     m_pending.insert(rec.cmdId, rec);
     emit commandForDb(rec);
     emit commandStateChanged(rec.cmdId, rec.state);
-    emit commandReadyToPublish(commandTopic(device), QJsonDocument(obj).toJson(QJsonDocument::Compact), 1, false);
+    emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
 void CommandManager::onCommandAck(const QJsonObject &obj)
@@ -48,7 +68,7 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
     if (!m_pending.contains(cmdId)) return;
     auto rec = m_pending.take(cmdId);
     rec.ok = obj.value("ok").toBool();
-    rec.reason = obj.value("reason").toString();
+    rec.reason = obj.value("reason").toString(obj.value("message").toString());
     rec.ackTime = obj.value("timestamp").toVariant().toLongLong();
     rec.state = rec.ok ? "success" : "failed";
     emit commandForDb(rec);

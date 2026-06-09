@@ -3,7 +3,6 @@
 #include <QByteArray>
 #include <QMainWindow>
 #include <QJsonObject>
-#include <QMap>
 #include <QStackedWidget>
 
 class TopBar;
@@ -37,7 +36,10 @@ private:
     void initUi();
     void initConnections();
     void loadInitialConfig();
+    void initIpc();
     void handleIpcMessage(const QByteArray &frame);
+    void requestLatestPoints();
+    void markIpcDataOffline();
 
 private:
     TopBar *m_topBar = nullptr;
@@ -60,9 +62,9 @@ private:
     ConfigManager *m_config = nullptr;
 
 
-    //测试通信
 private:
     IpcClient *m_ipcClient = nullptr;
     QTimer *m_ipcTimer = nullptr;
-    QMap<QString, QJsonObject> m_latestPointMap;
+    QTimer *m_ipcWatchdogTimer = nullptr;
+    qint64 m_lastLatestPointsMs = 0;
 };

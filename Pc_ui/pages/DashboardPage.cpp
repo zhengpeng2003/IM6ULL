@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QHeaderView>
 #include <QTimer>
 #include <QLabel>
@@ -45,8 +46,18 @@ DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmMana
     m_alarmTable->setHorizontalHeaderLabels({QStringLiteral("报警ID"), QStringLiteral("设备"), QStringLiteral("等级"), QStringLiteral("状态")});
     m_alarmTable->horizontalHeader()->setStretchLastSection(true);
 
+    m_errorTable = new QTableWidget(this);
+    m_errorTable->setColumnCount(5);
+    m_errorTable->setHorizontalHeaderLabels({QStringLiteral("设备"), QStringLiteral("主站"), QStringLiteral("从站"),
+                                             QStringLiteral("错误状态"), QStringLiteral("错误原因")});
+    m_errorTable->horizontalHeader()->setStretchLastSection(true);
+
+    m_infoTabWidget = new QTabWidget(this);
+    m_infoTabWidget->addTab(m_alarmTable, QStringLiteral("报警信息"));
+    m_infoTabWidget->addTab(m_errorTable, QStringLiteral("错误信息"));
+
     tables->addWidget(m_masterTable, 1);
-    tables->addWidget(m_alarmTable, 1);
+    tables->addWidget(m_infoTabWidget, 1);
     layout->addLayout(tables, 1);
 
     m_timer = new QTimer(this);
@@ -85,5 +96,35 @@ void DashboardPage::refreshView()
         m_alarmTable->setItem(i, 1, new QTableWidgetItem(alarms[i].deviceName));
         m_alarmTable->setItem(i, 2, new QTableWidgetItem(alarms[i].level));
         m_alarmTable->setItem(i, 3, new QTableWidgetItem(alarms[i].state));
+    }
+
+    const auto realtimeDevices = m_data->allRealtimeData();
+    int errorCount = 0;
+    for (const auto &device : realtimeDevices) {
+        if (!device.valid) {
+            ++errorCount;
+        }
+    }
+
+    m_errorTable->setRowCount(errorCount);
+    row = 0;
+    for (const auto &device : realtimeDevices) {
+        if (device.valid) {
+            continue;
+        }
+
+        const QString statusText = device.statusText.isEmpty()
+            ? QStringLiteral("数据无效")
+            : device.statusText;
+        const QString errorMessage = device.errorMessage.isEmpty()
+            ? QStringLiteral("unknown")
+            : device.errorMessage;
+
+        m_errorTable->setItem(row, 0, new QTableWidgetItem(device.node.deviceName));
+        m_errorTable->setItem(row, 1, new QTableWidgetItem(QStringLiteral("RS485-%1").arg(device.node.masterSlot + 1)));
+        m_errorTable->setItem(row, 2, new QTableWidgetItem(QString::number(device.node.slaveAddr)));
+        m_errorTable->setItem(row, 3, new QTableWidgetItem(statusText));
+        m_errorTable->setItem(row, 4, new QTableWidgetItem(errorMessage));
+        ++row;
     }
 }
