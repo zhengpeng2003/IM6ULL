@@ -167,6 +167,6 @@ void alarm_config_check_sensor(float temp, float humi)
 
     const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
     ipc_server_send(payload);
-    mqtt_send("imx6ull/device/data", payload);
+    mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
     json_object_put(root);
 }

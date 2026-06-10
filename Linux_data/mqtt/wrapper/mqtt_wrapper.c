@@ -1,4 +1,5 @@
 #include "mqtt_wrapper.h"
+#include "mqtt_gpio.h"
 #include "mqttclient.h"
 #include "mqtt_log.h"
 #include "data_protocol.h"
@@ -8,10 +9,15 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#define MQTT_HOST        "192.168.0.102"
-#define MQTT_PORT        "1883"
-#define MQTT_QUEUE_MAX   32
-#define MQTT_PAYLOAD_MAX 4096
+#define MQTT_HOST              "192.168.10.100"
+#define MQTT_PORT              "1883"
+#define MQTT_CLIENT_ID         "IM6ULL"
+#define MQTT_SUB_TOPIC_DATA    "imx6ull/device/data"
+#define MQTT_SUB_TOPIC_GPIO    "imx6ull/gpio/+/set"
+#define MQTT_QUEUE_MAX         32
+#define MQTT_PAYLOAD_MAX       4096
+
+const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "pc_data/telemetry/test";
 
 /* ================= 内部结构 ================= */
 
@@ -42,6 +48,24 @@ static int queue_empty(void)
 static int queue_full(void)
 {
     return ((g_tail + 1) % MQTT_QUEUE_MAX) == g_head;
+}
+
+static int queue_count_locked(void)
+{
+    if (g_tail >= g_head)
+        return g_tail - g_head;
+    return MQTT_QUEUE_MAX - g_head + g_tail;
+}
+
+static int queue_count(void)
+{
+    int count;
+
+    pthread_mutex_lock(&g_mutex);
+    count = queue_count_locked();
+    pthread_mutex_unlock(&g_mutex);
+
+    return count;
 }
 
 static int queue_push(const char *topic, const char *payload)
@@ -124,7 +148,10 @@ static void mqtt_publish_one(const mqtt_item_t *item)
     msg.payload = (void *)item->payload;
     msg.payloadlen = strlen(item->payload);
 
+    printf("[MQTT] publish topic=%s payload_len=%d\n",
+           item->topic, msg.payloadlen);
     mqtt_publish(g_client, item->topic, &msg);
+    printf("[MQTT] publish requested topic=%s\n", item->topic);
 }
 
 /* ================= 对外 API ================= */
@@ -142,8 +169,14 @@ int mqtt_init(void)
     mqtt_set_host(g_client, MQTT_HOST);
     mqtt_set_port(g_client, MQTT_PORT);
 
-    mqtt_set_client_id(g_client,"IM6ULL");
+    mqtt_set_client_id(g_client, MQTT_CLIENT_ID);
     mqtt_set_clean_session(g_client, 1);
+
+    printf("[MQTT] default broker: %s:%s\n", MQTT_HOST, MQTT_PORT);
+    printf("[MQTT] client id: %s\n", MQTT_CLIENT_ID);
+    printf("[MQTT] default publish topic: %s\n", MQTT_DEFAULT_PUBLISH_TOPIC);
+    printf("[MQTT] default subscribe topic: %s\n", MQTT_SUB_TOPIC_DATA);
+    printf("[MQTT] default subscribe topic: %s\n", MQTT_SUB_TOPIC_GPIO);
 
     g_connected = 0;
     g_subscribed = 0;  // 初始化订阅状态
@@ -154,31 +187,45 @@ int mqtt_init(void)
 void mqtt_poll(void)
 {
     mqtt_item_t item;
+    static unsigned int connect_attempts = 0;
 
     if (!g_client)
         return;
 
     /* 1. 确保连接 */
     if (!g_connected) {
-        if (mqtt_connect(g_client) == 0) {
-            printf("[MQTT] connected\n");
+        int ret;
+        connect_attempts++;
+        if (connect_attempts == 1 || (connect_attempts % 50) == 0) {
+            printf("[MQTT] connecting broker=%s:%s attempt=%u queue=%d\n",
+                   MQTT_HOST, MQTT_PORT, connect_attempts, queue_count());
+        }
+
+        ret = mqtt_connect(g_client);
+        if (ret == 0) {
+            printf("[MQTT] connected broker=%s:%s after_attempts=%u\n",
+                   MQTT_HOST, MQTT_PORT, connect_attempts);
             g_connected = 1;
+            connect_attempts = 0;
         } else {
+            if (connect_attempts == 1 || (connect_attempts % 50) == 0) {
+                printf("[MQTT] connect failed broker=%s:%s ret=%d queue=%d\n",
+                       MQTT_HOST, MQTT_PORT, ret, queue_count());
+            }
             return;   // 本轮不再继续
         }
     }
 
     /* 2. 订阅主题（修改：同时订阅数据上报和控制命令） */
-if (g_connected && !g_subscribed) {
-    // 订阅温度数据（如果你需要接收其他设备的数据）
-    mqtt_subscribe(g_client, "imx6ull/device/data", QOS0, mqtt_message_handler);
-    
-    // ⭐⭐ 新增：订阅 GPIO 控制命令（通配符，一次订阅多个）⭐⭐
-    mqtt_subscribe(g_client, "imx6ull/gpio/+/set", QOS0, mqtt_message_handler);
-    
-    printf("[MQTT] Subscribed to device/data and gpio/+/set\n");
-    g_subscribed = 1;
-}
+    if (g_connected && !g_subscribed) {
+        mqtt_subscribe(g_client, MQTT_SUB_TOPIC_DATA, QOS0, mqtt_message_handler);
+        printf("[MQTT] subscribe topic: %s\n", MQTT_SUB_TOPIC_DATA);
+
+        mqtt_subscribe(g_client, MQTT_SUB_TOPIC_GPIO, QOS0, mqtt_message_handler);
+        printf("[MQTT] subscribe topic: %s\n", MQTT_SUB_TOPIC_GPIO);
+
+        g_subscribed = 1;
+    }
 
     /* 3. 心跳 */
     mqtt_keep_alive(g_client);
@@ -200,7 +247,9 @@ int mqtt_send(const char *topic, const char *payload)
 
     /* 队列满，直接返回失败 */
     if (queue_push(topic, payload) < 0) {
-        printf("[MQTT] send queue full, drop\n");
+        printf("[MQTT] send queue full, drop topic=%s queue=%d/%d connected=%d broker=%s:%s\n",
+               topic, queue_count(), MQTT_QUEUE_MAX - 1, g_connected,
+               MQTT_HOST, MQTT_PORT);
         return DATA_SEND_MQTT_QUEUE_FULL;
     }
     return DATA_SEND_OK;   // 表示：已接收发送请求

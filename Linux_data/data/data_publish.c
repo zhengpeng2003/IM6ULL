@@ -75,7 +75,7 @@ int data_publish_device_status(const device_data_t *dev)
     }
 
     int ipc_code = ipc_server_send(json);
-    int mqtt_code = mqtt_send("imx6ull/device/data", json);
+    int mqtt_code = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, json);
     int code = merge_send_code(ipc_code, mqtt_code);
 
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);

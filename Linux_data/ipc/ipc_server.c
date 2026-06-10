@@ -71,7 +71,7 @@ static void ipc_process_received_data(const char *buf, int len)
             const char *msg = recv_buf + start;
             int ret = data_command_process_message(msg);
             if (ret == CMD_PROCESS_FORWARD_MQTT) {
-                mqtt_send("imx6ull/device/data", msg);
+                mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, msg);
             } else if (ret == CMD_PROCESS_ERROR) {
                 printf("IPC process failed, skip MQTT: %s\n", msg);
             }
