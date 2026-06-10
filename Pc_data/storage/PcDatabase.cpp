@@ -1,0 +1,378 @@
+#include "PcDatabase.hpp"
+
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <limits>
+
+#include "DatabaseSchema.hpp"
+#include "sqlite3.h"
+
+PcDatabase::PcDatabase()
+{
+}
+
+PcDatabase::~PcDatabase()
+{
+    close();
+}
+
+bool PcDatabase::openDatabase(const std::string& dbPath)
+{
+    if (m_db) {
+        return true;
+    }
+
+    if (!ensureDirectoryForFile(dbPath)) {
+        return false;
+    }
+
+    int rc = sqlite3_open(dbPath.c_str(), &m_db);
+
+    if (rc != SQLITE_OK) {
+        std::cerr << "Open database failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+
+        close();
+        return false;
+    }
+
+    std::cout << "Database opened: " << dbPath << std::endl;
+
+    execSql("PRAGMA foreign_keys = ON;");
+    execSql("PRAGMA journal_mode = WAL;");
+
+    return true;
+}
+
+bool PcDatabase::initTables()
+{
+    if (!m_db) {
+        std::cerr << "Database is not open." << std::endl;
+        return false;
+    }
+
+    for (const auto& sql : DatabaseSchema::tableSqlList()) {
+        if (!execSql(sql)) {
+            return false;
+        }
+    }
+
+    for (const auto& sql : DatabaseSchema::indexSqlList()) {
+        if (!execSql(sql)) {
+            return false;
+        }
+    }
+
+    std::cout << "Database tables initialized." << std::endl;
+    return true;
+}
+
+bool PcDatabase::isOpen() const
+{
+    return m_db != nullptr;
+}
+
+bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
+{
+    if (!m_db) {
+        std::cerr << "Database is not open, skip telemetry save." << std::endl;
+        return false;
+    }
+
+    if (points.empty()) {
+        return true;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& point : points) {
+        if (point.pointId.empty()) {
+            continue;
+        }
+
+        if (!saveLatestPoint(point) || !saveHistoryPoint(point)) {
+            ok = false;
+            break;
+        }
+    }
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    std::cout << "Database telemetry save "
+              << (ok ? "ok" : "failed")
+              << ", point count: "
+              << points.size()
+              << std::endl;
+
+    return ok;
+}
+
+std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& pointId,
+                                                           std::int64_t startMs,
+                                                           std::int64_t endMs,
+                                                           int limit)
+{
+    std::vector<TelemetryPoint> points;
+
+    if (!m_db || pointId.empty()) {
+        return points;
+    }
+
+    if (startMs < 0) {
+        startMs = 0;
+    }
+
+    if (endMs <= 0) {
+        endMs = std::numeric_limits<std::int64_t>::max();
+    }
+
+    if (endMs < startMs) {
+        return points;
+    }
+
+    if (limit <= 0) {
+        limit = 1000;
+    } else if (limit > 5000) {
+        limit = 5000;
+    }
+
+    static const char* sql =
+        "SELECT timestamp_ms, number_value, text_value, valid "
+        "FROM telemetry_history "
+        "WHERE point_id = ? AND timestamp_ms >= ? AND timestamp_ms <= ? "
+        "ORDER BY timestamp_ms ASC "
+        "LIMIT ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return points;
+    }
+
+    sqlite3_bind_text(stmt, 1, pointId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, startMs);
+    sqlite3_bind_int64(stmt, 3, endMs);
+    sqlite3_bind_int(stmt, 4, limit);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        TelemetryPoint point;
+        point.pointId = pointId;
+        point.timestampMs = sqlite3_column_int64(stmt, 0);
+        point.numberValue = sqlite3_column_double(stmt, 1);
+
+        const unsigned char* text = sqlite3_column_text(stmt, 2);
+        point.textValue = text ? reinterpret_cast<const char*>(text) : "";
+        point.valid = sqlite3_column_int(stmt, 3) != 0;
+
+        points.push_back(point);
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Query telemetry_history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        points.clear();
+    }
+
+    sqlite3_finalize(stmt);
+    return points;
+}
+
+void PcDatabase::close()
+{
+    if (m_db) {
+        sqlite3_close(m_db);
+        m_db = nullptr;
+    }
+}
+
+static const char* valueTypeToText(PointValueType type)
+{
+    switch (type) {
+    case PointValueType::Number:
+        return "number";
+    case PointValueType::Text:
+        return "text";
+    case PointValueType::Boolean:
+        return "boolean";
+    default:
+        return "unknown";
+    }
+}
+
+static void bindText(sqlite3_stmt* stmt, int index, const std::string& value)
+{
+    sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+}
+
+static void bindCommonPointColumns(sqlite3_stmt* stmt, int offset, const TelemetryPoint& point)
+{
+    sqlite3_bind_int64(stmt, offset + 1, point.timestampMs);
+    bindText(stmt, offset + 2, point.factoryId);
+    bindText(stmt, offset + 3, point.factoryName);
+    bindText(stmt, offset + 4, point.areaId);
+    bindText(stmt, offset + 5, point.areaName);
+    bindText(stmt, offset + 6, point.gatewayId);
+    bindText(stmt, offset + 7, point.gatewayName);
+    bindText(stmt, offset + 8, point.portId);
+    bindText(stmt, offset + 9, point.portName);
+    sqlite3_bind_int(stmt, offset + 10, point.deviceId);
+    bindText(stmt, offset + 11, point.deviceName);
+    bindText(stmt, offset + 12, point.deviceType);
+    bindText(stmt, offset + 13, point.pointKey);
+    bindText(stmt, offset + 14, point.pointName);
+    bindText(stmt, offset + 15, point.unit);
+    bindText(stmt, offset + 16, valueTypeToText(point.valueType));
+    sqlite3_bind_double(stmt, offset + 17, point.numberValue);
+    bindText(stmt, offset + 18, point.textValue);
+    sqlite3_bind_int(stmt, offset + 19, point.valid ? 1 : 0);
+    bindText(stmt, offset + 20, point.errorMessage);
+}
+
+bool PcDatabase::saveLatestPoint(const TelemetryPoint& point)
+{
+    static const char* sql =
+        "REPLACE INTO latest_point ("
+        "point_id,timestamp_ms,factory_id,factory_name,area_id,area_name,"
+        "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
+        "device_type,point_key,point_name,unit,value_type,number_value,"
+        "text_value,valid,error_message"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare latest_point failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, point.pointId);
+    sqlite3_bind_int64(stmt, 2, point.timestampMs);
+    bindText(stmt, 3, point.factoryId);
+    bindText(stmt, 4, point.factoryName);
+    bindText(stmt, 5, point.areaId);
+    bindText(stmt, 6, point.areaName);
+    bindText(stmt, 7, point.gatewayId);
+    bindText(stmt, 8, point.gatewayName);
+    bindText(stmt, 9, point.portId);
+    bindText(stmt, 10, point.portName);
+    sqlite3_bind_int(stmt, 11, point.deviceId);
+    bindText(stmt, 12, point.deviceName);
+    bindText(stmt, 13, point.deviceType);
+    bindText(stmt, 14, point.pointKey);
+    bindText(stmt, 15, point.pointName);
+    bindText(stmt, 16, point.unit);
+    bindText(stmt, 17, valueTypeToText(point.valueType));
+    sqlite3_bind_double(stmt, 18, point.numberValue);
+    bindText(stmt, 19, point.textValue);
+    sqlite3_bind_int(stmt, 20, point.valid ? 1 : 0);
+    bindText(stmt, 21, point.errorMessage);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Insert latest_point failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::saveHistoryPoint(const TelemetryPoint& point)
+{
+    static const char* sql =
+        "INSERT INTO telemetry_history ("
+        "point_id,timestamp_ms,factory_id,factory_name,area_id,area_name,"
+        "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
+        "device_type,point_key,point_name,unit,value_type,number_value,"
+        "text_value,valid,error_message"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare telemetry_history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, point.pointId);
+    bindCommonPointColumns(stmt, 1, point);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Insert telemetry_history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::execSql(const std::string& sql)
+{
+    if (!m_db) {
+        std::cerr << "Database is not open." << std::endl;
+        return false;
+    }
+
+    char* errorMessage = nullptr;
+
+    int rc = sqlite3_exec(
+        m_db,
+        sql.c_str(),
+        nullptr,
+        nullptr,
+        &errorMessage
+        );
+
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL exec failed: ";
+
+        if (errorMessage) {
+            std::cerr << errorMessage;
+            sqlite3_free(errorMessage);
+        } else {
+            std::cerr << sqlite3_errmsg(m_db);
+        }
+
+        std::cerr << std::endl;
+        std::cerr << "SQL: " << sql << std::endl;
+
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::ensureDirectoryForFile(const std::string& dbPath)
+{
+    try {
+        std::filesystem::path path(dbPath);
+        std::filesystem::path dir = path.parent_path();
+
+        if (dir.empty()) {
+            return true;
+        }
+
+        if (!std::filesystem::exists(dir)) {
+            std::filesystem::create_directories(dir);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Create database directory failed: "
+                  << e.what()
+                  << std::endl;
+        return false;
+    }
+}

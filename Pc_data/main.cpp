@@ -7,8 +7,14 @@
 #include <vector>
 #include <exception>
 
+#include <rapidjson/document.h>
+
 #include "ipc/IpcServer.hpp"
+#include "mqtt/MqttClient.hpp"
+#include "model/ModelConverter.hpp"
+#include "model/TelemetryPackParser.hpp"
 #include "service/PcDataService.hpp"
+#include "storage/PcDatabase.hpp"
 
 using namespace std;
 
@@ -93,6 +99,53 @@ static std::string extractJsonStringValue(const std::string& json, const std::st
     }
 
     return result;
+}
+
+static std::int64_t getJsonInt64(const rapidjson::Value& obj,
+                                 const char* key,
+                                 std::int64_t defaultValue)
+{
+    if (!obj.IsObject() || !obj.HasMember(key)) {
+        return defaultValue;
+    }
+
+    const rapidjson::Value& value = obj[key];
+    if (value.IsInt64()) {
+        return value.GetInt64();
+    }
+
+    if (value.IsNumber()) {
+        return static_cast<std::int64_t>(value.GetDouble());
+    }
+
+    return defaultValue;
+}
+
+static int getJsonInt(const rapidjson::Value& obj, const char* key, int defaultValue)
+{
+    if (!obj.IsObject() || !obj.HasMember(key)) {
+        return defaultValue;
+    }
+
+    const rapidjson::Value& value = obj[key];
+    if (value.IsInt()) {
+        return value.GetInt();
+    }
+
+    if (value.IsNumber()) {
+        return static_cast<int>(value.GetDouble());
+    }
+
+    return defaultValue;
+}
+
+static std::string getJsonString(const rapidjson::Value& obj, const char* key)
+{
+    if (!obj.IsObject() || !obj.HasMember(key) || !obj[key].IsString()) {
+        return "";
+    }
+
+    return obj[key].GetString();
 }
 
 static std::string buildCommandAckJson(const std::string& cmdId,
@@ -190,6 +243,78 @@ static std::string buildLatestPointsJson(const std::vector<TelemetryPoint>& poin
     return oss.str();
 }
 
+static std::string buildHistoryPointsJson(const std::string& pointId,
+                                          const std::vector<TelemetryPoint>& points)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"history_points\",";
+    oss << "\"pointId\":\"" << jsonEscape(pointId) << "\",";
+    oss << "\"count\":" << points.size() << ",";
+    oss << "\"points\":[";
+
+    for (size_t i = 0; i < points.size(); ++i) {
+        const TelemetryPoint& p = points[i];
+
+        if (i > 0) {
+            oss << ",";
+        }
+
+        oss << "{";
+        oss << "\"timestampMs\":" << p.timestampMs << ",";
+        oss << "\"numberValue\":" << p.numberValue << ",";
+        oss << "\"textValue\":\"" << jsonEscape(p.textValue) << "\",";
+        oss << "\"valid\":" << (p.valid ? "true" : "false");
+        oss << "}";
+    }
+
+    oss << "]";
+    oss << "}";
+
+    return oss.str();
+}
+
+static bool parseHistoryQuery(const std::string& msg,
+                              std::string& pointId,
+                              std::int64_t& startMs,
+                              std::int64_t& endMs,
+                              int& limit)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "query_history") {
+        return false;
+    }
+
+    pointId = getJsonString(root, "pointId");
+    startMs = getJsonInt64(root, "startMs", 0);
+    endMs = getJsonInt64(root, "endMs", 0);
+    limit = getJsonInt(root, "limit", 1000);
+
+    return !pointId.empty();
+}
+
+static void sendLatestPoints(IpcServer& ipc, PcDataService& dataService)
+{
+    std::vector<TelemetryPoint> points = dataService.getLatestPoints();
+
+    cout << "latest point count: " << points.size() << endl;
+
+    std::string json = buildLatestPointsJson(points);
+
+    cout << "json build ok, size: " << json.size() << endl;
+
+    ipc.sendMessage(json);
+
+    cout << "send latest_points done" << endl;
+}
+
 int main()
 {
     try {
@@ -198,24 +323,69 @@ int main()
         PcDataService dataService;
         cout << "PcDataService created" << endl;
 
-        /*
-         * 当前阶段先用模拟数据。
-         * 后面接 MQTT 后，就不是 generateMockData()，
-         * 而是 MqttClient 收到数据后调用：
-         *
-         * dataService.handleTelemetryPack(pack);
-         */
-        dataService.generateMockDataExtraCases();
-        cout << "generateMockData ok" << endl;
-
-        std::vector<TelemetryPoint> testPoints = dataService.getLatestPoints();
-        cout << "PcDataService mock point count: " << testPoints.size() << endl;
+        PcDatabase database;
+        if (!database.openDatabase("db/pc_data.db")) {
+            cout << "Database open failed, continue without storage" << endl;
+        } else if (!database.initTables()) {
+            cout << "Database init failed, continue without storage" << endl;
+        }
 
         cout << "Before create IpcServer" << endl;
 
         IpcServer ipc(R"(\\.\pipe\PcDataIpcPipe)");
 
         cout << "IpcServer created" << endl;
+
+        MqttClient mqtt;
+        mqtt.setMessageCallback([&](const std::string& topic,
+                                    const std::string& payload) {
+            cout << "[MQTT RX] topic: " << topic << endl;
+            cout << "[MQTT RX] payload: " << payload << endl;
+
+            TelemetryPack pack;
+            std::string errorMessage;
+
+            if (!TelemetryPackParser::parseJson(payload, pack, errorMessage)) {
+                cout << "[MQTT RX] parse failed: " << errorMessage << endl;
+                return;
+            }
+
+            cout << "[MQTT RX] parse ok, sequence: "
+                 << pack.sequence
+                 << ", device count: "
+                 << pack.devices.size()
+                 << endl;
+
+            std::vector<TelemetryPoint> receivedPoints = ModelConverter::toTelemetryPoints(pack);
+
+            cout << "[MQTT RX] received point count: "
+                 << receivedPoints.size()
+                 << endl;
+
+            dataService.handleTelemetryPack(pack);
+
+            std::vector<TelemetryPoint> points = dataService.getLatestPoints();
+
+            cout << "[MQTT RX] snapshot point count: "
+                 << points.size()
+                 << endl;
+
+            if (database.isOpen()) {
+                database.saveTelemetryPoints(receivedPoints);
+            } else {
+                cout << "[MQTT RX] database is not open, skip storage" << endl;
+            }
+
+            if (ipc.hasClient()) {
+                std::string json = buildLatestPointsJson(points);
+                cout << "[MQTT RX] send latest_points to Pc_ui, size: "
+                     << json.size()
+                     << endl;
+                ipc.sendMessage(json);
+            } else {
+                cout << "[MQTT RX] Pc_ui not connected, latest_points not sent" << endl;
+            }
+        });
 
         ipc.setClientConnectedCallback([&]() {
             cout << "Pc_ui connected" << endl;
@@ -228,6 +398,8 @@ int main()
             ipc.sendMessage(R"({"type":"hello","message":"hello pc_ui"})");
 
             cout << "send hello done" << endl;
+
+            sendLatestPoints(ipc, dataService);
         });
 
         ipc.setClientDisconnectedCallback([]() {
@@ -237,6 +409,25 @@ int main()
         ipc.setMessageCallback([&](const std::string& msg) {
             cout << "Pc_data recv: " << msg << endl;
 
+            std::string pointId;
+            std::int64_t startMs = 0;
+            std::int64_t endMs = 0;
+            int limit = 1000;
+
+            if (parseHistoryQuery(msg, pointId, startMs, endMs, limit)) {
+                const std::vector<TelemetryPoint> points =
+                    database.queryHistoryPoints(pointId, startMs, endMs, limit);
+
+                ipc.sendMessage(buildHistoryPointsJson(pointId, points));
+
+                cout << "send history_points done, pointId: "
+                     << pointId
+                     << ", count: "
+                     << points.size()
+                     << endl;
+                return;
+            }
+
             /*
              * 兼容你之前 Pc_ui 可能发送的 get_snapshot。
              * 后面建议统一改成 get_latest_points。
@@ -244,19 +435,7 @@ int main()
             if (msg.find("get_latest_points") != std::string::npos ||
                 msg.find("get_snapshot") != std::string::npos) {
 
-                dataService.generateMockDataExtraCases();
-
-                std::vector<TelemetryPoint> points = dataService.getLatestPoints();
-
-                cout << "latest point count: " << points.size() << endl;
-
-                std::string json = buildLatestPointsJson(points);
-
-                cout << "json build ok, size: " << json.size() << endl;
-
-                ipc.sendMessage(json);
-
-                cout << "send latest_points done" << endl;
+                sendLatestPoints(ipc, dataService);
             } else if (msg.find("\"type\":\"command\"") != std::string::npos ||
                        msg.find("\"msg_type\":\"command\"") != std::string::npos) {
                 const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
@@ -278,6 +457,17 @@ int main()
         }
 
         cout << "Pc_data IPC server running..." << endl;
+
+        const std::vector<std::string> mqttTopics = {
+            "pc_data/telemetry/test"
+        };
+
+        cout << "MQTT default broker: 127.0.0.1:1883" << endl;
+        cout << "MQTT default subscribe topic: pc_data/telemetry/test" << endl;
+
+        if (!mqtt.connectToBroker("127.0.0.1", 1883, "pc_data_001", mqttTopics)) {
+            cout << "MQTT connectToBroker call failed" << endl;
+        }
 
         while (true) {
             this_thread::sleep_for(chrono::seconds(1));
