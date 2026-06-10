@@ -7,10 +7,9 @@ extern "C" {
 
 int ipc_server_init(void);
 void ipc_server_loop(void);
-void ipc_server_send(const char *msg);
+int ipc_server_send(const char *msg);
 #ifdef __cplusplus
 }
 #endif
 
 #endif
-

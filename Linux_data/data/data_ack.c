@@ -1,9 +1,21 @@
 #include "data_ack.h"
 
+#include "data_protocol.h"
 #include "ipc_server.h"
 
 #include <json-c/json.h>
 #include <string.h>
+
+static int data_ack_code_from_reason(const char *reason)
+{
+    if (!reason || reason[0] == '\0')
+        return DATA_SEND_OK;
+    if (strcmp(reason, "invalid_request") == 0)
+        return DATA_SEND_INVALID_ARG;
+    if (strcmp(reason, "config_write_failed") == 0)
+        return DATA_SEND_IPC_WRITE_FAILED;
+    return ACK_ERROR;
+}
 
 void data_ack_send(uint32_t seq,
                    const char *cmd,
@@ -19,6 +31,7 @@ void data_ack_send(uint32_t seq,
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
 
@@ -42,6 +55,7 @@ void data_ack_send_alarm_config(uint32_t seq,
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "temp_high", json_object_new_double(temp_high));
@@ -73,6 +87,7 @@ void data_ack_send_ports(uint32_t seq,
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "status", json_object_new_string("ok"));
+    json_object_object_add(root, "code", json_object_new_int(DATA_SEND_OK));
     json_object_object_add(root, "reason", json_object_new_string(""));
     json_object_object_add(root, "message", json_object_new_string("scan ports success"));
     json_object_object_add(root, "ports", port_array);
@@ -100,6 +115,7 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "slot", json_object_new_int(slot));

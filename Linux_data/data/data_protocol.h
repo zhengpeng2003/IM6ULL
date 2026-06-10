@@ -10,6 +10,7 @@
 #define MAX_CLIENT_ID_LEN 32
 #define MAX_CMD_NAME_LEN 32
 #define MAX_ACK_MSG_LEN 64
+#define MAX_DEVICE_NAME_LEN 64
 
 typedef enum {
     MSG_TELEMETRY = 1,
@@ -21,6 +22,7 @@ typedef enum {
     DEV_UNKNOWN   = 0,
     DEV_SENSOR_TH = 1,
     DEV_RELAY     = 2,
+    DEV_ELECTRIC_METER = 3,
     DEV_SYSINFO   = 100
 } device_type_t;//设备类型
 
@@ -29,10 +31,23 @@ typedef enum {
     ACK_ERROR = 1
 } ack_status_t;//状态
 
+typedef enum {
+    DATA_SEND_OK = 0,
+    DATA_SEND_INVALID_ARG = -1,
+    DATA_SEND_JSON_ERROR = -2,
+    DATA_SEND_IPC_NO_CLIENT = -3,
+    DATA_SEND_IPC_WRITE_FAILED = -4,
+    DATA_SEND_MQTT_NOT_READY = -5,
+    DATA_SEND_MQTT_QUEUE_FULL = -6,
+    DATA_SEND_PARTIAL_FAILED = -7
+} data_send_code_t;//发送错误码
+
 typedef struct {
     int device_id;
+    char device_name[MAX_DEVICE_NAME_LEN];
     device_type_t type;
     int valid;
+    char error_message[MAX_ACK_MSG_LEN];
 
     union {
         struct {
@@ -42,7 +57,15 @@ typedef struct {
 
         struct {
             uint16_t relay_states;
+            int channel_count;
         } relay;
+
+        struct {
+            float voltage;
+            float current;
+            float power;
+            float energy;
+        } meter;
 
         struct {
             char kernel[32];
@@ -50,6 +73,8 @@ typedef struct {
             char os[32];
             int screen_w;
             int screen_h;
+            double cpu_usage;
+            double memory_usage;
         } sys;
     } data;
 } device_data_t;//设备数据

@@ -1,6 +1,7 @@
 #include "ipc_server.h"
 #include "device_info.h"
 #include "data_command.h"
+#include "data_protocol.h"
 #include "mqtt_wrapper.h"
 
 #include <errno.h>
@@ -115,12 +116,20 @@ void ipc_server_loop(void)
     }
 }
 
-void ipc_server_send(const char *msg)
+int ipc_server_send(const char *msg)
 {
-    if (client_fd < 0) return;
-    //加锁避免数据混乱
+    if (!msg)
+        return DATA_SEND_INVALID_ARG;
+    if (client_fd < 0)
+        return DATA_SEND_IPC_NO_CLIENT;
+
     pthread_mutex_lock(&ipc_send_lock);
-    write(client_fd, msg, strlen(msg));
-    write(client_fd, "\n", 1);
+    ssize_t msg_written = write(client_fd, msg, strlen(msg));
+    ssize_t nl_written = write(client_fd, "\n", 1);
     pthread_mutex_unlock(&ipc_send_lock);
+
+    if (msg_written < 0 || nl_written < 0)
+        return DATA_SEND_IPC_WRITE_FAILED;
+
+    return DATA_SEND_OK;
 }

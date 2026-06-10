@@ -5,8 +5,8 @@
 #include <cstring>
 #include <iostream>
 #include "data_protocol.h"
+#include "data_publish.h"
 #include "data_telemetry.h"
-#include "ipc_server.h"
 using namespace std;
 /* ================= 内部工具函数 ================= */
 
@@ -74,6 +74,7 @@ void Deviceinfo_send()
     memset(&dev, 0, sizeof(dev));
 
     dev.device_id = 0;
+    strncpy(dev.device_name, "System Info", sizeof(dev.device_name) - 1);
     dev.type  = DEV_SYSINFO;
     dev.valid = 1;
 
@@ -88,13 +89,7 @@ void Deviceinfo_send()
     get_fb_resolution(&dev.data.sys.screen_w,
                       &dev.data.sys.screen_h);
 
-    telemetry_pack_t pack = telemetry_pack_single(&dev);
-
-    char json[512];
-    int len = telemetry_pack_to_json(&pack, json, sizeof(json));
-    if (len > 0) {
-	   cout<<"数据已经发送"<<" "<<json<<endl;
-        ipc_server_send(json);
-    }
+    int ret = data_publish_device_status(&dev);
+    cout << "系统信息发送结果 code=" << ret << endl;
 }
 }

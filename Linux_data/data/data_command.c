@@ -304,7 +304,7 @@ static int process_device_message(uint32_t seq, struct json_object *root)
                 dev.data.th.humidity =
                     json_object_get_double(json_object_object_get(d, "humi"));
 
-                data_publish_device_status(&dev);
+                (void)data_publish_device_status(&dev);
                 break;
             }
 

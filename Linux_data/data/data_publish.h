@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-void data_publish_device_status(const device_data_t *dev);
+int data_publish_device_status(const device_data_t *dev);
 
 #ifdef __cplusplus
 }

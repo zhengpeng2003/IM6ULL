@@ -8,6 +8,7 @@ target_include_directories(mqttwrapper
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/mqtt/mqttclient
+        ${CMAKE_SOURCE_DIR}/data
 )
 
 target_link_libraries(mqttwrapper mqttclient data_protocol salof)

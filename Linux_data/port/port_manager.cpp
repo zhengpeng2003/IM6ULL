@@ -227,7 +227,7 @@ struct PortManager::Impl {
             ret = relay_read_state(*channel->bus, device.slave_id, &dev);
 
         if (ret == 0 || dev.type != DEV_UNKNOWN)
-            data_publish_device_status(&dev);
+            (void)data_publish_device_status(&dev);
     }
 };
 

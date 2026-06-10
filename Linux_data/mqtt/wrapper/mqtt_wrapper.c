@@ -1,6 +1,7 @@
 #include "mqtt_wrapper.h"
 #include "mqttclient.h"
 #include "mqtt_log.h"
+#include "data_protocol.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -10,7 +11,7 @@
 #define MQTT_HOST        "192.168.0.102"
 #define MQTT_PORT        "1883"
 #define MQTT_QUEUE_MAX   32
-#define MQTT_PAYLOAD_MAX 512
+#define MQTT_PAYLOAD_MAX 4096
 
 /* ================= 内部结构 ================= */
 
@@ -53,7 +54,9 @@ static int queue_push(const char *topic, const char *payload)
     }
 
     strncpy(g_queue[g_tail].topic, topic, sizeof(g_queue[g_tail].topic) - 1);
+    g_queue[g_tail].topic[sizeof(g_queue[g_tail].topic) - 1] = '\0';
     strncpy(g_queue[g_tail].payload, payload, sizeof(g_queue[g_tail].payload) - 1);
+    g_queue[g_tail].payload[sizeof(g_queue[g_tail].payload) - 1] = '\0';
 
     g_tail = (g_tail + 1) % MQTT_QUEUE_MAX;
 
@@ -189,13 +192,16 @@ if (g_connected && !g_subscribed) {
 /* 业务层唯一发送接口 */
 int mqtt_send(const char *topic, const char *payload)
 {
-    if (!g_client || !topic || !payload)
-        return -1;
+    if (!topic || !payload)
+        return DATA_SEND_INVALID_ARG;
+
+    if (!g_client)
+        return DATA_SEND_MQTT_NOT_READY;
 
     /* 队列满，直接返回失败 */
     if (queue_push(topic, payload) < 0) {
         printf("[MQTT] send queue full, drop\n");
-        return -1;
+        return DATA_SEND_MQTT_QUEUE_FULL;
     }
-    return 0;   // ✅ 表示：已接收发送请求
+    return DATA_SEND_OK;   // 表示：已接收发送请求
 }
