@@ -1,5 +1,6 @@
 #include "TopStatusBar.h"
 
+#include <QStyle>
 #include <QTime>
 
 TopStatusBar::TopStatusBar(QWidget *parent)
@@ -7,6 +8,16 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 {
     initUI();
     initSignal();
+}
+
+void TopStatusBar::setBackendConnected(bool connected)
+{
+    titleLabel->setText(connected
+        ? "Industrial HMI"
+        : "Industrial HMI - IPC disconnected");
+    statusDot->setObjectName(connected ? "StatusGreen" : "StatusGray");
+    statusDot->style()->unpolish(statusDot);
+    statusDot->style()->polish(statusDot);
 }
 
 void TopStatusBar::initUI()
@@ -29,6 +40,8 @@ void TopStatusBar::initUI()
     layout->addStretch();
     layout->addWidget(timeLabel);
     layout->addWidget(statusDot);
+
+    setBackendConnected(true);
 }
 
 void TopStatusBar::initSignal()

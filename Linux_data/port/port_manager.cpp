@@ -76,12 +76,22 @@ void addString(json_object *obj, const char *key, const char *value)
 {
     json_object_object_add(obj, key, json_object_new_string(value ? value : ""));
 }
-
+//这个是错误的
+// void addNullableDouble(json_object *obj, const char *key, int has_value, float value)
+// {
+//     json_object_object_add(obj,
+//                            key,
+//                            has_value ? json_object_new_double(value) : json_object_new_null());
+// }
 void addNullableDouble(json_object *obj, const char *key, int has_value, float value)
 {
-    json_object_object_add(obj,
-                           key,
-                           has_value ? json_object_new_double(value) : json_object_new_null());
+    json_object *json_value = nullptr;
+
+    if (has_value) {
+        json_value = json_object_new_double(value);
+    }
+
+    json_object_object_add(obj, key, json_value);
 }
 
 json_object *thresholdPointToJson(const point_threshold_config_t &point)

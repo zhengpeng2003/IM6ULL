@@ -28,7 +28,7 @@ typedef struct {
 
 /* ================= 内部状态 ================= */
 
-mqtt_client_t *g_client = NULL;
+static mqtt_client_t *g_client = NULL;
 static int g_connected = 0;
 static int g_subscribed = 0;  // 新增：订阅状态标志
 

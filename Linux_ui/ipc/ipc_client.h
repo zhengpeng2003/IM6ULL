@@ -42,10 +42,13 @@ signals:
     void alarmConfigReceived(double tempHigh, double humiHigh);
     void emergencyReceived(int level,
                            const QString &reason,
+                           int deviceId,
+                           const QString &deviceType,
+                           const QString &pointKey,
+                           double value,
+                           double threshold,
                            double temp,
-                           double humi,
-                           double tempHigh,
-                           double humiHigh);
+                           double humi);
 
 private slots:
     void onReadyRead();

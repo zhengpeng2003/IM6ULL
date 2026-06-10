@@ -168,10 +168,13 @@ void IpcClient::onReadyRead()
         if (msgType == "command" && root.value("cmd").toString() == "emergency") {
             emit emergencyReceived(root.value("level").toInt(),
                                    root.value("reason").toString(),
+                                   root.value("deviceId").toInt(),
+                                   root.value("deviceType").toString(),
+                                   root.value("pointKey").toString(),
+                                   root.value("value").toDouble(),
+                                   root.value("threshold").toDouble(),
                                    root.value("temp").toDouble(),
-                                   root.value("humi").toDouble(),
-                                   root.value("temp_high").toDouble(),
-                                   root.value("humi_high").toDouble());
+                                   root.value("humi").toDouble());
             continue;
         }
 

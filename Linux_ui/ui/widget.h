@@ -40,6 +40,10 @@ public:
 
 private:
     void initUI();
+    void handleIpcConnected(TopStatusBar *topBar, Pageinfo *pageInfo);
+    void handleIpcDisconnected(TopStatusBar *topBar,
+                               Pageinfo *pageInfo,
+                               PageSetting *pageSetting);
     void handleDeviceStatus(const DataPack &pack);
     void updateSlaveOnline(int masterSlot,
                            int slaveAddr,
@@ -70,6 +74,7 @@ private:
     QList<SlaveDeviceInfo> m_slaveDevices;
     QHash<QString, int> m_relayStates;
     PendingAddSlave m_pendingAddSlave;
+    int m_activeAlarmCount = 0;
     quint32 m_nextCommandSeq = 1;
     Ui::Widget *ui = nullptr;
 };

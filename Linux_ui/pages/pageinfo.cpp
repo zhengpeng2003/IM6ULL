@@ -86,9 +86,15 @@ void Pageinfo::updateIpcStatusLabel()
         return;
 
     ipcStatusLabel->setText(m_ipcConnected
-        ? "IPC: connected"
-        : "IPC: disconnected");
-    ipcStatusLabel->setProperty("state", m_ipcConnected ? "online" : "offline");
+                                ? "IPC: connected"
+                                : "IPC: disconnected");
+
+    // 显式构造 QVariant
+    ipcStatusLabel->setProperty("state", QVariant(m_ipcConnected ? "online" : "offline"));
+
+    // 或者用 QString
+    // ipcStatusLabel->setProperty("state", QString(m_ipcConnected ? "online" : "offline"));
+
     ipcStatusLabel->style()->unpolish(ipcStatusLabel);
     ipcStatusLabel->style()->polish(ipcStatusLabel);
     reconnectButton->setEnabled(!m_ipcConnected);

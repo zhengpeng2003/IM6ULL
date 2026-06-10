@@ -9,6 +9,7 @@ class TopStatusBar : public QWidget
     Q_OBJECT
 public:
     explicit TopStatusBar(QWidget *parent = nullptr);
+    void setBackendConnected(bool connected);
 
 private:
     void initUI();
@@ -19,4 +20,3 @@ private:
     QLabel *timeLabel;
     QLabel *statusDot;
 };
-

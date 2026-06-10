@@ -50,19 +50,27 @@ void Widget::initUI()
 
     connect(_Myclient,&IpcClient::devicetrend,pageTrend,&PageTrend::addData);
     connect(_Myclient,&IpcClient::deviceinfo,pageInfo,&Pageinfo::addInfo);
-    connect(_Myclient, &IpcClient::connected, this, [pageInfo]() {
-        pageInfo->setIpcConnected(true);
+    connect(_Myclient, &IpcClient::connected, this, [this, top, pageInfo]() {
+        handleIpcConnected(top, pageInfo);
     });
-    connect(_Myclient, &IpcClient::disconnected, this, [pageInfo]() {
-        pageInfo->setIpcConnected(false);
+    connect(_Myclient, &IpcClient::disconnected, this, [this, top, pageInfo, pageSetting]() {
+        handleIpcDisconnected(top, pageInfo, pageSetting);
     });
-    connect(pageInfo, &Pageinfo::reconnectIpcRequested, this, [this, pageInfo]() {
+    connect(pageInfo, &Pageinfo::reconnectIpcRequested, this, [this, top, pageInfo]() {
         if (m_operationOverlay)
             m_operationOverlay->showLoading("Checking backend...");
 
-        QTimer::singleShot(50, this, [this, pageInfo]() {
+        QTimer::singleShot(50, this, [this, top, pageInfo]() {
             const bool ok = _Myclient && _Myclient->connectToServer("/tmp/device_ipc.sock");
-            pageInfo->setIpcConnected(ok);
+            if (ok)
+                handleIpcConnected(top, pageInfo);
+            else {
+                pageInfo->setIpcConnected(false);
+                top->setBackendConnected(false);
+                if (m_pageStatus)
+                    m_pageStatus->setAlarmText("IPC disconnected, please reconnect backend");
+                refreshStatusSummary();
+            }
 
             if (!m_operationOverlay)
                 return;
@@ -205,12 +213,18 @@ void Widget::initUI()
                 [this](int slot,
                        int slaveId,
                        const QString &deviceType,
-                       int pollIntervalMs) {
+                       int pollIntervalMs,
+                       const QJsonObject &thresholdPayload) {
                     QJsonObject payload;
                     payload.insert("slot", slot);
                     payload.insert("slave_id", slaveId);
                     payload.insert("device_type", deviceType);
                     payload.insert("poll_interval_ms", pollIntervalMs);
+                    for (auto it = thresholdPayload.constBegin();
+                         it != thresholdPayload.constEnd();
+                         ++it) {
+                        payload.insert(it.key(), it.value());
+                    }
 
                     quint32 seq = 0;
                     if (m_addSlaveDialog)
@@ -346,6 +360,41 @@ void Widget::initUI()
                     m_operationOverlay->showSuccess("Relay command complete");
             });
 
+    connect(_Myclient,
+            &IpcClient::emergencyReceived,
+            this,
+            [this](int level,
+                   const QString &reason,
+                   int deviceId,
+                   const QString &deviceType,
+                   const QString &pointKey,
+                   double value,
+                   double threshold,
+                   double temp,
+                   double humi) {
+                Q_UNUSED(level);
+                Q_UNUSED(deviceType);
+                Q_UNUSED(temp);
+                Q_UNUSED(humi);
+
+                ++m_activeAlarmCount;
+
+                const QString alarmName = !reason.isEmpty() ? reason : pointKey;
+                const QString relation = (reason.endsWith("_low") || value < threshold)
+                    ? "<"
+                    : ">";
+
+                if (m_pageStatus) {
+                    m_pageStatus->setAlarmText(QString("Alarm: Slave %1 %2 %3 %4 %5")
+                                                   .arg(deviceId)
+                                                   .arg(alarmName)
+                                                   .arg(value, 0, 'f', 1)
+                                                   .arg(relation)
+                                                   .arg(threshold, 0, 'f', 1));
+                }
+                refreshStatusSummary();
+            });
+
     connect(_Myclient, &IpcClient::errorOccured, this, [this](const QString &err) {
         qDebug() << "[IPC][error]" << err;
     });
@@ -365,6 +414,11 @@ void Widget::initUI()
     m_operationOverlay = new OperationOverlayWidget(this);
     m_operationOverlay->setGeometry(rect());
     m_operationOverlay->raise();
+
+    if (_Myclient && _Myclient->isConnected())
+        handleIpcConnected(top, pageInfo);
+    else
+        handleIpcDisconnected(top, pageInfo, pageSetting);
 }
 
 void Widget::slotChangePage(int index)
@@ -378,6 +432,46 @@ void Widget::resizeEvent(QResizeEvent *event)
 
     if (m_operationOverlay)
         m_operationOverlay->setGeometry(rect());
+}
+
+void Widget::handleIpcConnected(TopStatusBar *topBar, Pageinfo *pageInfo)
+{
+    if (topBar)
+        topBar->setBackendConnected(true);
+    if (pageInfo)
+        pageInfo->setIpcConnected(true);
+    if (m_pageStatus)
+        m_pageStatus->setAlarmText("Alarm: --");
+}
+
+void Widget::handleIpcDisconnected(TopStatusBar *topBar,
+                                   Pageinfo *pageInfo,
+                                   PageSetting *pageSetting)
+{
+    if (topBar)
+        topBar->setBackendConnected(false);
+    if (pageInfo)
+        pageInfo->setIpcConnected(false);
+    if (pageSetting)
+        pageSetting->setUnscannedState();
+
+    m_connectedMasterSlots.clear();
+    m_slaveDevices.clear();
+    m_relayStates.clear();
+    m_pendingAddSlave = PendingAddSlave();
+    m_activeAlarmCount = 0;
+
+    refreshHomeMasterAndSlaveList();
+    refreshStatusSummary();
+
+    if (m_pageStatus)
+        m_pageStatus->setAlarmText("IPC disconnected, please reconnect backend");
+
+    if (m_addSlaveDialog)
+        m_addSlaveDialog->setResult(false, "IPC disconnected");
+
+    if (m_operationOverlay)
+        m_operationOverlay->showFailure("IPC disconnected, please reconnect backend");
 }
 
 void Widget::handleDeviceStatus(const DataPack &pack)
@@ -516,7 +610,7 @@ void Widget::refreshStatusSummary()
     if (m_pageStatus) {
         m_pageStatus->setMasterSummary(m_connectedMasterSlots.size(),
                                        onlineSlaveCount,
-                                       0,
+                                       m_activeAlarmCount,
                                        "--");
     }
 }

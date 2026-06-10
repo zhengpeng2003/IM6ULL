@@ -4,7 +4,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QWidget>
-
+#include<QVariant>
 #include "data/data_protocol.h"
 
 class Pageinfo : public QWidget
