@@ -29,8 +29,14 @@ public:
                   int slave_id,
                   const char *device_type,
                   int poll_interval_ms,
+                  const sensor_threshold_config_t *threshold_config,
                   char *reason,
                   size_t reason_size);
+    int setDeviceThreshold(int slot,
+                           int slave_id,
+                           const sensor_threshold_config_t *threshold_config,
+                           char *reason,
+                           size_t reason_size);
     int removeDevice(int slot,
                      int slave_id,
                      char *reason,
@@ -66,6 +72,18 @@ int port_manager_add_device(int slot,
                             int poll_interval_ms,
                             char *reason,
                             size_t reason_size);
+int port_manager_add_device_ex(int slot,
+                               int slave_id,
+                               const char *device_type,
+                               int poll_interval_ms,
+                               const sensor_threshold_config_t *threshold_config,
+                               char *reason,
+                               size_t reason_size);
+int port_manager_set_device_threshold(int slot,
+                                      int slave_id,
+                                      const sensor_threshold_config_t *threshold_config,
+                                      char *reason,
+                                      size_t reason_size);
 int port_manager_remove_device(int slot,
                                int slave_id,
                                char *reason,

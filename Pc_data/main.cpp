@@ -12,6 +12,7 @@
 #include "ipc/IpcServer.hpp"
 #include "mqtt/MqttClient.hpp"
 #include "model/ModelConverter.hpp"
+#include "model/PointConfigPackParser.hpp"
 #include "model/TelemetryPackParser.hpp"
 #include "service/PcDataService.hpp"
 #include "storage/PcDatabase.hpp"
@@ -341,6 +342,37 @@ int main()
                                     const std::string& payload) {
             cout << "[MQTT RX] topic: " << topic << endl;
             cout << "[MQTT RX] payload: " << payload << endl;
+
+            const std::string messageType = extractJsonStringValue(payload, "type");
+            if (messageType == "threshold_config") {
+                std::vector<PointConfig> configs;
+                std::string errorMessage;
+
+                if (!PointConfigPackParser::parseJson(payload, configs, errorMessage)) {
+                    cout << "[MQTT RX] threshold_config parse failed: "
+                         << errorMessage
+                         << endl;
+                    return;
+                }
+
+                cout << "[MQTT RX] threshold_config parse ok, config count: "
+                     << configs.size()
+                     << endl;
+
+                if (database.isOpen()) {
+                    database.savePointConfigs(configs);
+                } else {
+                    cout << "[MQTT RX] database is not open, skip point_config storage" << endl;
+                }
+                return;
+            }
+
+            if (messageType != "telemetry_pack") {
+                cout << "[MQTT RX] skip unsupported message type: "
+                     << messageType
+                     << endl;
+                return;
+            }
 
             TelemetryPack pack;
             std::string errorMessage;

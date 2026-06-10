@@ -1,7 +1,6 @@
 #pragma once
 
-#include "data_protocol.h"
-#include "modbus_master.hpp"
+#include "sensor_device.hpp"
 
 #include <stdint.h>
 
@@ -13,5 +12,14 @@
 #define RELAY_BIT_OFF(states, bit)  ((states) & ~(1 << (bit)))
 #define RELAY_BIT_GET(states, bit)  (((states) >> (bit)) & 1)
 
-int relay_read_state(ModbusMaster &bus, int slave_id, device_data_t *dev);
-int relay_write_states(ModbusMaster &bus, int slave_id, uint16_t states);
+class RelayDevice : public SensorDevice {
+public:
+    static const int ChannelCount = 4;
+
+    RelayDevice(int slave_id, int poll_interval_ms);
+
+    device_type_t deviceType() const override;
+    const char *deviceTypeName() const override;
+    int read(ModbusMaster &bus, device_data_t *dev) override;
+    int writeStates(ModbusMaster &bus, uint16_t states) const;
+};

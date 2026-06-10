@@ -116,6 +116,48 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
     return ok;
 }
 
+bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
+{
+    if (!m_db) {
+        std::cerr << "Database is not open, skip point config save." << std::endl;
+        return false;
+    }
+
+    if (configs.empty()) {
+        return true;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& config : configs) {
+        if (config.pointId.empty()) {
+            continue;
+        }
+
+        if (!savePointConfig(config)) {
+            ok = false;
+            break;
+        }
+    }
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    std::cout << "Database point config save "
+              << (ok ? "ok" : "failed")
+              << ", config count: "
+              << configs.size()
+              << std::endl;
+
+    return ok;
+}
+
 std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& pointId,
                                                            std::int64_t startMs,
                                                            std::int64_t endMs,
@@ -312,6 +354,65 @@ bool PcDatabase::saveHistoryPoint(const TelemetryPoint& point)
 
     if (rc != SQLITE_DONE) {
         std::cerr << "Insert telemetry_history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::savePointConfig(const PointConfig& config)
+{
+    static const char* sql =
+        "REPLACE INTO point_config ("
+        "point_id,factory_id,factory_name,area_id,area_name,"
+        "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
+        "device_type,point_key,point_name,unit,value_type,enable_alarm,"
+        "alarm_low,alarm_high,enabled,create_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare point_config failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, config.pointId);
+    bindText(stmt, 2, config.factoryId);
+    bindText(stmt, 3, config.factoryName);
+    bindText(stmt, 4, config.areaId);
+    bindText(stmt, 5, config.areaName);
+    bindText(stmt, 6, config.gatewayId);
+    bindText(stmt, 7, config.gatewayName);
+    bindText(stmt, 8, config.portId);
+    bindText(stmt, 9, config.portName);
+    sqlite3_bind_int(stmt, 10, config.deviceId);
+    bindText(stmt, 11, config.deviceName);
+    bindText(stmt, 12, config.deviceType);
+    bindText(stmt, 13, config.pointKey);
+    bindText(stmt, 14, config.pointName);
+    bindText(stmt, 15, config.unit);
+    bindText(stmt, 16, config.valueType);
+    sqlite3_bind_int(stmt, 17, config.enableAlarm ? 1 : 0);
+    if (config.hasAlarmLow) {
+        sqlite3_bind_double(stmt, 18, config.alarmLow);
+    } else {
+        sqlite3_bind_null(stmt, 18);
+    }
+    if (config.hasAlarmHigh) {
+        sqlite3_bind_double(stmt, 19, config.alarmHigh);
+    } else {
+        sqlite3_bind_null(stmt, 19);
+    }
+    sqlite3_bind_int(stmt, 20, config.enabled ? 1 : 0);
+    sqlite3_bind_int64(stmt, 21, config.timestampMs);
+    sqlite3_bind_int64(stmt, 22, config.timestampMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Insert point_config failed: " << sqlite3_errmsg(m_db) << std::endl;
         return false;
     }
 

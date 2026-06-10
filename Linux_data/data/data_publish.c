@@ -1,6 +1,5 @@
 #include "data_publish.h"
 
-#include "alarm_config.h"
 #include "data_telemetry.h"
 #include "ipc_server.h"
 #include "mqtt_wrapper.h"
@@ -79,9 +78,6 @@ int data_publish_device_status(const device_data_t *dev)
     int code = merge_send_code(ipc_code, mqtt_code);
 
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);
-
-    if (dev->type == DEV_SENSOR_TH && dev->valid)
-        alarm_config_check_sensor(dev->data.th.temperature, dev->data.th.humidity);
 
     return code;
 }

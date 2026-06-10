@@ -11,6 +11,7 @@
 #define MAX_CMD_NAME_LEN 32
 #define MAX_ACK_MSG_LEN 64
 #define MAX_DEVICE_NAME_LEN 64
+#define MAX_THRESHOLD_POINTS_PER_DEVICE 8
 
 typedef enum {
     MSG_TELEMETRY = 1,
@@ -78,6 +79,20 @@ typedef struct {
         } sys;
     } data;
 } device_data_t;//设备数据
+
+typedef struct {
+    int enable_alarm;
+    int has_low;
+    float alarm_low;
+    int has_high;
+    float alarm_high;
+} point_threshold_config_t;//单测点阈值配置
+
+typedef struct {
+    int threshold_enabled;
+    point_threshold_config_t temperature;
+    point_threshold_config_t humidity;
+} sensor_threshold_config_t;//传感器阈值配置
 
 typedef struct {
     int device_count;

@@ -1,5 +1,6 @@
 add_library(sensors STATIC
-    sensor_th.cpp
+    sensor_device.cpp
+    temperature_humidity_sensor.cpp
     relay.cpp
 )
 

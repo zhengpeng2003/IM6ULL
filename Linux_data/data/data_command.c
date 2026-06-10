@@ -30,6 +30,67 @@ static device_type_t parse_device_type(const char *type)
     return DEV_UNKNOWN;
 }
 
+static int parse_point_threshold(struct json_object *obj, point_threshold_config_t *threshold)
+{
+    struct json_object *v;
+
+    if (!obj || !threshold)
+        return 0;
+
+    memset(threshold, 0, sizeof(*threshold));
+    if (json_object_object_get_ex(obj, "enable_alarm", &v) ||
+        json_object_object_get_ex(obj, "enableAlarm", &v)) {
+        threshold->enable_alarm = json_object_get_boolean(v);
+    }
+
+    if (json_object_object_get_ex(obj, "alarm_low", &v) ||
+        json_object_object_get_ex(obj, "alarmLow", &v)) {
+        if (!json_object_is_type(v, json_type_null)) {
+            threshold->has_low = 1;
+            threshold->alarm_low = (float)json_object_get_double(v);
+        }
+    }
+
+    if (json_object_object_get_ex(obj, "alarm_high", &v) ||
+        json_object_object_get_ex(obj, "alarmHigh", &v)) {
+        if (!json_object_is_type(v, json_type_null)) {
+            threshold->has_high = 1;
+            threshold->alarm_high = (float)json_object_get_double(v);
+        }
+    }
+
+    return 1;
+}
+
+static int parse_sensor_threshold_config(struct json_object *root,
+                                         sensor_threshold_config_t *config)
+{
+    struct json_object *thresholds;
+    struct json_object *point;
+    int has_config = 0;
+
+    if (!root || !config)
+        return 0;
+
+    memset(config, 0, sizeof(*config));
+    if (json_object_object_get_ex(root, "threshold_enabled", &point) ||
+        json_object_object_get_ex(root, "thresholdEnabled", &point)) {
+        config->threshold_enabled = json_object_get_boolean(point);
+        has_config = 1;
+    }
+
+    if (!json_object_object_get_ex(root, "thresholds", &thresholds))
+        return has_config;
+
+    has_config = 1;
+    if (json_object_object_get_ex(thresholds, "temperature", &point))
+        parse_point_threshold(point, &config->temperature);
+    if (json_object_object_get_ex(thresholds, "humidity", &point))
+        parse_point_threshold(point, &config->humidity);
+
+    return has_config;
+}
+
 static int handle_scan_ports(uint32_t seq, struct json_object *root, const char *cmd)
 {
     (void)root;
@@ -96,6 +157,8 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
     int slave_id = 0;
     int poll_interval_ms = 0;
     const char *device_type = "unknown";
+    sensor_threshold_config_t threshold_config;
+    sensor_threshold_config_t *threshold_config_ptr = NULL;
     char reason[MAX_ACK_MSG_LEN] = "";
     struct json_object *v;
 
@@ -107,18 +170,53 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
         device_type = json_object_get_string(v);
     if (json_object_object_get_ex(root, "poll_interval_ms", &v))
         poll_interval_ms = json_object_get_int(v);
+    if (parse_sensor_threshold_config(root, &threshold_config))
+        threshold_config_ptr = &threshold_config;
 
-    int ret = port_manager_add_device(slot,
-                                      slave_id,
-                                      device_type,
-                                      poll_interval_ms,
-                                      reason,
-                                      sizeof(reason));
+    int ret = port_manager_add_device_ex(slot,
+                                         slave_id,
+                                         device_type,
+                                         poll_interval_ms,
+                                         threshold_config_ptr,
+                                         reason,
+                                         sizeof(reason));
     data_ack_send(seq,
                   cmd,
                   ret == 0,
                   ret == 0 ? "" : reason,
                   ret == 0 ? "device added" : data_ack_message_from_reason(reason));
+    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_set_device_threshold(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    int slot = 0;
+    int slave_id = 0;
+    sensor_threshold_config_t threshold_config;
+    char reason[MAX_ACK_MSG_LEN] = "";
+    struct json_object *v;
+
+    if (json_object_object_get_ex(root, "slot", &v))
+        slot = json_object_get_int(v);
+    if (json_object_object_get_ex(root, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+
+    if (!parse_sensor_threshold_config(root, &threshold_config)) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+
+    int ret = port_manager_set_device_threshold(slot,
+                                                slave_id,
+                                                &threshold_config,
+                                                reason,
+                                                sizeof(reason));
+    data_ack_send(seq,
+                  cmd,
+                  ret == 0,
+                  ret == 0 ? "" : reason,
+                  ret == 0 ? "device threshold saved" : data_ack_message_from_reason(reason));
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -230,6 +328,7 @@ static const command_entry_t command_table[] = {
     {"connect_port", handle_connect_port},
     {"disconnect_port", handle_disconnect_port},
     {"add_device", handle_add_device},
+    {"set_device_threshold", handle_set_device_threshold},
     {"remove_device", handle_remove_device},
     {"set_relay", handle_set_relay},
     {"get_alarm_config", handle_get_alarm_config},

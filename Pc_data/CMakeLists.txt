@@ -21,6 +21,9 @@ add_executable(Pc_data
     model/DeviceData.hpp
     model/ModelConverter.cpp
     model/ModelConverter.hpp
+    model/PointConfig.hpp
+    model/PointConfigPackParser.cpp
+    model/PointConfigPackParser.hpp
     model/SiteContext.hpp
     model/TelemetryPack.hpp
     model/TelemetryPackParser.cpp

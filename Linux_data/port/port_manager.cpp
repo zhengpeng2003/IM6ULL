@@ -2,23 +2,33 @@
 
 #include "data_ack.h"
 #include "data_publish.h"
+#include "data_telemetry.h"
+#include "ipc_server.h"
 #include "modbus_master.hpp"
+#include "mqtt_wrapper.h"
 #include "relay.hpp"
-#include "sensor_th.hpp"
+#include "sensor_device.hpp"
+#include "temperature_humidity_sensor.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <dirent.h>
+#include <json-c/json.h>
+#include <memory>
 #include <mutex>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <thread>
 
 namespace {
 
 const int kSlotCount = 2;
 const int kMinPollIntervalMs = 500;
+const char kDeviceConfigPath[] = "/etc/qt_object/device_config.json";
+const char kDeviceConfigDir[] = "/etc/qt_object";
 
 enum class ManagedType {
     Unknown,
@@ -27,10 +37,7 @@ enum class ManagedType {
 };
 
 struct ManagedDevice {
-    int slave_id = 0;
-    ManagedType type = ManagedType::Unknown;
-    std::string type_name = "unknown";
-    int poll_interval_ms = 0;
+    std::shared_ptr<SensorDevice> sensor;
     std::chrono::steady_clock::time_point next_poll_time;
 };
 
@@ -59,13 +66,120 @@ ManagedType parseType(const char *deviceType)
     return ManagedType::Unknown;
 }
 
-const char *typeName(ManagedType type)
+int64_t currentTimeMs()
 {
-    switch (type) {
-    case ManagedType::SensorTh: return "sensor_th";
-    case ManagedType::Relay: return "relay";
-    default: return "unknown";
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+void addString(json_object *obj, const char *key, const char *value)
+{
+    json_object_object_add(obj, key, json_object_new_string(value ? value : ""));
+}
+
+void addNullableDouble(json_object *obj, const char *key, int has_value, float value)
+{
+    json_object_object_add(obj,
+                           key,
+                           has_value ? json_object_new_double(value) : json_object_new_null());
+}
+
+json_object *thresholdPointToJson(const point_threshold_config_t &point)
+{
+    json_object *obj = json_object_new_object();
+    if (!obj)
+        return nullptr;
+
+    json_object_object_add(obj, "enable_alarm", json_object_new_boolean(point.enable_alarm));
+    json_object_object_add(obj, "enableAlarm", json_object_new_boolean(point.enable_alarm));
+    addNullableDouble(obj, "alarm_low", point.has_low, point.alarm_low);
+    addNullableDouble(obj, "alarmLow", point.has_low, point.alarm_low);
+    addNullableDouble(obj, "alarm_high", point.has_high, point.alarm_high);
+    addNullableDouble(obj, "alarmHigh", point.has_high, point.alarm_high);
+    return obj;
+}
+
+void thresholdPointFromJson(json_object *obj, point_threshold_config_t *point)
+{
+    if (!obj || !point)
+        return;
+
+    json_object *v = nullptr;
+    if (json_object_object_get_ex(obj, "enable_alarm", &v) ||
+        json_object_object_get_ex(obj, "enableAlarm", &v)) {
+        point->enable_alarm = json_object_get_boolean(v);
     }
+    if (json_object_object_get_ex(obj, "alarm_low", &v) ||
+        json_object_object_get_ex(obj, "alarmLow", &v)) {
+        if (!json_object_is_type(v, json_type_null)) {
+            point->has_low = 1;
+            point->alarm_low = (float)json_object_get_double(v);
+        }
+    }
+    if (json_object_object_get_ex(obj, "alarm_high", &v) ||
+        json_object_object_get_ex(obj, "alarmHigh", &v)) {
+        if (!json_object_is_type(v, json_type_null)) {
+            point->has_high = 1;
+            point->alarm_high = (float)json_object_get_double(v);
+        }
+    }
+}
+
+void thresholdConfigFromJson(json_object *root, sensor_threshold_config_t *config)
+{
+    if (!root || !config)
+        return;
+
+    memset(config, 0, sizeof(*config));
+    json_object *v = nullptr;
+    if (json_object_object_get_ex(root, "threshold_enabled", &v) ||
+        json_object_object_get_ex(root, "thresholdEnabled", &v)) {
+        config->threshold_enabled = json_object_get_boolean(v);
+    }
+
+    json_object *thresholds = nullptr;
+    if (!json_object_object_get_ex(root, "thresholds", &thresholds))
+        thresholds = root;
+
+    json_object *point = nullptr;
+    if (json_object_object_get_ex(thresholds, "temperature", &point))
+        thresholdPointFromJson(point, &config->temperature);
+    if (json_object_object_get_ex(thresholds, "humidity", &point))
+        thresholdPointFromJson(point, &config->humidity);
+}
+
+json_object *thresholdConfigToJson(const sensor_threshold_config_t &config)
+{
+    json_object *obj = json_object_new_object();
+    if (!obj)
+        return nullptr;
+
+    json_object_object_add(obj, "threshold_enabled", json_object_new_boolean(config.threshold_enabled));
+    json_object_object_add(obj, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
+
+    json_object *thresholds = json_object_new_object();
+    if (thresholds) {
+        json_object *temperature = thresholdPointToJson(config.temperature);
+        json_object *humidity = thresholdPointToJson(config.humidity);
+        if (temperature)
+            json_object_object_add(thresholds, "temperature", temperature);
+        if (humidity)
+            json_object_object_add(thresholds, "humidity", humidity);
+        json_object_object_add(obj, "thresholds", thresholds);
+    }
+    return obj;
+}
+
+std::shared_ptr<SensorDevice> createSensorDevice(ManagedType type,
+                                                 int slave_id,
+                                                 int poll_interval_ms,
+                                                 const sensor_threshold_config_t *threshold_config)
+{
+    if (type == ManagedType::SensorTh)
+        return std::make_shared<TemperatureHumiditySensor>(slave_id, poll_interval_ms, threshold_config);
+    if (type == ManagedType::Relay)
+        return std::make_shared<RelayDevice>(slave_id, poll_interval_ms);
+    return std::shared_ptr<SensorDevice>();
 }
 
 void setReason(char *reason, size_t reason_size, const char *value)
@@ -126,6 +240,264 @@ struct PortManager::Impl {
             ? RtsMode::CUSTOM
             : RtsMode::DEFAULT;
         return std::unique_ptr<ModbusMaster>(new ModbusMaster(port_name, baud, 22 + slot, mode));
+    }
+
+    void publishThresholdConfig(int slot, const ManagedDevice &device)
+    {
+        if (!device.sensor)
+            return;
+
+        sensor_threshold_config_t config = {};
+        if (!device.sensor->thresholdConfig(&config))
+            return;
+
+        PortChannel &channel = channels[slot];
+
+        json_object *root = json_object_new_object();
+        if (!root)
+            return;
+
+        addString(root, "type", "threshold_config");
+        json_object_object_add(root, "version", json_object_new_int(PROTOCOL_VER));
+        json_object_object_add(root, "timestampMs", json_object_new_int64(currentTimeMs()));
+        addString(root, "sourceId", DEFAULT_SOURCE_ID);
+        addString(root, "targetId", DEFAULT_TARGET_ID);
+
+        json_object *site = json_object_new_object();
+        if (site) {
+            addString(site, "factoryId", DEFAULT_FACTORY_ID);
+            addString(site, "factoryName", DEFAULT_FACTORY_NAME);
+            addString(site, "areaId", DEFAULT_AREA_ID);
+            addString(site, "areaName", DEFAULT_AREA_NAME);
+            addString(site, "gatewayId", DEFAULT_GATEWAY_ID);
+            addString(site, "gatewayName", DEFAULT_GATEWAY_NAME);
+            addString(site, "portId", slot == 0 ? "port_001" : "port_002");
+            addString(site, "portName", slot == 0 ? "RS485-1" : "RS485-2");
+            json_object_object_add(root, "site", site);
+        }
+
+        json_object *devices = json_object_new_array();
+        json_object *dev = json_object_new_object();
+        if (devices && dev) {
+            json_object_object_add(dev, "slot", json_object_new_int(slot));
+            addString(dev, "port", channel.port.c_str());
+            json_object_object_add(dev, "baud", json_object_new_int(channel.baud));
+            json_object_object_add(dev, "deviceId", json_object_new_int(device.sensor->slaveId()));
+            addString(dev, "deviceName", "");
+            addString(dev, "deviceType", device.sensor->deviceTypeName());
+            json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
+
+            json_object *points = json_object_new_array();
+            if (points) {
+                const struct {
+                    const char *key;
+                    const char *name;
+                    const char *unit;
+                    const point_threshold_config_t *threshold;
+                } point_defs[] = {
+                    {"temperature", "Temperature", "C", &config.temperature},
+                    {"humidity", "Humidity", "%", &config.humidity},
+                };
+
+                for (size_t i = 0; i < sizeof(point_defs) / sizeof(point_defs[0]); ++i) {
+                    json_object *point = json_object_new_object();
+                    if (!point)
+                        continue;
+
+                    const point_threshold_config_t *threshold = point_defs[i].threshold;
+                    const int effective_enable = config.threshold_enabled && threshold->enable_alarm;
+                    addString(point, "pointKey", point_defs[i].key);
+                    addString(point, "pointName", point_defs[i].name);
+                    addString(point, "unit", point_defs[i].unit);
+                    addString(point, "valueType", "number");
+                    json_object_object_add(point, "enable_alarm", json_object_new_boolean(effective_enable));
+                    json_object_object_add(point, "enableAlarm", json_object_new_boolean(effective_enable));
+                    addNullableDouble(point, "alarm_low", threshold->has_low, threshold->alarm_low);
+                    addNullableDouble(point, "alarmLow", threshold->has_low, threshold->alarm_low);
+                    addNullableDouble(point, "alarm_high", threshold->has_high, threshold->alarm_high);
+                    addNullableDouble(point, "alarmHigh", threshold->has_high, threshold->alarm_high);
+                    json_object_array_add(points, point);
+                }
+                json_object_object_add(dev, "points", points);
+            }
+
+            json_object_array_add(devices, dev);
+            json_object_object_add(root, "devices", devices);
+        } else {
+            if (devices)
+                json_object_put(devices);
+            if (dev)
+                json_object_put(dev);
+        }
+
+        const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (payload)
+            (void)mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
+
+        json_object_put(root);
+    }
+
+    void publishThresholdAlarm(const SensorDevice &sensor,
+                               const device_data_t &dev,
+                               const ThresholdAlarmEvent &event)
+    {
+        if (!event.active)
+            return;
+
+        json_object *root = json_object_new_object();
+        if (!root)
+            return;
+
+        addString(root, "type", "command");
+        addString(root, "cmd", "emergency");
+        json_object_object_add(root, "level", json_object_new_int(1));
+        addString(root, "reason", event.reason);
+        json_object_object_add(root, "deviceId", json_object_new_int(sensor.slaveId()));
+        addString(root, "deviceType", sensor.deviceTypeName());
+        addString(root, "pointKey", event.point_key);
+        json_object_object_add(root, "value", json_object_new_double(event.value));
+        json_object_object_add(root, "threshold", json_object_new_double(event.threshold));
+        if (dev.type == DEV_SENSOR_TH) {
+            json_object_object_add(root, "temp", json_object_new_double(dev.data.th.temperature));
+            json_object_object_add(root, "humi", json_object_new_double(dev.data.th.humidity));
+        }
+
+        const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (payload) {
+            (void)ipc_server_send(payload);
+            (void)mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
+        }
+        json_object_put(root);
+    }
+
+    void writeConfigLocked()
+    {
+        mkdir(kDeviceConfigDir, 0755);
+
+        json_object *root = json_object_new_object();
+        json_object *devices = json_object_new_array();
+        if (!root || !devices) {
+            if (root)
+                json_object_put(root);
+            if (devices)
+                json_object_put(devices);
+            return;
+        }
+
+        json_object_object_add(root, "version", json_object_new_int(1));
+        json_object_object_add(root, "updated_ms", json_object_new_int64(currentTimeMs()));
+
+        for (int slot = 0; slot < kSlotCount; ++slot) {
+            PortChannel &channel = channels[slot];
+            for (const ManagedDevice &device : channel.devices) {
+                if (!device.sensor)
+                    continue;
+
+                json_object *item = json_object_new_object();
+                if (!item)
+                    continue;
+
+                json_object_object_add(item, "slot", json_object_new_int(slot));
+                addString(item, "port", channel.port.c_str());
+                json_object_object_add(item, "baud", json_object_new_int(channel.baud));
+                json_object_object_add(item, "slave_id", json_object_new_int(device.sensor->slaveId()));
+                addString(item, "device_type", device.sensor->deviceTypeName());
+                json_object_object_add(item, "poll_interval_ms", json_object_new_int(device.sensor->pollIntervalMs()));
+
+                sensor_threshold_config_t config = {};
+                if (device.sensor->thresholdConfig(&config)) {
+                    json_object *threshold = thresholdConfigToJson(config);
+                    if (threshold)
+                        json_object_object_add(item, "threshold_config", threshold);
+                }
+
+                json_object_array_add(devices, item);
+            }
+        }
+
+        json_object_object_add(root, "devices", devices);
+        (void)json_object_to_file_ext(kDeviceConfigPath, root, JSON_C_TO_STRING_PRETTY);
+        json_object_put(root);
+    }
+
+    void loadDevicesForSlotLocked(int slot)
+    {
+        if (!validSlot(slot))
+            return;
+
+        PortChannel &channel = channels[slot];
+        json_object *root = json_object_from_file(kDeviceConfigPath);
+        if (!root)
+            return;
+
+        json_object *devices = nullptr;
+        if (!json_object_object_get_ex(root, "devices", &devices) ||
+            !json_object_is_type(devices, json_type_array)) {
+            json_object_put(root);
+            return;
+        }
+
+        int count = json_object_array_length(devices);
+        for (int i = 0; i < count; ++i) {
+            json_object *item = json_object_array_get_idx(devices, i);
+            if (!item)
+                continue;
+
+            json_object *v = nullptr;
+            int saved_slot = -1;
+            if (json_object_object_get_ex(item, "slot", &v))
+                saved_slot = json_object_get_int(v);
+            if (saved_slot != slot)
+                continue;
+
+            const char *saved_port = "";
+            if (json_object_object_get_ex(item, "port", &v))
+                saved_port = json_object_get_string(v);
+            if (saved_port && saved_port[0] != '\0' && channel.port != saved_port)
+                continue;
+
+            int slave_id = 0;
+            int poll_interval_ms = 0;
+            const char *device_type = "unknown";
+            if (json_object_object_get_ex(item, "slave_id", &v))
+                slave_id = json_object_get_int(v);
+            if (json_object_object_get_ex(item, "poll_interval_ms", &v))
+                poll_interval_ms = json_object_get_int(v);
+            if (json_object_object_get_ex(item, "device_type", &v))
+                device_type = json_object_get_string(v);
+
+            if (slave_id <= 0 || poll_interval_ms < kMinPollIntervalMs)
+                continue;
+
+            ManagedType type = parseType(device_type);
+            if (type == ManagedType::Unknown)
+                continue;
+
+            auto exists = std::find_if(channel.devices.begin(), channel.devices.end(),
+                                       [slave_id](const ManagedDevice &device) {
+                                           return device.sensor && device.sensor->slaveId() == slave_id;
+                                       });
+            if (exists != channel.devices.end())
+                continue;
+
+            sensor_threshold_config_t config = {};
+            sensor_threshold_config_t *config_ptr = nullptr;
+            json_object *threshold = nullptr;
+            if (json_object_object_get_ex(item, "threshold_config", &threshold)) {
+                thresholdConfigFromJson(threshold, &config);
+                config_ptr = &config;
+            }
+
+            ManagedDevice device;
+            device.sensor = createSensorDevice(type, slave_id, poll_interval_ms, config_ptr);
+            if (!device.sensor)
+                continue;
+
+            device.next_poll_time = std::chrono::steady_clock::now();
+            channel.devices.push_back(device);
+        }
+
+        json_object_put(root);
     }
 
     void startPollingLocked(PortManager *owner, int slot)
@@ -210,6 +582,9 @@ struct PortManager::Impl {
         PortChannel *channel = nullptr;
         std::unique_lock<std::mutex> io_guard;
 
+        if (!device.sensor)
+            return;
+
         {
             std::lock_guard<std::mutex> guard(lock);
             channel = &channels[slot];
@@ -221,13 +596,15 @@ struct PortManager::Impl {
         device_data_t dev = {};
         int ret = -1;
 
-        if (device.type == ManagedType::SensorTh)
-            ret = sensor_th_read(*channel->bus, device.slave_id, &dev);
-        else if (device.type == ManagedType::Relay)
-            ret = relay_read_state(*channel->bus, device.slave_id, &dev);
+        ret = device.sensor->read(*channel->bus, &dev);
 
-        if (ret == 0 || dev.type != DEV_UNKNOWN)
+        if (ret == 0 || dev.type != DEV_UNKNOWN) {
             (void)data_publish_device_status(&dev);
+
+            ThresholdAlarmEvent event;
+            if (device.sensor->checkThreshold(dev, &event))
+                publishThresholdAlarm(*device.sensor, dev, event);
+        }
     }
 };
 
@@ -279,6 +656,7 @@ int PortManager::connectPort(int slot,
         channel.bus = std::move(bus);
         channel.connected = true;
         channel.stop_requested = false;
+        impl_->loadDevicesForSlotLocked(slot);
         impl_->startPollingLocked(this, slot);
     }
 
@@ -327,7 +705,10 @@ void PortManager::pollSlot(int slot)
                 continue;
 
             due_devices.push_back(device);
-            device.next_poll_time = now + std::chrono::milliseconds(device.poll_interval_ms);
+            if (device.sensor) {
+                device.next_poll_time =
+                    now + std::chrono::milliseconds(device.sensor->pollIntervalMs());
+            }
         }
     }
 
@@ -339,6 +720,7 @@ int PortManager::addDevice(int slot,
                            int slave_id,
                            const char *device_type,
                            int poll_interval_ms,
+                           const sensor_threshold_config_t *threshold_config,
                            char *reason,
                            size_t reason_size)
 {
@@ -367,7 +749,7 @@ int PortManager::addDevice(int slot,
 
     auto exists = std::find_if(channel.devices.begin(), channel.devices.end(),
                                [slave_id](const ManagedDevice &device) {
-                                   return device.slave_id == slave_id;
+                                   return device.sensor && device.sensor->slaveId() == slave_id;
                                });
     if (exists != channel.devices.end()) {
         setReason(reason, reason_size, "device_exists");
@@ -375,12 +757,55 @@ int PortManager::addDevice(int slot,
     }
 
     ManagedDevice device;
-    device.slave_id = slave_id;
-    device.type = type;
-    device.type_name = typeName(type);
-    device.poll_interval_ms = poll_interval_ms;
+    device.sensor = createSensorDevice(type, slave_id, poll_interval_ms, threshold_config);
+    if (!device.sensor) {
+        setReason(reason, reason_size, "unsupported_device_type");
+        return -1;
+    }
     device.next_poll_time = std::chrono::steady_clock::now();
     channel.devices.push_back(device);
+    impl_->writeConfigLocked();
+    impl_->publishThresholdConfig(slot, channel.devices.back());
+
+    setReason(reason, reason_size, "");
+    return 0;
+}
+
+int PortManager::setDeviceThreshold(int slot,
+                                    int slave_id,
+                                    const sensor_threshold_config_t *threshold_config,
+                                    char *reason,
+                                    size_t reason_size)
+{
+    if (!validSlot(slot) || slave_id <= 0 || !threshold_config) {
+        setReason(reason, reason_size, "invalid_request");
+        return -1;
+    }
+
+    std::lock_guard<std::mutex> guard(impl_->lock);
+    PortChannel &channel = impl_->channels[slot];
+    if (!channel.connected) {
+        setReason(reason, reason_size, "port_not_connected");
+        return -1;
+    }
+
+    auto it = std::find_if(channel.devices.begin(), channel.devices.end(),
+                           [slave_id](const ManagedDevice &device) {
+                               return device.sensor && device.sensor->slaveId() == slave_id;
+                           });
+    if (it == channel.devices.end()) {
+        setReason(reason, reason_size, "device_not_found");
+        return -1;
+    }
+
+    if ((*it).sensor->deviceType() != DEV_SENSOR_TH) {
+        setReason(reason, reason_size, "unsupported_device_type");
+        return -1;
+    }
+
+    (*it).sensor->setThresholdConfig(*threshold_config);
+    impl_->writeConfigLocked();
+    impl_->publishThresholdConfig(slot, *it);
 
     setReason(reason, reason_size, "");
     return 0;
@@ -405,7 +830,7 @@ int PortManager::removeDevice(int slot,
 
     auto it = std::find_if(channel.devices.begin(), channel.devices.end(),
                            [slave_id](const ManagedDevice &device) {
-                               return device.slave_id == slave_id;
+                               return device.sensor && device.sensor->slaveId() == slave_id;
                            });
     if (it == channel.devices.end()) {
         setReason(reason, reason_size, "device_not_found");
@@ -413,6 +838,7 @@ int PortManager::removeDevice(int slot,
     }
 
     channel.devices.erase(it);
+    impl_->writeConfigLocked();
     setReason(reason, reason_size, "");
     return 0;
 }
@@ -430,6 +856,7 @@ int PortManager::handleRelay(int slot,
 
     PortChannel *channel = nullptr;
     std::unique_lock<std::mutex> io_guard;
+    std::shared_ptr<RelayDevice> relay;
 
     {
         std::lock_guard<std::mutex> guard(impl_->lock);
@@ -441,18 +868,20 @@ int PortManager::handleRelay(int slot,
 
         auto it = std::find_if(channel->devices.begin(), channel->devices.end(),
                                [slave_id](const ManagedDevice &device) {
-                                   return device.slave_id == slave_id &&
-                                          device.type == ManagedType::Relay;
+                                   return device.sensor &&
+                                          device.sensor->slaveId() == slave_id &&
+                                          device.sensor->deviceType() == DEV_RELAY;
                                });
         if (it == channel->devices.end()) {
             setReason(reason, reason_size, "relay_not_connected");
             return -1;
         }
 
+        relay = std::static_pointer_cast<RelayDevice>(it->sensor);
         io_guard = std::unique_lock<std::mutex>(channel->io_lock);
     }
 
-    if (relay_write_states(*channel->bus, slave_id, dev->data.relay.relay_states) != 0) {
+    if (!relay || relay->writeStates(*channel->bus, dev->data.relay.relay_states) != 0) {
         perror("[PortManager] write relay error");
         setReason(reason, reason_size, "modbus_write_failed");
         return -1;
@@ -505,7 +934,33 @@ extern "C" int port_manager_add_device(int slot,
                                         char *reason,
                                         size_t reason_size)
 {
-    return g_manager.addDevice(slot, slave_id, device_type, poll_interval_ms, reason, reason_size);
+    return g_manager.addDevice(slot, slave_id, device_type, poll_interval_ms, nullptr, reason, reason_size);
+}
+
+extern "C" int port_manager_add_device_ex(int slot,
+                                           int slave_id,
+                                           const char *device_type,
+                                           int poll_interval_ms,
+                                           const sensor_threshold_config_t *threshold_config,
+                                           char *reason,
+                                           size_t reason_size)
+{
+    return g_manager.addDevice(slot,
+                               slave_id,
+                               device_type,
+                               poll_interval_ms,
+                               threshold_config,
+                               reason,
+                               reason_size);
+}
+
+extern "C" int port_manager_set_device_threshold(int slot,
+                                                 int slave_id,
+                                                 const sensor_threshold_config_t *threshold_config,
+                                                 char *reason,
+                                                 size_t reason_size)
+{
+    return g_manager.setDeviceThreshold(slot, slave_id, threshold_config, reason, reason_size);
 }
 
 extern "C" int port_manager_remove_device(int slot,
