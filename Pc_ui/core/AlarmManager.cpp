@@ -37,7 +37,6 @@ void AlarmManager::onAlarmMessage(const QJsonObject &obj)
     m_alarms.insert(a.alarmId, a);
     existed ? emit alarmUpdated(a) : emit alarmAdded(a);
     emit activeAlarmCountChanged(activeAlarmCount());
-    emit alarmForDb(a);
 }
 
 void AlarmManager::acknowledgeAlarm(const QString &alarmId)
@@ -49,7 +48,6 @@ void AlarmManager::acknowledgeAlarm(const QString &alarmId)
     m_alarms.insert(alarmId, a);
     emit alarmUpdated(a);
     emit activeAlarmCountChanged(activeAlarmCount());
-    emit alarmForDb(a);
 }
 
 void AlarmManager::recoverAlarm(const QString &alarmId)
@@ -61,5 +59,4 @@ void AlarmManager::recoverAlarm(const QString &alarmId)
     m_alarms.insert(alarmId, a);
     emit alarmUpdated(a);
     emit activeAlarmCountChanged(activeAlarmCount());
-    emit alarmForDb(a);
 }

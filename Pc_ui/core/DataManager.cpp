@@ -1,7 +1,6 @@
 #include "DataManager.h"
 #include "DeviceManager.h"
 #include "AlarmManager.h"
-#include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QDateTime>
@@ -130,25 +129,11 @@ void DataManager::markAllDevicesOffline()
     emit realtimeDataUpdated();
 }
 
-void DataManager::onMqttMessageArrived(const QString &topic, const QByteArray &payload)
-{
-    const auto doc = QJsonDocument::fromJson(payload);
-    if (!doc.isObject()) return;
-    const QJsonObject obj = doc.object();
-    const QString msgType = obj.value("msg_type").toString();
-
-    if (msgType == "telemetry" || topic.endsWith("/telemetry")) handleTelemetry(obj);
-    else if (msgType == "status" || topic.endsWith("/status")) handleStatus(obj);
-    else if (msgType == "heartbeat" || topic.endsWith("/heartbeat")) handleHeartbeat(obj);
-    else if (msgType == "alarm" || topic.endsWith("/alarm")) m_alarmManager->onAlarmMessage(obj);
-}
-
 void DataManager::onLatestPointsMessage(const QJsonObject &obj)
 {
     const QList<RealtimeDeviceData> parsedDevices = parseLatestPoints(obj);
     for (const RealtimeDeviceData &data : parsedDevices) {
         upsertRealtimeData(data);
-        emit telemetryForDb(TelemetryRecord{data});
     }
 
     emit deviceTreeChanged();
@@ -364,68 +349,6 @@ void DataManager::applyPointToTypedFields(RealtimeDeviceData &data, const Teleme
             data.relay.buzzer = on;
         }
     }
-}
-
-void DataManager::handleTelemetry(const QJsonObject &obj)
-{
-    const auto devices = obj.value("devices").toArray();
-    for (const auto &v : devices) {
-        const auto d = v.toObject();
-        DeviceNode node;
-        node.factoryId = obj.value("factory_id").toString();
-        node.areaId = obj.value("area_id").toString();
-        node.areaName = obj.value("area_name").toString();
-        node.gatewayId = obj.value("gateway_id").toString();
-        node.masterSlot = d.value("master_slot").toInt();
-        node.masterName = d.value("master_name").toString();
-        node.slaveAddr = d.value("slave_addr").toInt();
-        node.deviceId = d.value("device_id").toInt();
-        node.deviceName = d.value("device_name").toString();
-        node.deviceType = d.value("device_type").toString();
-        node.online = d.value("online").toBool(true);
-        node.lastUpdateTime = obj.value("timestamp").toVariant().toLongLong();
-
-        RealtimeDeviceData rt;
-        rt.node = node;
-        rt.valid = d.value("valid").toBool(true);
-        rt.timestamp = node.lastUpdateTime;
-
-        if (node.deviceType == "sensor_th") {
-            rt.sensorTh.temperature = d.value("temperature").toDouble();
-            rt.sensorTh.humidity = d.value("humidity").toDouble();
-        } else if (node.deviceType == "relay") {
-            const auto s = d.value("relay_states").toObject();
-            rt.relay.led = s.value("led").toBool();
-            rt.relay.fan = s.value("fan").toBool();
-            rt.relay.buzzer = s.value("buzzer").toBool();
-        } else if (node.deviceType == "meter") {
-            rt.meter.voltage = d.value("voltage").toDouble();
-            rt.meter.current = d.value("current").toDouble();
-            rt.meter.power = d.value("power").toDouble();
-            rt.meter.energy = d.value("energy").toDouble();
-        }
-
-        m_deviceManager->upsertDevice(node);
-        m_deviceManager->updateDeviceOnline(node.key(), node.online);
-        {
-            QMutexLocker locker(&m_mutex);
-            m_realtimeMap.insert(node.key(), rt);
-        }
-        emit telemetryForDb(TelemetryRecord{rt});
-    }
-    emit deviceTreeChanged();
-    emit realtimeDataUpdated();
-}
-
-void DataManager::handleStatus(const QJsonObject &obj)
-{
-    Q_UNUSED(obj);
-    emit deviceTreeChanged();
-}
-
-void DataManager::handleHeartbeat(const QJsonObject &obj)
-{
-    Q_UNUSED(obj);
 }
 
 void DataManager::upsertRealtimeData(const RealtimeDeviceData &data)

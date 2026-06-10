@@ -1,4 +1,4 @@
-QT += core gui widgets sql charts mqtt network
+QT += core gui widgets charts network
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -25,9 +25,7 @@ SOURCES += \
     core/DeviceManager.cpp \
     core/AlarmManager.cpp \
     core/DataManager.cpp \
-    core/MqttClientManager.cpp \
     core/CommandManager.cpp \
-    core/DatabaseManager.cpp \
     core/ConfigManager.cpp \
     dialogs/AddAreaDialog.cpp \
     dialogs/AddGatewayDialog.cpp \
@@ -53,9 +51,7 @@ HEADERS += \
     core/DeviceManager.h \
     core/AlarmManager.h \
     core/DataManager.h \
-    core/MqttClientManager.h \
     core/CommandManager.h \
-    core/DatabaseManager.h \
     core/ConfigManager.h \
     model/DeviceModel.h \
     model/TelemetryModel.h \

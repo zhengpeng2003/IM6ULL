@@ -7,8 +7,8 @@
 #include <QPushButton>
 #include <QComboBox>
 
-AlarmLogPage::AlarmLogPage(AlarmManager *alarm, DatabaseManager *database, QWidget *parent)
-    : QWidget(parent), m_alarm(alarm), m_database(database)
+AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
+    : QWidget(parent), m_alarm(alarm)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);

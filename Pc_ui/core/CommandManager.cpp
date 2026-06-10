@@ -57,7 +57,6 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["params"] = params;
 
     m_pending.insert(rec.cmdId, rec);
-    emit commandForDb(rec);
     emit commandStateChanged(rec.cmdId, rec.state);
     emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
@@ -71,7 +70,6 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
     rec.reason = obj.value("reason").toString(obj.value("message").toString());
     rec.ackTime = obj.value("timestamp").toVariant().toLongLong();
     rec.state = rec.ok ? "success" : "failed";
-    emit commandForDb(rec);
     emit commandStateChanged(cmdId, rec.state);
 }
 

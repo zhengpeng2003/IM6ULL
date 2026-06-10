@@ -22,13 +22,11 @@ public:
     void markAllDevicesOffline();
 
 public slots:
-    void onMqttMessageArrived(const QString &topic, const QByteArray &payload);
     void onLatestPointsMessage(const QJsonObject &obj);
 
 signals:
     void realtimeDataUpdated();
     void deviceTreeChanged();
-    void telemetryForDb(const TelemetryRecord &record);
 
 private:
     QList<RealtimeDeviceData> parseLatestPoints(const QJsonObject &obj) const;
@@ -37,9 +35,6 @@ private:
     RealtimeDeviceData buildRealtimeDeviceData(const QList<TelemetryPointData> &points) const;
     void evaluateDeviceStatus(RealtimeDeviceData &data) const;
     void applyPointToTypedFields(RealtimeDeviceData &data, const TelemetryPointData &point) const;
-    void handleTelemetry(const QJsonObject &obj);
-    void handleStatus(const QJsonObject &obj);
-    void handleHeartbeat(const QJsonObject &obj);
     void upsertRealtimeData(const RealtimeDeviceData &data);
 
 private:

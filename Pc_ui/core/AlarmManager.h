@@ -22,7 +22,6 @@ signals:
     void alarmAdded(const AlarmRecord &alarm);
     void alarmUpdated(const AlarmRecord &alarm);
     void activeAlarmCountChanged(int count);
-    void alarmForDb(const AlarmRecord &alarm);
 
 private:
     QHash<QString, AlarmRecord> m_alarms;

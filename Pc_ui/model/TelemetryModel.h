@@ -66,11 +66,5 @@ struct RealtimeDeviceData
     qint64 timestamp = 0;
 };
 
-struct TelemetryRecord
-{
-    RealtimeDeviceData data;
-};
-
 Q_DECLARE_METATYPE(TelemetryPointData)
 Q_DECLARE_METATYPE(RealtimeDeviceData)
-Q_DECLARE_METATYPE(TelemetryRecord)

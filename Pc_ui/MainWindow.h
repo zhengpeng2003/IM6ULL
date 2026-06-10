@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QMainWindow>
 #include <QJsonObject>
+#include <QString>
 #include <QStackedWidget>
 
 class TopBar;
@@ -14,12 +15,10 @@ class DeviceConfigPage;
 class AlarmLogPage;
 class SystemSettingPage;
 
-class MqttClientManager;
 class DataManager;
 class DeviceManager;
 class AlarmManager;
 class CommandManager;
-class DatabaseManager;
 class ConfigManager;
 class IpcClient;
 class QTimer;
@@ -35,10 +34,10 @@ private:
     void initManagers();
     void initUi();
     void initConnections();
-    void loadInitialConfig();
     void initIpc();
     void handleIpcMessage(const QByteArray &frame);
     void requestLatestPoints();
+    void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void markIpcDataOffline();
 
 private:
@@ -53,12 +52,10 @@ private:
     AlarmLogPage *m_alarmLogPage = nullptr;
     SystemSettingPage *m_systemSettingPage = nullptr;
 
-    MqttClientManager *m_mqtt = nullptr;
     DataManager *m_data = nullptr;
     DeviceManager *m_device = nullptr;
     AlarmManager *m_alarm = nullptr;
     CommandManager *m_command = nullptr;
-    DatabaseManager *m_database = nullptr;
     ConfigManager *m_config = nullptr;
 
 
