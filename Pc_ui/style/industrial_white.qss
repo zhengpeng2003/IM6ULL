@@ -85,6 +85,14 @@ QPushButton:hover {
     background: #1D4ED8;
 }
 
+QPushButton[danger="true"] {
+    background: #DC2626;
+}
+
+QPushButton[danger="true"]:hover {
+    background: #B91C1C;
+}
+
 QTableWidget, QTreeWidget, QLineEdit, QComboBox {
     background: #FFFFFF;
     border: 1px solid #E5E7EB;

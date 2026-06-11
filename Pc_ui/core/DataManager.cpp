@@ -111,6 +111,79 @@ QList<RealtimeDeviceData> DataManager::allRealtimeData() const
     return m_realtimeMap.values();
 }
 
+void DataManager::refreshOfflineStates(qint64 timeoutMs)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const QList<DeviceNode> devices = m_deviceManager->allDevices();
+    bool changed = false;
+
+    for (const DeviceNode &device : devices) {
+        const bool online = device.lastUpdateTime > 0 && now - device.lastUpdateTime <= timeoutMs;
+        if (device.online == online) {
+            continue;
+        }
+
+        m_deviceManager->updateDeviceOnline(device.key(), online);
+        changed = true;
+
+        QMutexLocker locker(&m_mutex);
+        if (m_realtimeMap.contains(device.key())) {
+            RealtimeDeviceData data = m_realtimeMap.value(device.key());
+            data.node.online = online;
+            if (!online) {
+                data.statusLevel = QStringLiteral("offline");
+                data.statusText = QStringLiteral("设备离线");
+            }
+            m_realtimeMap.insert(device.key(), data);
+        }
+    }
+
+    if (changed) {
+        emit deviceTreeChanged();
+        emit realtimeDataUpdated();
+    }
+}
+
+void DataManager::removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    m_deviceManager->removeDeviceData(gatewayId, portId, deviceId);
+
+    {
+        QMutexLocker locker(&m_mutex);
+        for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
+            const DeviceNode &node = it.value().node;
+            if (node.gatewayId == gatewayId && node.port == portId && node.deviceId == deviceId) {
+                it = m_realtimeMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    emit deviceTreeChanged();
+    emit realtimeDataUpdated();
+}
+
+void DataManager::removeMasterData(const QString &gatewayId, const QString &portId)
+{
+    m_deviceManager->removeMasterData(gatewayId, portId);
+
+    {
+        QMutexLocker locker(&m_mutex);
+        for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
+            const DeviceNode &node = it.value().node;
+            if (node.gatewayId == gatewayId && node.port == portId) {
+                it = m_realtimeMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    emit deviceTreeChanged();
+    emit realtimeDataUpdated();
+}
+
 void DataManager::markAllDevicesOffline()
 {
     const QList<DeviceNode> devices = m_deviceManager->allDevices();

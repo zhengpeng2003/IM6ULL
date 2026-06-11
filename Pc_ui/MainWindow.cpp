@@ -76,6 +76,10 @@ void MainWindow::initIpc()
     });
 
     connect(m_ipcWatchdogTimer, &QTimer::timeout, this, [this]() {
+        if (m_data) {
+            m_data->refreshOfflineStates(30000);
+        }
+
         if (m_lastLatestPointsMs <= 0) {
             markIpcDataOffline();
             return;
@@ -139,6 +143,23 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "delete_data_ack") {
+        qDebug() << "delete data ack:" << root;
+        if (root.value("ok").toBool() && m_data) {
+            if (m_pendingDeleteAction == "delete_master_data") {
+                m_data->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
+            } else if (m_pendingDeleteAction == "delete_device_data") {
+                m_data->removeDeviceData(m_pendingDeleteGatewayId, m_pendingDeletePortId, m_pendingDeleteDeviceId);
+            }
+        }
+        m_pendingDeleteAction.clear();
+        m_pendingDeleteGatewayId.clear();
+        m_pendingDeletePortId.clear();
+        m_pendingDeleteDeviceId = 0;
+        requestLatestPoints();
+        return;
+    }
+
     if (type == "ack" || type == "command_ack") {
         m_command->onCommandAck(root);
         return;
@@ -169,6 +190,47 @@ void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64
     payload.insert(QStringLiteral("startMs"), startMs);
     payload.insert(QStringLiteral("endMs"), endMs);
     payload.insert(QStringLiteral("limit"), limit);
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::sendDeleteMasterData(const QString &gatewayId, const QString &portId)
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected() || gatewayId.isEmpty() || portId.isEmpty()) {
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("delete_master_data"));
+    payload.insert(QStringLiteral("gatewayId"), gatewayId);
+    payload.insert(QStringLiteral("portId"), portId);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_pendingDeleteAction = QStringLiteral("delete_master_data");
+    m_pendingDeleteGatewayId = gatewayId;
+    m_pendingDeletePortId = portId;
+    m_pendingDeleteDeviceId = 0;
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected() || gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("delete_device_data"));
+    payload.insert(QStringLiteral("gatewayId"), gatewayId);
+    payload.insert(QStringLiteral("portId"), portId);
+    payload.insert(QStringLiteral("deviceId"), deviceId);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_pendingDeleteAction = QStringLiteral("delete_device_data");
+    m_pendingDeleteGatewayId = gatewayId;
+    m_pendingDeletePortId = portId;
+    m_pendingDeleteDeviceId = deviceId;
 
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
@@ -246,4 +308,10 @@ void MainWindow::initConnections()
 
     connect(m_trendPage, &TrendPage::historyQueryRequested,
             this, &MainWindow::sendHistoryQuery);
+
+    connect(m_deviceConfigPage, &DeviceConfigPage::deleteMasterDataRequested,
+            this, &MainWindow::sendDeleteMasterData);
+
+    connect(m_deviceConfigPage, &DeviceConfigPage::deleteDeviceDataRequested,
+            this, &MainWindow::sendDeleteDeviceData);
 }

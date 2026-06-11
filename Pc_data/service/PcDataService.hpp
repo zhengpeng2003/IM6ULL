@@ -41,6 +41,12 @@ public:
     // 根据 pointId 获取单个测点
     bool getPointById(const std::string& pointId, TelemetryPoint& outPoint) const;
 
+    bool removeDeviceData(const std::string& gatewayId,
+                          const std::string& portId,
+                          int deviceId);
+    bool removeMasterData(const std::string& gatewayId,
+                          const std::string& portId);
+
     // 清空当前快照
     void clear();
 

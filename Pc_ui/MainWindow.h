@@ -38,6 +38,8 @@ private:
     void handleIpcMessage(const QByteArray &frame);
     void requestLatestPoints();
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
+    void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
+    void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void markIpcDataOffline();
 
 private:
@@ -64,4 +66,8 @@ private:
     QTimer *m_ipcTimer = nullptr;
     QTimer *m_ipcWatchdogTimer = nullptr;
     qint64 m_lastLatestPointsMs = 0;
+    QString m_pendingDeleteAction;
+    QString m_pendingDeleteGatewayId;
+    QString m_pendingDeletePortId;
+    int m_pendingDeleteDeviceId = 0;
 };

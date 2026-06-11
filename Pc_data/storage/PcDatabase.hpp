@@ -20,16 +20,29 @@ public:
     bool initTables();
     bool saveTelemetryPoints(const std::vector<TelemetryPoint>& points);
     bool savePointConfigs(const std::vector<PointConfig>& configs);
+    std::vector<TelemetryPoint> queryLatestPoints();
     std::vector<TelemetryPoint> queryHistoryPoints(const std::string& pointId,
                                                    std::int64_t startMs,
                                                    std::int64_t endMs,
                                                    int limit);
+    bool deleteDeviceData(const std::string& gatewayId,
+                          const std::string& portId,
+                          int deviceId);
+    bool deleteMasterData(const std::string& gatewayId,
+                          const std::string& portId);
 
     bool isOpen() const;
     void close();
 
 private:
     bool execSql(const std::string& sql);
+    bool deleteRowsByDevice(const std::string& table,
+                            const std::string& gatewayId,
+                            const std::string& portId,
+                            int deviceId);
+    bool deleteRowsByMaster(const std::string& table,
+                            const std::string& gatewayId,
+                            const std::string& portId);
     bool ensureDirectoryForFile(const std::string& dbPath);
     bool saveLatestPoint(const TelemetryPoint& point);
     bool saveHistoryPoint(const TelemetryPoint& point);

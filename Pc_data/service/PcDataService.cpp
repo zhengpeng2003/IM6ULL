@@ -56,6 +56,53 @@ bool PcDataService::getPointById(const std::string& pointId, TelemetryPoint& out
     return true;
 }
 
+bool PcDataService::removeDeviceData(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId)
+{
+    if (gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    bool removed = false;
+
+    for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
+        const TelemetryPoint& point = it->second;
+        if (point.gatewayId == gatewayId && point.portId == portId && point.deviceId == deviceId) {
+            it = m_snapshot.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    return removed;
+}
+
+bool PcDataService::removeMasterData(const std::string& gatewayId,
+                                     const std::string& portId)
+{
+    if (gatewayId.empty() || portId.empty()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    bool removed = false;
+
+    for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
+        const TelemetryPoint& point = it->second;
+        if (point.gatewayId == gatewayId && point.portId == portId) {
+            it = m_snapshot.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    return removed;
+}
+
 void PcDataService::clear()
 {
     std::lock_guard<std::mutex> lock(m_mutex);

@@ -20,6 +20,50 @@ void DeviceManager::upsertDevice(const DeviceNode &node)
     emit onlineDeviceCountChanged(onlineDeviceCount());
 }
 
+void DeviceManager::removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    bool removed = false;
+    for (auto it = m_devices.begin(); it != m_devices.end(); ) {
+        const DeviceNode &node = it.value();
+        if (node.gatewayId == gatewayId && node.port == portId && node.deviceId == deviceId) {
+            it = m_devices.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (!removed) {
+        return;
+    }
+
+    emit deviceConfigChanged();
+    emit onlineGatewayCountChanged(onlineGatewayCount());
+    emit onlineDeviceCountChanged(onlineDeviceCount());
+}
+
+void DeviceManager::removeMasterData(const QString &gatewayId, const QString &portId)
+{
+    bool removed = false;
+    for (auto it = m_devices.begin(); it != m_devices.end(); ) {
+        const DeviceNode &node = it.value();
+        if (node.gatewayId == gatewayId && node.port == portId) {
+            it = m_devices.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (!removed) {
+        return;
+    }
+
+    emit deviceConfigChanged();
+    emit onlineGatewayCountChanged(onlineGatewayCount());
+    emit onlineDeviceCountChanged(onlineDeviceCount());
+}
+
 QList<DeviceNode> DeviceManager::allDevices() const
 {
     return m_devices.values();

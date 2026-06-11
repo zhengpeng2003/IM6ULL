@@ -19,6 +19,9 @@ public:
     QList<DeviceNode> deviceTreeSnapshot() const;
     RealtimeDeviceData deviceData(const QString &deviceKey) const;
     QList<RealtimeDeviceData> allRealtimeData() const;
+    void refreshOfflineStates(qint64 timeoutMs = 30000);
+    void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
+    void removeMasterData(const QString &gatewayId, const QString &portId);
     void markAllDevicesOffline();
 
 public slots:

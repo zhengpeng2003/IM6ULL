@@ -158,6 +158,95 @@ bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
     return ok;
 }
 
+std::vector<TelemetryPoint> PcDatabase::queryLatestPoints()
+{
+    std::vector<TelemetryPoint> points;
+
+    if (!m_db) {
+        return points;
+    }
+
+    static const char* sql =
+        "SELECT point_id,timestamp_ms,factory_id,factory_name,area_id,area_name,"
+        "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
+        "device_type,point_key,point_name,unit,value_type,number_value,"
+        "text_value,valid,error_message "
+        "FROM latest_point;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query latest failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return points;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        TelemetryPoint point;
+
+        const unsigned char* pointId = sqlite3_column_text(stmt, 0);
+        point.pointId = pointId ? reinterpret_cast<const char*>(pointId) : "";
+        point.timestampMs = sqlite3_column_int64(stmt, 1);
+
+        const unsigned char* factoryId = sqlite3_column_text(stmt, 2);
+        point.factoryId = factoryId ? reinterpret_cast<const char*>(factoryId) : "";
+        const unsigned char* factoryName = sqlite3_column_text(stmt, 3);
+        point.factoryName = factoryName ? reinterpret_cast<const char*>(factoryName) : "";
+        const unsigned char* areaId = sqlite3_column_text(stmt, 4);
+        point.areaId = areaId ? reinterpret_cast<const char*>(areaId) : "";
+        const unsigned char* areaName = sqlite3_column_text(stmt, 5);
+        point.areaName = areaName ? reinterpret_cast<const char*>(areaName) : "";
+        const unsigned char* gatewayId = sqlite3_column_text(stmt, 6);
+        point.gatewayId = gatewayId ? reinterpret_cast<const char*>(gatewayId) : "";
+        const unsigned char* gatewayName = sqlite3_column_text(stmt, 7);
+        point.gatewayName = gatewayName ? reinterpret_cast<const char*>(gatewayName) : "";
+        const unsigned char* portId = sqlite3_column_text(stmt, 8);
+        point.portId = portId ? reinterpret_cast<const char*>(portId) : "";
+        const unsigned char* portName = sqlite3_column_text(stmt, 9);
+        point.portName = portName ? reinterpret_cast<const char*>(portName) : "";
+
+        point.deviceId = sqlite3_column_int(stmt, 10);
+        const unsigned char* deviceName = sqlite3_column_text(stmt, 11);
+        point.deviceName = deviceName ? reinterpret_cast<const char*>(deviceName) : "";
+        const unsigned char* deviceType = sqlite3_column_text(stmt, 12);
+        point.deviceType = deviceType ? reinterpret_cast<const char*>(deviceType) : "";
+        const unsigned char* pointKey = sqlite3_column_text(stmt, 13);
+        point.pointKey = pointKey ? reinterpret_cast<const char*>(pointKey) : "";
+        const unsigned char* pointName = sqlite3_column_text(stmt, 14);
+        point.pointName = pointName ? reinterpret_cast<const char*>(pointName) : "";
+        const unsigned char* unit = sqlite3_column_text(stmt, 15);
+        point.unit = unit ? reinterpret_cast<const char*>(unit) : "";
+
+        const unsigned char* valueType = sqlite3_column_text(stmt, 16);
+        const std::string valueTypeText = valueType ? reinterpret_cast<const char*>(valueType) : "";
+        if (valueTypeText == "text") {
+            point.valueType = PointValueType::Text;
+        } else if (valueTypeText == "boolean") {
+            point.valueType = PointValueType::Boolean;
+        } else {
+            point.valueType = PointValueType::Number;
+        }
+
+        point.numberValue = sqlite3_column_double(stmt, 17);
+        const unsigned char* textValue = sqlite3_column_text(stmt, 18);
+        point.textValue = textValue ? reinterpret_cast<const char*>(textValue) : "";
+        point.valid = sqlite3_column_int(stmt, 19) != 0;
+        const unsigned char* errorMessage = sqlite3_column_text(stmt, 20);
+        point.errorMessage = errorMessage ? reinterpret_cast<const char*>(errorMessage) : "";
+
+        if (!point.pointId.empty()) {
+            points.push_back(point);
+        }
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Query latest_point failed: " << sqlite3_errmsg(m_db) << std::endl;
+        points.clear();
+    }
+
+    sqlite3_finalize(stmt);
+    return points;
+}
+
 std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& pointId,
                                                            std::int64_t startMs,
                                                            std::int64_t endMs,
@@ -226,6 +315,70 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
 
     sqlite3_finalize(stmt);
     return points;
+}
+
+bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
+                                  const std::string& portId,
+                                  int deviceId)
+{
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = deleteRowsByDevice("latest_point", gatewayId, portId, deviceId) &&
+              deleteRowsByDevice("point_config", gatewayId, portId, deviceId) &&
+              deleteRowsByDevice("telemetry_history", gatewayId, portId, deviceId) &&
+              deleteRowsByDevice("alarm_event", gatewayId, portId, deviceId);
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    std::cout << "Delete device data "
+              << (ok ? "ok" : "failed")
+              << ", gateway: " << gatewayId
+              << ", port: " << portId
+              << ", device: " << deviceId
+              << std::endl;
+
+    return ok;
+}
+
+bool PcDatabase::deleteMasterData(const std::string& gatewayId,
+                                  const std::string& portId)
+{
+    if (!m_db || gatewayId.empty() || portId.empty()) {
+        return false;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = deleteRowsByMaster("latest_point", gatewayId, portId) &&
+              deleteRowsByMaster("point_config", gatewayId, portId) &&
+              deleteRowsByMaster("telemetry_history", gatewayId, portId) &&
+              deleteRowsByMaster("alarm_event", gatewayId, portId);
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    std::cout << "Delete master data "
+              << (ok ? "ok" : "failed")
+              << ", gateway: " << gatewayId
+              << ", port: " << portId
+              << std::endl;
+
+    return ok;
 }
 
 void PcDatabase::close()
@@ -449,6 +602,66 @@ bool PcDatabase::execSql(const std::string& sql)
         std::cerr << std::endl;
         std::cerr << "SQL: " << sql << std::endl;
 
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::deleteRowsByDevice(const std::string& table,
+                                    const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId)
+{
+    const std::string sql =
+        "DELETE FROM " + table +
+        " WHERE gateway_id = ? AND port_id = ? AND device_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare delete device failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, deviceId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Delete device rows failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::deleteRowsByMaster(const std::string& table,
+                                    const std::string& gatewayId,
+                                    const std::string& portId)
+{
+    const std::string sql =
+        "DELETE FROM " + table +
+        " WHERE gateway_id = ? AND port_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare delete master failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Delete master rows failed: " << sqlite3_errmsg(m_db) << std::endl;
         return false;
     }
 

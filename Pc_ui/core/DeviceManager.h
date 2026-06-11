@@ -11,6 +11,8 @@ public:
 
     void setDevices(const QList<DeviceNode> &devices);
     void upsertDevice(const DeviceNode &node);
+    void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
+    void removeMasterData(const QString &gatewayId, const QString &portId);
     QList<DeviceNode> allDevices() const;
     DeviceNode device(const QString &key) const;
     void updateDeviceOnline(const QString &key, bool online);

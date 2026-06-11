@@ -276,6 +276,23 @@ static std::string buildHistoryPointsJson(const std::string& pointId,
     return oss.str();
 }
 
+static std::string buildDeleteDataAckJson(const std::string& action,
+                                          bool ok,
+                                          const std::string& reason)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"delete_data_ack\",";
+    oss << "\"action\":\"" << jsonEscape(action) << "\",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"timestamp\":" << currentTimeMs();
+    oss << "}";
+
+    return oss.str();
+}
+
 static bool parseHistoryQuery(const std::string& msg,
                               std::string& pointId,
                               std::int64_t& startMs,
@@ -301,9 +318,71 @@ static bool parseHistoryQuery(const std::string& msg,
     return !pointId.empty();
 }
 
-static void sendLatestPoints(IpcServer& ipc, PcDataService& dataService)
+static bool parseDeleteDeviceRequest(const std::string& msg,
+                                     std::string& gatewayId,
+                                     std::string& portId,
+                                     int& deviceId)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "delete_device_data") {
+        return false;
+    }
+
+    gatewayId = getJsonString(root, "gatewayId");
+    if (gatewayId.empty()) {
+        gatewayId = getJsonString(root, "gateway_id");
+    }
+
+    portId = getJsonString(root, "portId");
+    if (portId.empty()) {
+        portId = getJsonString(root, "port_id");
+    }
+
+    deviceId = getJsonInt(root, "deviceId", getJsonInt(root, "device_id", 0));
+
+    return !gatewayId.empty() && !portId.empty() && deviceId > 0;
+}
+
+static bool parseDeleteMasterRequest(const std::string& msg,
+                                     std::string& gatewayId,
+                                     std::string& portId)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "delete_master_data") {
+        return false;
+    }
+
+    gatewayId = getJsonString(root, "gatewayId");
+    if (gatewayId.empty()) {
+        gatewayId = getJsonString(root, "gateway_id");
+    }
+
+    portId = getJsonString(root, "portId");
+    if (portId.empty()) {
+        portId = getJsonString(root, "port_id");
+    }
+
+    return !gatewayId.empty() && !portId.empty();
+}
+
+static void sendLatestPoints(IpcServer& ipc, PcDataService& dataService, PcDatabase& database)
 {
     std::vector<TelemetryPoint> points = dataService.getLatestPoints();
+    if (points.empty() && database.isOpen()) {
+        points = database.queryLatestPoints();
+    }
 
     cout << "latest point count: " << points.size() << endl;
 
@@ -431,7 +510,7 @@ int main()
 
             cout << "send hello done" << endl;
 
-            sendLatestPoints(ipc, dataService);
+            sendLatestPoints(ipc, dataService, database);
         });
 
         ipc.setClientDisconnectedCallback([]() {
@@ -460,6 +539,66 @@ int main()
                 return;
             }
 
+            std::string gatewayId;
+            std::string portId;
+            int deviceId = 0;
+
+            if (parseDeleteDeviceRequest(msg, gatewayId, portId, deviceId)) {
+                bool dbOk = false;
+                if (database.isOpen()) {
+                    dbOk = database.deleteDeviceData(gatewayId, portId, deviceId);
+                } else {
+                    cout << "delete_device_data skipped: database is not open" << endl;
+                }
+
+                const bool snapshotRemoved = dataService.removeDeviceData(gatewayId, portId, deviceId);
+                const bool ok = dbOk || snapshotRemoved;
+                const std::string reason = ok ? "" : "delete_device_data_failed";
+
+                ipc.sendMessage(buildDeleteDataAckJson("delete_device_data", ok, reason));
+                sendLatestPoints(ipc, dataService, database);
+
+                cout << "delete_device_data done, gateway: "
+                     << gatewayId
+                     << ", port: "
+                     << portId
+                     << ", device: "
+                     << deviceId
+                     << ", dbOk: "
+                     << dbOk
+                     << ", snapshotRemoved: "
+                     << snapshotRemoved
+                     << endl;
+                return;
+            }
+
+            if (parseDeleteMasterRequest(msg, gatewayId, portId)) {
+                bool dbOk = false;
+                if (database.isOpen()) {
+                    dbOk = database.deleteMasterData(gatewayId, portId);
+                } else {
+                    cout << "delete_master_data skipped: database is not open" << endl;
+                }
+
+                const bool snapshotRemoved = dataService.removeMasterData(gatewayId, portId);
+                const bool ok = dbOk || snapshotRemoved;
+                const std::string reason = ok ? "" : "delete_master_data_failed";
+
+                ipc.sendMessage(buildDeleteDataAckJson("delete_master_data", ok, reason));
+                sendLatestPoints(ipc, dataService, database);
+
+                cout << "delete_master_data done, gateway: "
+                     << gatewayId
+                     << ", port: "
+                     << portId
+                     << ", dbOk: "
+                     << dbOk
+                     << ", snapshotRemoved: "
+                     << snapshotRemoved
+                     << endl;
+                return;
+            }
+
             /*
              * 兼容你之前 Pc_ui 可能发送的 get_snapshot。
              * 后面建议统一改成 get_latest_points。
@@ -467,7 +606,7 @@ int main()
             if (msg.find("get_latest_points") != std::string::npos ||
                 msg.find("get_snapshot") != std::string::npos) {
 
-                sendLatestPoints(ipc, dataService);
+                sendLatestPoints(ipc, dataService, database);
             } else if (msg.find("\"type\":\"command\"") != std::string::npos ||
                        msg.find("\"msg_type\":\"command\"") != std::string::npos) {
                 const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
