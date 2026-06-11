@@ -16,9 +16,12 @@ bool MqttClient::connectToBroker(const std::string& host,
                                  const std::string& clientId,
                                  const std::vector<std::string>& topics)
 {
+    disconnect();
+
     m_address = "tcp://" + host + ":" + std::to_string(port);
     m_clientId = clientId;
     m_topics = topics;
+    setStatus("connecting");
 
     int rc = MQTTAsync_create(
         &m_client,
@@ -31,6 +34,7 @@ bool MqttClient::connectToBroker(const std::string& host,
     if (rc != MQTTASYNC_SUCCESS) {
         std::cerr << "MQTTAsync_create failed, rc=" << rc << std::endl;
         m_client = nullptr;
+        setStatus("failed");
         return false;
     }
 
@@ -46,6 +50,7 @@ bool MqttClient::connectToBroker(const std::string& host,
         std::cerr << "MQTTAsync_setCallbacks failed, rc=" << rc << std::endl;
         MQTTAsync_destroy(&m_client);
         m_client = nullptr;
+        setStatus("failed");
         return false;
     }
 
@@ -64,6 +69,7 @@ bool MqttClient::connectToBroker(const std::string& host,
         std::cerr << "MQTTAsync_connect failed, rc=" << rc << std::endl;
         MQTTAsync_destroy(&m_client);
         m_client = nullptr;
+        setStatus("failed");
         return false;
     }
 
@@ -82,8 +88,21 @@ void MqttClient::disconnect()
 
     MQTTAsync_destroy(&m_client);
     m_client = nullptr;
+    setStatus("disconnected");
 
     std::cout << "MQTT disconnected." << std::endl;
+}
+
+std::string MqttClient::status() const
+{
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    return m_status;
+}
+
+void MqttClient::setStatus(const std::string& status)
+{
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    m_status = status;
 }
 
 void MqttClient::setMessageCallback(MessageCallback callback)
@@ -102,6 +121,9 @@ void MqttClient::onConnectionLost(void* context, char* cause)
     }
 
     std::cerr << std::endl;
+    if (self) {
+        self->setStatus("connecting");
+    }
 
     /*
      * 这里不用手动重连。
@@ -157,6 +179,7 @@ void MqttClient::onConnectSuccess(void* context, MQTTAsync_successData* response
     std::cout << "MQTT connected." << std::endl;
 
     if (self) {
+        self->setStatus("connected");
         self->subscribeTopics();
     }
 
@@ -177,7 +200,10 @@ void MqttClient::onConnectFailure(void* context, MQTTAsync_failureData* response
 
     std::cerr << std::endl;
 
-    (void)context;
+    auto* self = static_cast<MqttClient*>(context);
+    if (self) {
+        self->setStatus("failed");
+    }
 }
 
 bool MqttClient::subscribeTopics()

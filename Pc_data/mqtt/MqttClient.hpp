@@ -2,6 +2,7 @@
 #define MQTT_CLIENT_HPP
 
 #include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -25,8 +26,11 @@ public:
     void disconnect();
 
     void setMessageCallback(MessageCallback callback);
+    std::string status() const;
 
 private:
+    void setStatus(const std::string& status);
+
     static void onConnectionLost(void* context, char* cause);
     static int onMessageArrived(void* context,
                                 char* topicName,
@@ -44,6 +48,8 @@ private:
     std::string m_address;
     std::string m_clientId;
     std::vector<std::string> m_topics;
+    std::string m_status = "disconnected";
+    mutable std::mutex m_statusMutex;
 
     MessageCallback m_messageCallback;
 };

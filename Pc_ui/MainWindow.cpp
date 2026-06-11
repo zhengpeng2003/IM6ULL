@@ -45,16 +45,25 @@ void MainWindow::initIpc()
 
     connect(m_ipcClient, &IpcClient::connected, this, [this]() {
         qDebug() << "Pc_ui IPC connected";
+        if (m_systemSettingPage) {
+            m_systemSettingPage->setIpcConnected(true);
+        }
         requestLatestPoints();
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
         qDebug() << "Pc_ui IPC disconnected";
+        if (m_systemSettingPage) {
+            m_systemSettingPage->setIpcConnected(false);
+        }
         markIpcDataOffline();
     });
 
     connect(m_ipcClient, &IpcClient::errorOccured, this, [this](const QString &err) {
         qDebug() << "IPC error:" << err;
+        if (m_systemSettingPage) {
+            m_systemSettingPage->setIpcConnected(false);
+        }
         markIpcDataOffline();
     });
 
@@ -162,6 +171,20 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "mqtt_config") {
+        if (m_systemSettingPage) {
+            m_systemSettingPage->onMqttConfigMessage(root);
+        }
+        return;
+    }
+
+    if (type == "mqtt_config_ack") {
+        if (m_systemSettingPage) {
+            m_systemSettingPage->onMqttConfigAck(root);
+        }
+        return;
+    }
+
     if (type == "ack" || type == "command_ack") {
         m_command->onCommandAck(root);
         return;
@@ -256,6 +279,30 @@ void MainWindow::sendClearRecoveredAlarms()
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 
+void MainWindow::requestMqttConfig()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+
+    m_ipcClient->sendMessage(QString(R"({"type":"get_mqtt_config"})"));
+}
+
+void MainWindow::saveMqttConfig(const QString &host, int port)
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected() || host.trimmed().isEmpty() || port < 1 || port > 65535) {
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("save_mqtt_config"));
+    payload.insert(QStringLiteral("host"), host.trimmed());
+    payload.insert(QStringLiteral("port"), port);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
 void MainWindow::markIpcDataOffline()
 {
     if (m_data) {
@@ -338,4 +385,10 @@ void MainWindow::initConnections()
 
     connect(m_alarmLogPage, &AlarmLogPage::clearRecoveredAlarmsRequested,
             this, &MainWindow::sendClearRecoveredAlarms);
+
+    connect(m_systemSettingPage, &SystemSettingPage::mqttConfigRequested,
+            this, &MainWindow::requestMqttConfig);
+
+    connect(m_systemSettingPage, &SystemSettingPage::mqttConfigSaveRequested,
+            this, &MainWindow::saveMqttConfig);
 }

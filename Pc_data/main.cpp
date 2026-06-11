@@ -2,12 +2,16 @@
 #include <thread>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 #include <exception>
 
 #include <rapidjson/document.h>
+#include <rapidjson/prettywriter.h>
+#include <rapidjson/stringbuffer.h>
 
 #include "ipc/IpcServer.hpp"
 #include "mqtt/MqttClient.hpp"
@@ -18,6 +22,16 @@
 #include "storage/PcDatabase.hpp"
 
 using namespace std;
+
+struct MqttConfig
+{
+    std::string host = "127.0.0.1";
+    int port = 1883;
+    std::string clientId = "pc_data_001";
+    std::vector<std::string> topics = {"pc_data/telemetry/test"};
+};
+
+static const char* kMqttConfigPath = "config/mqtt_config.json";
 
 static std::string jsonEscape(const std::string& input)
 {
@@ -293,6 +307,149 @@ static std::string buildDeleteDataAckJson(const std::string& action,
     return oss.str();
 }
 
+static std::string buildMqttConfigJson(const MqttConfig& config,
+                                       const std::string& status)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"mqtt_config\",";
+    oss << "\"host\":\"" << jsonEscape(config.host) << "\",";
+    oss << "\"port\":" << config.port << ",";
+    oss << "\"status\":\"" << jsonEscape(status) << "\"";
+    oss << "}";
+
+    return oss.str();
+}
+
+static std::string buildMqttConfigAckJson(bool ok,
+                                          const std::string& reason,
+                                          const MqttConfig& config,
+                                          const std::string& status)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"mqtt_config_ack\",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"host\":\"" << jsonEscape(config.host) << "\",";
+    oss << "\"port\":" << config.port << ",";
+    oss << "\"status\":\"" << jsonEscape(status) << "\"";
+    oss << "}";
+
+    return oss.str();
+}
+
+static MqttConfig loadMqttConfig()
+{
+    MqttConfig config;
+    std::ifstream file(kMqttConfigPath, std::ios::binary);
+    if (!file.is_open()) {
+        return config;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+
+    rapidjson::Document root;
+    root.Parse(buffer.str().c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        cout << "MQTT config parse failed, use defaults" << endl;
+        return config;
+    }
+
+    const std::string host = getJsonString(root, "host");
+    const int port = getJsonInt(root, "port", config.port);
+
+    if (!host.empty()) {
+        config.host = host;
+    }
+    if (port >= 1 && port <= 65535) {
+        config.port = port;
+    }
+
+    return config;
+}
+
+static bool saveMqttConfigFile(const MqttConfig& config)
+{
+    try {
+        std::filesystem::path path(kMqttConfigPath);
+        std::filesystem::path dir = path.parent_path();
+        if (!dir.empty() && !std::filesystem::exists(dir)) {
+            std::filesystem::create_directories(dir);
+        }
+    } catch (const std::exception& e) {
+        cout << "MQTT config directory create failed: " << e.what() << endl;
+        return false;
+    }
+
+    rapidjson::StringBuffer buffer;
+    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+    writer.StartObject();
+    writer.Key("host");
+    writer.String(config.host.c_str());
+    writer.Key("port");
+    writer.Int(config.port);
+    writer.EndObject();
+
+    std::ofstream file(kMqttConfigPath, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    file << buffer.GetString();
+    return file.good();
+}
+
+static bool parseSaveMqttConfigRequest(const std::string& msg,
+                                       MqttConfig& config,
+                                       std::string& reason)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "save_mqtt_config") {
+        return false;
+    }
+
+    const std::string host = getJsonString(root, "host");
+    const int port = getJsonInt(root, "port", 0);
+
+    if (host.empty()) {
+        reason = "host_empty";
+        return true;
+    }
+
+    if (port < 1 || port > 65535) {
+        reason = "port_invalid";
+        return true;
+    }
+
+    config.host = host;
+    config.port = port;
+    reason.clear();
+    return true;
+}
+
+static bool parseGetMqttConfigRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    return getJsonString(root, "type") == "get_mqtt_config";
+}
+
 static bool parseHistoryQuery(const std::string& msg,
                               std::string& pointId,
                               std::int64_t& startMs,
@@ -429,6 +586,8 @@ int main()
         cout << "IpcServer created" << endl;
 
         MqttClient mqtt;
+        MqttConfig mqttConfig = loadMqttConfig();
+
         mqtt.setMessageCallback([&](const std::string& topic,
                                     const std::string& payload) {
             cout << "[MQTT RX] topic: " << topic << endl;
@@ -628,6 +787,46 @@ int main()
                 return;
             }
 
+            if (parseGetMqttConfigRequest(msg)) {
+                ipc.sendMessage(buildMqttConfigJson(mqttConfig, mqtt.status()));
+                cout << "send mqtt_config done" << endl;
+                return;
+            }
+
+            MqttConfig requestedMqttConfig = mqttConfig;
+            std::string mqttConfigReason;
+            if (parseSaveMqttConfigRequest(msg, requestedMqttConfig, mqttConfigReason)) {
+                if (!mqttConfigReason.empty()) {
+                    ipc.sendMessage(buildMqttConfigAckJson(false, mqttConfigReason, mqttConfig, mqtt.status()));
+                    cout << "save_mqtt_config rejected: " << mqttConfigReason << endl;
+                    return;
+                }
+
+                if (!saveMqttConfigFile(requestedMqttConfig)) {
+                    ipc.sendMessage(buildMqttConfigAckJson(false, "config_save_failed", mqttConfig, mqtt.status()));
+                    cout << "save_mqtt_config file write failed" << endl;
+                    return;
+                }
+
+                mqttConfig = requestedMqttConfig;
+                const bool connectOk = mqtt.connectToBroker(
+                    mqttConfig.host,
+                    mqttConfig.port,
+                    mqttConfig.clientId,
+                    mqttConfig.topics);
+
+                ipc.sendMessage(buildMqttConfigAckJson(connectOk, connectOk ? "" : "mqtt_connect_failed", mqttConfig, mqtt.status()));
+
+                cout << "save_mqtt_config done, host: "
+                     << mqttConfig.host
+                     << ", port: "
+                     << mqttConfig.port
+                     << ", connectOk: "
+                     << connectOk
+                     << endl;
+                return;
+            }
+
             /*
              * 兼容你之前 Pc_ui 可能发送的 get_snapshot。
              * 后面建议统一改成 get_latest_points。
@@ -658,14 +857,10 @@ int main()
 
         cout << "Pc_data IPC server running..." << endl;
 
-        const std::vector<std::string> mqttTopics = {
-            "pc_data/telemetry/test"
-        };
+        cout << "MQTT broker: " << mqttConfig.host << ":" << mqttConfig.port << endl;
+        cout << "MQTT subscribe topic: pc_data/telemetry/test" << endl;
 
-        cout << "MQTT default broker: 127.0.0.1:1883" << endl;
-        cout << "MQTT default subscribe topic: pc_data/telemetry/test" << endl;
-
-        if (!mqtt.connectToBroker("127.0.0.1", 1883, "pc_data_001", mqttTopics)) {
+        if (!mqtt.connectToBroker(mqttConfig.host, mqttConfig.port, mqttConfig.clientId, mqttConfig.topics)) {
             cout << "MQTT connectToBroker call failed" << endl;
         }
 

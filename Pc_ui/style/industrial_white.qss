@@ -175,3 +175,66 @@ QLabel[state="offline"] {
     color: #1D4ED8;
     background: transparent;
 }
+
+#SystemSettingCard {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+}
+
+#SystemSettingCardTitle {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 700;
+    background: transparent;
+}
+
+#SystemSettingFieldLabel {
+    color: #374151;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
+}
+
+#SystemSettingStatus {
+    color: #6B7280;
+    font-size: 12px;
+    font-weight: 700;
+    background: transparent;
+}
+
+#SystemSettingStatus[ok="true"] {
+    color: #16A34A;
+}
+
+#SystemSettingStatus[ok="false"] {
+    color: #EF4444;
+}
+
+#SystemSettingPrimaryButton {
+    background: #059669;
+    color: #FFFFFF;
+    min-width: 74px;
+    padding: 7px 12px;
+}
+
+#SystemSettingPrimaryButton:hover {
+    background: #047857;
+}
+
+#SystemSettingSecondaryButton, #SystemSettingOutlineButton {
+    background: #FFFFFF;
+    color: #1D4ED8;
+    border: 1px solid #DBEAFE;
+    min-width: 74px;
+    padding: 7px 12px;
+}
+
+#SystemSettingSecondaryButton:hover, #SystemSettingOutlineButton:hover {
+    background: #EFF6FF;
+}
+
+#SystemSettingWideButton {
+    background: #2563EB;
+    min-height: 30px;
+}
