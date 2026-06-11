@@ -2,6 +2,7 @@ QWidget {
     background-color: #F4F7FA;
     color: #1F2A37;
     font-size: 11px;
+    font-family: "Microsoft YaHei", "WenQuanYi Micro Hei";
 }
 
 #MainWidget,
@@ -17,46 +18,60 @@ QWidget {
 
 #TopStatusBar QLabel {
     color: #1F2A37;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: bold;
 }
 
 #NavButton {
     border: none;
     color: #64748B;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: bold;
     min-height: 30px;
     background-color: #FFFFFF;
 }
 
 #NavButton:pressed,
 #NavButton:hover {
-    color: #009E8E;
-    background-color: #E8F6F4;
+    color: #FFFFFF;
+    background-color: #126CFF;
 }
 
 #SummaryBar,
 #StatsBar {
     background-color: #FFFFFF;
     border: 1px solid #D7DEE8;
-    border-radius: 4px;
+    border-radius: 5px;
     color: #1F2A37;
     padding-left: 7px;
 }
 
 #Panel,
 #DetailPanel,
+#MetricCard,
 #PortCard,
 #EmptyPanel,
 #TrendChart {
     background-color: #FFFFFF;
     border: 1px solid #D7DEE8;
-    border-radius: 4px;
+    border-radius: 5px;
+}
+
+#MetricPanel {
+    background-color: transparent;
+    border: none;
 }
 
 #PanelTitle,
 #SectionTitle {
     color: #1F2A37;
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+#DetailTitle {
+    color: #111827;
+    font-size: 14px;
     font-weight: bold;
 }
 
@@ -69,6 +84,36 @@ QWidget {
 #DetailValue {
     color: #1F2A37;
     font-size: 11px;
+}
+
+#MetricIcon {
+    color: #126CFF;
+    border: 1px solid #BBD4FF;
+    border-radius: 12px;
+    background-color: #EFF6FF;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+#MetricValue {
+    color: #111827;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+#DetailStateBadge {
+    color: #64748B;
+    font-size: 13px;
+    font-weight: bold;
+    background-color: transparent;
+}
+
+#DetailStateBadge[state="online"] {
+    color: #00A63E;
+}
+
+#DetailStateBadge[state="offline"] {
+    color: #64748B;
 }
 
 #DetailValue[state="online"],
@@ -85,13 +130,13 @@ QLabel[state="offline"] {
 
 #SlaveCard {
     background-color: #FFFFFF;
-    border: 1px solid #D7DEE8;
-    border-radius: 4px;
+    border: 1px solid transparent;
+    border-radius: 5px;
 }
 
 #SlaveCard[selected="true"] {
-    border: 1px solid #009E8E;
-    background-color: #E8F6F4;
+    border: 1px solid #8DBBFF;
+    background-color: #EAF2FF;
 }
 
 #SlaveTitle {
@@ -105,18 +150,31 @@ QLabel[state="offline"] {
     font-size: 10px;
 }
 
+#StateDot {
+    border-radius: 3px;
+    background-color: #94A3B8;
+}
+
+#StateDot[state="online"] {
+    background-color: #00A63E;
+}
+
+#StateDot[state="offline"] {
+    background-color: #94A3B8;
+}
+
 #AlarmBar {
     background-color: #FFF1F2;
     border: 1px solid #EF4444;
-    border-radius: 4px;
+    border-radius: 5px;
     color: #B91C1C;
     padding-left: 7px;
 }
 
 #ActionButton,
 #SmallActionButton {
-    background-color: #009E8E;
-    border: 1px solid #00B3A1;
+    background-color: #126CFF;
+    border: 1px solid #126CFF;
     border-radius: 4px;
     color: #FFFFFF;
     min-height: 22px;
@@ -135,8 +193,8 @@ QLabel[state="offline"] {
 }
 
 #ToggleButton[checked="true"] {
-    background-color: #009E8E;
-    border-color: #00B3A1;
+    background-color: #126CFF;
+    border-color: #126CFF;
     color: #FFFFFF;
 }
 
@@ -180,7 +238,7 @@ QLineEdit:disabled {
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
     border: 1px solid #D7DEE8;
-    selection-background-color: #009E8E;
+    selection-background-color: #126CFF;
     selection-color: #FFFFFF;
 }
 
@@ -191,7 +249,7 @@ QComboBox QAbstractItemView {
 }
 
 #StatusGreen {
-    background-color: #009E8E;
+    background-color: #00A63E;
     border-radius: 5px;
 }
 
@@ -248,8 +306,8 @@ QScrollArea {
 }
 
 #SlavePopupRow:hover {
-    border-color: #009E8E;
-    background-color: #E8F6F4;
+    border-color: #8DBBFF;
+    background-color: #EAF2FF;
 }
 
 #PopupDetailStack {

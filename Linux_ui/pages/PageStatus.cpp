@@ -2,24 +2,22 @@
 
 #include <QComboBox>
 #include <QEvent>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
-#include <QStackedWidget>
 #include <QStyle>
 #include <QVariant>
 #include <QVBoxLayout>
 
-#include "slavedetaildialog.h"
-#include "slavelistdialog.h"
-#include "sensorui/sensorui.h"
-
+#include "pageui/slavedetaildialog.h"
+#include "pageui/slavelistdialog.h"
 PageStatus::PageStatus(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName("PageArea");
     initUI();
     setMasterSummary(0, 0, 0, "--");
-    setAlarmText("Alarm: --");
+    setAlarmText("告警：--");
 }
 
 void PageStatus::setMasterSummary(int masterCount,
@@ -27,11 +25,11 @@ void PageStatus::setMasterSummary(int masterCount,
                                   int alarmCount,
                                   const QString &mqttState)
 {
-    summaryLabel->setText(QString("Masters:%1   Online:%2   Alarms:%3   MQTT:%4")
-                              .arg(masterCount)
+    Q_UNUSED(masterCount);
+    summaryLabel->setText(QString("MQTT：%1    在线从站：%2    告警：%3")
+                              .arg(mqttState)
                               .arg(onlineSlaveCount)
-                              .arg(alarmCount)
-                              .arg(mqttState));
+                              .arg(alarmCount));
 }
 
 void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters,
@@ -69,7 +67,6 @@ void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters,
         currentMasterName.clear();
     }
 
-    addSlaveButton->setEnabled(currentMasterSlot >= 0);
     refreshMasterLabels();
 }
 
@@ -80,7 +77,7 @@ void PageStatus::setCurrentMaster(const QString &masterName, int slaveCount)
     if (comboIndex >= 0)
         masterCombo->setCurrentIndex(comboIndex);
 
-    slaveCountLabel->setText(QString("Slaves:%1").arg(slaveCount));
+    slaveCountLabel->setText(QString("从站：%1").arg(slaveCount));
 }
 
 void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
@@ -125,14 +122,8 @@ void PageStatus::updateSlaveOnline(int masterSlot,
         slaveRuntime.insert(runtimeKey(slave), runtime);
         updateSlaveCardStyle(i, i == currentSlaveIndex);
 
-        if (i == currentSlaveIndex) {
-            if (deviceType == "sensor_th")
-                sensorThUi->setOnline(online);
-            else if (deviceType == "relay")
-                relayUi->setOnline(online);
-            else if (deviceType == "meter")
-                meterUi->setOnline(online);
-        }
+        if (i == currentSlaveIndex)
+            selectSlave(i);
         updateOpenDialogs();
         return;
     }
@@ -148,33 +139,12 @@ void PageStatus::selectSlave(int index)
 
     const SlaveDeviceInfo &slave = slaves.at(index);
     const SlaveRuntimeInfo runtime = runtimeForSlave(slave);
-    if (slave.deviceType == "sensor_th") {
-        sensorThUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.slaveAddr);
-        sensorThUi->clearData();
-        sensorThUi->setOnline(slave.online);
-        if (runtime.hasSensorTh)
-            sensorThUi->setTemperatureHumidity(runtime.temperature, runtime.humidity, runtime.updateTime);
-        detailStack->setCurrentWidget(sensorThUi);
-    } else if (slave.deviceType == "relay") {
-        relayUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.masterSlot, slave.slaveAddr);
-        relayUi->clearData();
-        relayUi->setOnline(slave.online);
-        if (runtime.hasRelay)
-            relayUi->setRelayStates(runtime.ledOn, runtime.fanOn, runtime.buzzerOn, runtime.updateTime);
-        detailStack->setCurrentWidget(relayUi);
-    } else if (slave.deviceType == "meter") {
-        meterUi->setDeviceInfo(slave.deviceName, currentMasterName, slave.slaveAddr);
-        meterUi->clearData();
-        meterUi->setOnline(slave.online);
-        if (runtime.hasMeter) {
-            meterUi->setMeterValues(runtime.voltage,
-                                    runtime.current,
-                                    runtime.power,
-                                    runtime.energy,
-                                    runtime.updateTime);
-        }
-        detailStack->setCurrentWidget(meterUi);
-    }
+    if (slave.deviceType == "sensor_th")
+        showSensorDetail(slave, runtime);
+    else if (slave.deviceType == "relay")
+        showRelayDetail(slave, runtime);
+    else
+        showMeterDetail(slave, runtime);
 
     emit slaveSelected(slave.masterSlot, slave.slaveAddr, slave.deviceType);
 }
@@ -199,7 +169,7 @@ void PageStatus::setSensorThData(int masterSlot,
     slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "sensor_th"), runtime);
 
     if (isCurrentSlave(masterSlot, slaveAddr, "sensor_th"))
-        sensorThUi->setTemperatureHumidity(temperature, humidity, updateTime);
+        selectSlave(currentSlaveIndex);
     updateOpenDialogs();
 }
 
@@ -220,7 +190,7 @@ void PageStatus::setRelayStates(int masterSlot,
     slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "relay"), runtime);
 
     if (isCurrentSlave(masterSlot, slaveAddr, "relay"))
-        relayUi->setRelayStates(ledOn, fanOn, buzzerOn, updateTime);
+        selectSlave(currentSlaveIndex);
     updateOpenDialogs();
 }
 
@@ -243,7 +213,7 @@ void PageStatus::setMeterValues(int masterSlot,
     slaveRuntime.insert(runtimeKey(masterSlot, slaveAddr, "meter"), runtime);
 
     if (isCurrentSlave(masterSlot, slaveAddr, "meter"))
-        meterUi->setMeterValues(voltage, current, power, energy, updateTime);
+        selectSlave(currentSlaveIndex);
     updateOpenDialogs();
 }
 
@@ -276,26 +246,26 @@ void PageStatus::initUI()
 {
     summaryLabel = new QLabel(this);
     summaryLabel->setObjectName("SummaryBar");
-    summaryLabel->setFixedHeight(22);
+    summaryLabel->setFixedHeight(24);
 
-    QLabel *masterLabel = new QLabel("Master:", this);
+    QLabel *masterLabel = new QLabel("端口：", this);
     masterLabel->setObjectName("DetailKey");
 
     masterCombo = new QComboBox(this);
     masterCombo->setObjectName("CompactCombo");
-    masterCombo->setFixedWidth(138);
+    masterCombo->setFixedWidth(112);
 
     slaveCountLabel = new QLabel(this);
     slaveCountLabel->setObjectName("DetailValue");
 
-    addSlaveButton = new QPushButton("+ Add Slave", this);
+    addSlaveButton = new QPushButton("+ 从站", this);
     addSlaveButton->setObjectName("ActionButton");
-    addSlaveButton->setFixedWidth(76);
+    addSlaveButton->setFixedWidth(58);
     addSlaveButton->setEnabled(false);
 
     QHBoxLayout *masterRow = new QHBoxLayout;
     masterRow->setContentsMargins(0, 0, 0, 0);
-    masterRow->setSpacing(5);
+    masterRow->setSpacing(4);
     masterRow->addWidget(masterLabel);
     masterRow->addWidget(masterCombo);
     masterRow->addWidget(slaveCountLabel);
@@ -304,15 +274,19 @@ void PageStatus::initUI()
 
     slaveListPanel = new QFrame(this);
     slaveListPanel->setObjectName("Panel");
-    slaveListPanel->setFixedWidth(150);
+    slaveListPanel->setFixedWidth(172);
     slaveListPanel->setCursor(Qt::PointingHandCursor);
     slaveListPanel->installEventFilter(this);
 
-    listTitleLabel = new QLabel("Slave List (0)", slaveListPanel);
+    currentPortLabel = new QLabel("当前端口：--", slaveListPanel);
+    currentPortLabel->setObjectName("PanelTitle");
+    currentPortLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+    listTitleLabel = new QLabel("当前从站设备：0", slaveListPanel);
     listTitleLabel->setObjectName("PanelTitle");
     listTitleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-    emptyListLabel = new QLabel("No slave devices", slaveListPanel);
+    emptyListLabel = new QLabel("暂无从站设备", slaveListPanel);
     emptyListLabel->setObjectName("HintText");
     emptyListLabel->setAlignment(Qt::AlignCenter);
     emptyListLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -332,38 +306,140 @@ void PageStatus::initUI()
     slaveScrollArea->viewport()->installEventFilter(this);
 
     QVBoxLayout *slavePanelLayout = new QVBoxLayout(slaveListPanel);
-    slavePanelLayout->setContentsMargins(5, 5, 5, 5);
+    slavePanelLayout->setContentsMargins(7, 6, 7, 7);
     slavePanelLayout->setSpacing(4);
+    slavePanelLayout->addWidget(currentPortLabel);
+    slavePanelLayout->addLayout(masterRow);
     slavePanelLayout->addWidget(listTitleLabel);
     slavePanelLayout->addWidget(slaveScrollArea, 1);
 
-    detailStack = new QStackedWidget(this);
-    detailStack->setObjectName("DetailStack");
-    sensorThUi = new SensorThUi(this);
-    relayUi = new RelayUi(this);
-    meterUi = new MeterUi(this);
-    detailStack->addWidget(sensorThUi);
-    detailStack->addWidget(relayUi);
-    detailStack->addWidget(meterUi);
+    detailPanel = new QFrame(this);
+    detailPanel->setObjectName("DetailPanel");
 
-    connect(relayUi, &RelayUi::relayCommandRequested,
-            this, &PageStatus::relayCommandRequested);
+    detailTitleLabel = new QLabel("从站详情（地址：--）", detailPanel);
+    detailTitleLabel->setObjectName("DetailTitle");
+
+    detailStateLabel = new QLabel("离线", detailPanel);
+    detailStateLabel->setObjectName("DetailStateBadge");
+    detailStateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    QHBoxLayout *detailTitleRow = new QHBoxLayout;
+    detailTitleRow->setContentsMargins(0, 0, 0, 0);
+    detailTitleRow->setSpacing(4);
+    detailTitleRow->addWidget(detailTitleLabel, 1);
+    detailTitleRow->addWidget(detailStateLabel);
+
+    QLabel *portKey = new QLabel("端口：", detailPanel);
+    QLabel *addrKey = new QLabel("地址：", detailPanel);
+    QLabel *typeKey = new QLabel("类型：", detailPanel);
+    portKey->setObjectName("DetailKey");
+    addrKey->setObjectName("DetailKey");
+    typeKey->setObjectName("DetailKey");
+
+    detailPortLabel = new QLabel("--", detailPanel);
+    detailAddrLabel = new QLabel("--", detailPanel);
+    detailTypeLabel = new QLabel("--", detailPanel);
+    detailPortLabel->setObjectName("DetailValue");
+    detailAddrLabel->setObjectName("DetailValue");
+    detailTypeLabel->setObjectName("DetailValue");
+
+    QHBoxLayout *metaRow = new QHBoxLayout;
+    metaRow->setContentsMargins(0, 0, 0, 0);
+    metaRow->setSpacing(3);
+    metaRow->addWidget(portKey);
+    metaRow->addWidget(detailPortLabel);
+    metaRow->addSpacing(5);
+    metaRow->addWidget(addrKey);
+    metaRow->addWidget(detailAddrLabel);
+    metaRow->addSpacing(5);
+    metaRow->addWidget(typeKey);
+    metaRow->addWidget(detailTypeLabel, 1);
+
+    metricPanel = new QFrame(detailPanel);
+    metricPanel->setObjectName("MetricPanel");
+    metricGrid = new QGridLayout(metricPanel);
+    metricGrid->setContentsMargins(0, 0, 0, 0);
+    metricGrid->setHorizontalSpacing(6);
+    metricGrid->setVerticalSpacing(6);
+    metricA = createMetricCard("T", "温度");
+    metricB = createMetricCard("H", "湿度");
+    metricC = createMetricCard("R", "状态");
+    metricD = createMetricCard("P", "状态");
+    metricGrid->addWidget(metricA.frame, 0, 0);
+    metricGrid->addWidget(metricB.frame, 0, 1);
+    metricGrid->addWidget(metricC.frame, 1, 0);
+    metricGrid->addWidget(metricD.frame, 1, 1);
+    metricGrid->setColumnStretch(0, 1);
+    metricGrid->setColumnStretch(1, 1);
+
+    relayControlPanel = new QWidget(detailPanel);
+    relayControlPanel->setObjectName("RelayControlPanel");
+    QHBoxLayout *relayControlLayout = new QHBoxLayout(relayControlPanel);
+    relayControlLayout->setContentsMargins(0, 0, 0, 0);
+    relayControlLayout->setSpacing(4);
+
+    auto createRelayButton = [this](const QString &text, const QString &channel, bool on) {
+        QPushButton *button = new QPushButton(text, relayControlPanel);
+        button->setObjectName(on ? "SmallActionButton" : "SmallGhostButton");
+        button->setFixedWidth(34);
+        connect(button, &QPushButton::clicked, this, [this, channel, on]() {
+            if (currentSlaveIndex < 0 || currentSlaveIndex >= slaves.size())
+                return;
+            const SlaveDeviceInfo &slave = slaves.at(currentSlaveIndex);
+            emit relayCommandRequested(slave.masterSlot, slave.slaveAddr, channel, on);
+        });
+        return button;
+    };
+
+    ledOnButton = createRelayButton("灯开", "led", true);
+    ledOffButton = createRelayButton("灯关", "led", false);
+    fanOnButton = createRelayButton("扇开", "fan", true);
+    fanOffButton = createRelayButton("扇关", "fan", false);
+    buzzerOnButton = createRelayButton("蜂开", "buzzer", true);
+    buzzerOffButton = createRelayButton("蜂关", "buzzer", false);
+    relayControlLayout->addWidget(ledOnButton);
+    relayControlLayout->addWidget(ledOffButton);
+    relayControlLayout->addWidget(fanOnButton);
+    relayControlLayout->addWidget(fanOffButton);
+    relayControlLayout->addWidget(buzzerOnButton);
+    relayControlLayout->addWidget(buzzerOffButton);
+    relayControlLayout->addStretch();
+
+    pollIntervalLabel = new QLabel("轮询间隔：1000 ms", detailPanel);
+    lastUpdateLabel = new QLabel("最后更新：--", detailPanel);
+    pollIntervalLabel->setObjectName("DetailValue");
+    lastUpdateLabel->setObjectName("DetailValue");
+    lastUpdateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    QHBoxLayout *footerRow = new QHBoxLayout;
+    footerRow->setContentsMargins(0, 0, 0, 0);
+    footerRow->addWidget(pollIntervalLabel);
+    footerRow->addStretch();
+    footerRow->addWidget(lastUpdateLabel);
+
+    QVBoxLayout *detailLayout = new QVBoxLayout(detailPanel);
+    detailLayout->setContentsMargins(10, 8, 10, 8);
+    detailLayout->setSpacing(7);
+    detailLayout->addLayout(detailTitleRow);
+    detailLayout->addLayout(metaRow);
+    detailLayout->addWidget(metricPanel, 1);
+    detailLayout->addWidget(relayControlPanel);
+    detailLayout->addLayout(footerRow);
 
     QHBoxLayout *bodyLayout = new QHBoxLayout;
     bodyLayout->setContentsMargins(0, 0, 0, 0);
     bodyLayout->setSpacing(6);
     bodyLayout->addWidget(slaveListPanel);
-    bodyLayout->addWidget(detailStack, 1);
+    bodyLayout->addWidget(detailPanel, 1);
 
     alarmLabel = new QLabel(this);
     alarmLabel->setObjectName("AlarmBar");
-    alarmLabel->setFixedHeight(22);
+    alarmLabel->setFixedHeight(20);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(6, 4, 6, 4);
     mainLayout->setSpacing(4);
     mainLayout->addWidget(summaryLabel);
-    mainLayout->addLayout(masterRow);
     mainLayout->addLayout(bodyLayout, 1);
     mainLayout->addWidget(alarmLabel);
 
@@ -386,13 +462,18 @@ void PageStatus::initUI()
 
     refreshMasterLabels();
     rebuildSlaveCards();
+    clearCurrentDetail();
 }
 
 void PageStatus::refreshMasterLabels()
 {
-    slaveCountLabel->setText(QString("Slaves:%1").arg(slaves.size()));
+    const QString portName = displayMasterName();
+    slaveCountLabel->setText(QString("从站：%1").arg(slaves.size()));
+    addSlaveButton->setEnabled(currentMasterSlot >= 0);
+    if (currentPortLabel)
+        currentPortLabel->setText(QString("当前端口：%1").arg(portName));
     if (listTitleLabel)
-        listTitleLabel->setText(QString("Slave List (%1)").arg(slaves.size()));
+        listTitleLabel->setText(QString("当前从站设备：%1").arg(slaves.size()));
 }
 
 void PageStatus::refreshSlaveCards()
@@ -425,17 +506,25 @@ void PageStatus::rebuildSlaveCards()
 
 void PageStatus::clearCurrentDetail()
 {
-    sensorThUi->setDeviceInfo("--", "--", 0);
-    sensorThUi->setOnline(false);
-    sensorThUi->clearData();
-
-    relayUi->setDeviceInfo("--", "--", -1, 0);
-    relayUi->setOnline(false);
-    relayUi->clearData();
-
-    meterUi->setDeviceInfo("--", "--", 0);
-    meterUi->setOnline(false);
-    meterUi->clearData();
+    detailTitleLabel->setText("从站详情（地址：--）");
+    detailStateLabel->setText("离线");
+    detailStateLabel->setProperty("state", "offline");
+    detailPortLabel->setText(displayMasterName());
+    detailAddrLabel->setText("--");
+    detailTypeLabel->setText("--");
+    setMetricCard(metricA, "T", "温度", "--", "");
+    setMetricCard(metricB, "H", "湿度", "--", "");
+    setMetricCard(metricC, "R", "状态", "--", "");
+    setMetricCard(metricD, "P", "状态", "--", "");
+    metricA.frame->setVisible(true);
+    metricB.frame->setVisible(true);
+    metricC.frame->setVisible(false);
+    metricD.frame->setVisible(false);
+    relayControlPanel->setVisible(false);
+    pollIntervalLabel->setText("轮询间隔：1000 ms");
+    lastUpdateLabel->setText("最后更新：--");
+    detailStateLabel->style()->unpolish(detailStateLabel);
+    detailStateLabel->style()->polish(detailStateLabel);
 }
 
 void PageStatus::updateSlaveCardStyle(int index, bool selected)
@@ -446,17 +535,21 @@ void PageStatus::updateSlaveCardStyle(int index, bool selected)
     const SlaveDeviceInfo &slave = slaves.at(index);
     SlaveCard &card = slaveCards[index];
     card.frame->setProperty("selected", selected);
-    card.title->setText(QString("%1[%2] %3")
-                            .arg(selected ? "> " : "  ")
+    card.title->setText(QString("%1  %2")
                             .arg(slave.slaveAddr)
-                            .arg(slave.displayName.isEmpty() ? slave.deviceType : slave.displayName));
-    card.state->setText(slave.online ? "Online" : "Offline");
+                            .arg(slave.displayName.isEmpty()
+                                     ? displayTypeName(slave.deviceType)
+                                     : slave.displayName));
+    card.state->setText(slave.online ? "在线" : "离线");
+    card.dot->setProperty("state", slave.online ? "online" : "offline");
     card.state->setProperty("state", slave.online ? "online" : "offline");
 
     card.frame->style()->unpolish(card.frame);
     card.frame->style()->polish(card.frame);
     card.title->style()->unpolish(card.title);
     card.title->style()->polish(card.title);
+    card.dot->style()->unpolish(card.dot);
+    card.dot->style()->polish(card.dot);
     card.state->style()->unpolish(card.state);
     card.state->style()->polish(card.state);
 }
@@ -465,30 +558,173 @@ QFrame *PageStatus::createSlaveCard(int index)
 {
     QFrame *frame = new QFrame(slaveScrollArea);
     frame->setObjectName("SlaveCard");
-    frame->setFixedHeight(38);
+    frame->setFixedHeight(34);
 
     QLabel *title = new QLabel(frame);
     title->setObjectName("SlaveTitle");
     title->setAttribute(Qt::WA_TransparentForMouseEvents);
+    QLabel *dot = new QLabel(frame);
+    dot->setObjectName("StateDot");
+    dot->setFixedSize(7, 7);
+    dot->setAttribute(Qt::WA_TransparentForMouseEvents);
     QLabel *state = new QLabel(frame);
     state->setObjectName("SlaveState");
     state->setAttribute(Qt::WA_TransparentForMouseEvents);
     frame->setCursor(Qt::PointingHandCursor);
     frame->installEventFilter(this);
 
-    QVBoxLayout *textLayout = new QVBoxLayout(frame);
-    textLayout->setContentsMargins(7, 3, 7, 3);
-    textLayout->setSpacing(1);
-    textLayout->addWidget(title);
-    textLayout->addWidget(state);
+    QHBoxLayout *rowLayout = new QHBoxLayout(frame);
+    rowLayout->setContentsMargins(7, 3, 7, 3);
+    rowLayout->setSpacing(5);
+    rowLayout->addWidget(title, 1);
+    rowLayout->addWidget(dot);
+    rowLayout->addWidget(state);
 
     SlaveCard card;
     card.frame = frame;
     card.title = title;
+    card.dot = dot;
     card.state = state;
     slaveCards.append(card);
     updateSlaveCardStyle(index, false);
     return frame;
+}
+
+PageStatus::MetricCard PageStatus::createMetricCard(const QString &iconText, const QString &name)
+{
+    MetricCard card;
+    card.frame = new QFrame(metricPanel);
+    card.frame->setObjectName("MetricCard");
+    card.frame->setMinimumHeight(48);
+
+    card.icon = new QLabel(iconText, card.frame);
+    card.icon->setObjectName("MetricIcon");
+    card.icon->setAlignment(Qt::AlignCenter);
+    card.icon->setFixedSize(24, 24);
+
+    card.name = new QLabel(name, card.frame);
+    card.name->setObjectName("DetailKey");
+    card.value = new QLabel("--", card.frame);
+    card.value->setObjectName("MetricValue");
+    card.unit = new QLabel("", card.frame);
+    card.unit->setObjectName("DetailKey");
+
+    QHBoxLayout *valueLayout = new QHBoxLayout;
+    valueLayout->setContentsMargins(0, 0, 0, 0);
+    valueLayout->setSpacing(2);
+    valueLayout->addWidget(card.value);
+    valueLayout->addWidget(card.unit);
+    valueLayout->addStretch();
+
+    QVBoxLayout *textLayout = new QVBoxLayout;
+    textLayout->setContentsMargins(0, 0, 0, 0);
+    textLayout->setSpacing(1);
+    textLayout->addWidget(card.name);
+    textLayout->addLayout(valueLayout);
+
+    QHBoxLayout *layout = new QHBoxLayout(card.frame);
+    layout->setContentsMargins(8, 6, 8, 6);
+    layout->setSpacing(7);
+    layout->addWidget(card.icon);
+    layout->addLayout(textLayout, 1);
+    return card;
+}
+
+void PageStatus::setMetricCard(MetricCard &card,
+                               const QString &iconText,
+                               const QString &name,
+                               const QString &value,
+                               const QString &unit)
+{
+    card.icon->setText(iconText);
+    card.name->setText(name);
+    card.value->setText(value);
+    card.unit->setText(unit);
+}
+
+void PageStatus::setDetailMeta(const SlaveDeviceInfo &slave)
+{
+    detailTitleLabel->setText(QString("从站详情（地址：%1）").arg(slave.slaveAddr));
+    detailStateLabel->setText(slave.online ? "在线" : "离线");
+    detailStateLabel->setProperty("state", slave.online ? "online" : "offline");
+    detailPortLabel->setText(displayMasterName());
+    detailAddrLabel->setText(QString::number(slave.slaveAddr));
+    detailTypeLabel->setText(displayTypeName(slave.deviceType));
+    pollIntervalLabel->setText("轮询间隔：1000 ms");
+    detailStateLabel->style()->unpolish(detailStateLabel);
+    detailStateLabel->style()->polish(detailStateLabel);
+}
+
+void PageStatus::showSensorDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime)
+{
+    setDetailMeta(slave);
+    setMetricCard(metricA, "T", "温度",
+                  runtime.hasSensorTh ? QString("%1").arg(runtime.temperature, 0, 'f', 1) : "--",
+                  runtime.hasSensorTh ? "℃" : "");
+    setMetricCard(metricB, "H", "湿度",
+                  runtime.hasSensorTh ? QString("%1").arg(runtime.humidity, 0, 'f', 1) : "--",
+                  runtime.hasSensorTh ? "%RH" : "");
+    metricA.frame->setVisible(true);
+    metricB.frame->setVisible(true);
+    metricC.frame->setVisible(false);
+    metricD.frame->setVisible(false);
+    relayControlPanel->setVisible(false);
+    lastUpdateLabel->setText(QString("最后更新：%1")
+                                 .arg(runtime.updateTime.isEmpty() ? "--" : runtime.updateTime));
+}
+
+void PageStatus::showRelayDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime)
+{
+    setDetailMeta(slave);
+    setMetricCard(metricA, "L", "LED", runtime.hasRelay ? (runtime.ledOn ? "开启" : "关闭") : "--", "");
+    setMetricCard(metricB, "F", "FAN", runtime.hasRelay ? (runtime.fanOn ? "开启" : "关闭") : "--", "");
+    setMetricCard(metricC, "B", "BUZZER", runtime.hasRelay ? (runtime.buzzerOn ? "开启" : "关闭") : "--", "");
+    metricA.frame->setVisible(true);
+    metricB.frame->setVisible(true);
+    metricC.frame->setVisible(true);
+    metricD.frame->setVisible(false);
+    relayControlPanel->setVisible(true);
+    const QList<QPushButton *> buttons = {
+        ledOnButton, ledOffButton, fanOnButton, fanOffButton, buzzerOnButton, buzzerOffButton
+    };
+    for (QPushButton *button : buttons)
+        button->setEnabled(slave.online);
+    lastUpdateLabel->setText(QString("最后更新：%1")
+                                 .arg(runtime.updateTime.isEmpty() ? "--" : runtime.updateTime));
+}
+
+void PageStatus::showMeterDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime)
+{
+    setDetailMeta(slave);
+    setMetricCard(metricA, "V", "电压", runtime.hasMeter ? runtime.voltage : "--", "");
+    setMetricCard(metricB, "I", "电流", runtime.hasMeter ? runtime.current : "--", "");
+    setMetricCard(metricC, "P", "功率", runtime.hasMeter ? runtime.power : "--", "");
+    setMetricCard(metricD, "E", "电能", runtime.hasMeter ? runtime.energy : "--", "");
+    metricA.frame->setVisible(true);
+    metricB.frame->setVisible(true);
+    metricC.frame->setVisible(true);
+    metricD.frame->setVisible(true);
+    relayControlPanel->setVisible(false);
+    lastUpdateLabel->setText(QString("最后更新：%1")
+                                 .arg(runtime.updateTime.isEmpty() ? "--" : runtime.updateTime));
+}
+
+QString PageStatus::displayTypeName(const QString &deviceType) const
+{
+    if (deviceType == "sensor_th")
+        return "温湿度传感器";
+    if (deviceType == "relay")
+        return "继电器";
+    if (deviceType == "meter")
+        return "电表";
+    return deviceType;
+}
+
+QString PageStatus::displayMasterName() const
+{
+    if (!currentMasterName.isEmpty())
+        return currentMasterName;
+    return currentMasterSlot >= 0 ? QString("RS485-%1").arg(currentMasterSlot + 1) : "--";
 }
 
 void PageStatus::openSlaveListDialog()

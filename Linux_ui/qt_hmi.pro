@@ -6,10 +6,10 @@ CONFIG += c++17
 SOURCES += \
     data/data_parser.cpp \
     main.cpp \
-    pages/addslavedialog.cpp \
-    pages/slavedetaildialog.cpp \
-    pages/slavelistdialog.cpp \
-    pages/TrendChartWidget.cpp \
+    pageui/addslavedialog.cpp \
+    pageui/slavedetaildialog.cpp \
+    pageui/slavelistdialog.cpp \
+    pageui/TrendChartWidget.cpp \
     pages/pageinfo.cpp \
     pages/pagesetting.cpp \
     ui/loadingspinnerwidget.cpp \
@@ -25,10 +25,10 @@ SOURCES += \
 
 HEADERS += \
     data/data_parser.h \
-    pages/addslavedialog.h \
-    pages/slavedetaildialog.h \
-    pages/slavelistdialog.h \
-    pages/TrendChartWidget.h \
+    pageui/addslavedialog.h \
+    pageui/slavedetaildialog.h \
+    pageui/slavelistdialog.h \
+    pageui/TrendChartWidget.h \
     pages/pageinfo.h \
     pages/pagesetting.h \
     ui/loadingspinnerwidget.h \

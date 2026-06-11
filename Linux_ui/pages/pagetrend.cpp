@@ -7,7 +7,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
-#include "TrendChartWidget.h"
+#include "pageui/TrendChartWidget.h"
 
 PageTrend::PageTrend(QWidget *parent)
     : QWidget(parent)

@@ -6,7 +6,7 @@
 #include <QDateTime>
 #include <QTimer>
 
-#include "pages/addslavedialog.h"
+#include "pageui/addslavedialog.h"
 
 IpcClient *Widget::_Myclient = nullptr;   // ✅ static 定义只能在 cpp
 
@@ -58,7 +58,7 @@ void Widget::initUI()
     });
     connect(pageInfo, &Pageinfo::reconnectIpcRequested, this, [this, top, pageInfo]() {
         if (m_operationOverlay)
-            m_operationOverlay->showLoading("Checking backend...");
+            m_operationOverlay->showLoading("正在检查后端...");
 
         QTimer::singleShot(50, this, [this, top, pageInfo]() {
             const bool ok = _Myclient && _Myclient->connectToServer("/tmp/device_ipc.sock");
@@ -68,7 +68,7 @@ void Widget::initUI()
                 pageInfo->setIpcConnected(false);
                 top->setBackendConnected(false);
                 if (m_pageStatus)
-                    m_pageStatus->setAlarmText("IPC disconnected, please reconnect backend");
+                    m_pageStatus->setAlarmText("告警：IPC 未连接，请重新连接后端");
                 refreshStatusSummary();
             }
 
@@ -76,9 +76,9 @@ void Widget::initUI()
                 return;
 
             if (ok)
-                m_operationOverlay->showSuccess("Backend connected");
+                m_operationOverlay->showSuccess("后端已连接");
             else
-                m_operationOverlay->showFailure("Backend not running");
+                m_operationOverlay->showFailure("后端未运行");
         });
     });
     connect(_Myclient, &IpcClient::deviceStatusUpdated,
@@ -89,10 +89,10 @@ void Widget::initUI()
     //connect(_Myclient,&IpcClient::devicesetting,pageSetting,&PageSetting::addSetting);重复连接
     connect(pageSetting, &PageSetting::scanPortsRequested, this, [this]() {
         if (m_operationOverlay)
-            m_operationOverlay->showLoading("Scanning ports...");
+            m_operationOverlay->showLoading("正在扫描端口...");
 
         if (!sendCommand("scan_ports") && m_operationOverlay)
-            m_operationOverlay->showFailure("Scan command failed");
+            m_operationOverlay->showFailure("扫描命令发送失败");
     });
 
     connect(pageSetting,
@@ -105,7 +105,7 @@ void Widget::initUI()
                 Q_UNUSED(areaName);
 
                 if (m_operationOverlay)
-                    m_operationOverlay->showLoading("Connecting port...");
+                    m_operationOverlay->showLoading("正在连接端口...");
 
                 QJsonObject payload;
                 payload.insert("slot", masterSlot);
@@ -113,7 +113,7 @@ void Widget::initUI()
                 payload.insert("baud", baudRate);
 
                 if (!sendCommand("connect_port", payload) && m_operationOverlay)
-                    m_operationOverlay->showFailure("Connect command failed");
+                    m_operationOverlay->showFailure("连接命令发送失败");
             });
 
     connect(pageSetting,
@@ -123,13 +123,13 @@ void Widget::initUI()
                 Q_UNUSED(deviceNode);
 
                 if (m_operationOverlay)
-                    m_operationOverlay->showLoading("Disconnecting port...");
+                    m_operationOverlay->showLoading("正在断开端口...");
 
                 QJsonObject payload;
                 payload.insert("slot", masterSlot);
 
                 if (!sendCommand("disconnect_port", payload) && m_operationOverlay)
-                    m_operationOverlay->showFailure("Disconnect command failed");
+                    m_operationOverlay->showFailure("断开命令发送失败");
             });
 
     connect(_Myclient, &IpcClient::portsUpdated, this, [this, pageSetting](const QStringList &ports) {
@@ -139,7 +139,7 @@ void Widget::initUI()
         for (int i = 0; i < ports.size(); ++i) {
             MasterPortInfo info;
             info.masterSlot = i;
-            info.masterName = QString("Master %1").arg(i + 1);
+            info.masterName = QString("RS485-%1").arg(i + 1);
             info.deviceNode = ports.at(i);
             info.areaName = QString();
             info.baudRate = 9600;
@@ -151,7 +151,7 @@ void Widget::initUI()
         refreshHomeMasterAndSlaveList();
 
         if (m_operationOverlay)
-            m_operationOverlay->showSuccess("Scan complete");
+            m_operationOverlay->showSuccess("扫描完成");
     });
 
     connect(_Myclient,
@@ -186,13 +186,13 @@ void Widget::initUI()
     connect(pageStatus, &PageStatus::addSlaveRequested, this, [this](int masterSlot) {
         if (masterSlot < 0) {
             if (m_operationOverlay)
-                m_operationOverlay->showFailure("No master selected");
+                m_operationOverlay->showFailure("未选择端口");
             return;
         }
 
         if (!m_connectedMasterSlots.contains(masterSlot)) {
             if (m_operationOverlay)
-                m_operationOverlay->showFailure("Master not connected");
+                m_operationOverlay->showFailure("端口未连接");
             return;
         }
 
@@ -232,7 +232,7 @@ void Widget::initUI()
 
                     if (!sendCommand("add_device", payload, &seq)) {
                         if (m_addSlaveDialog)
-                            m_addSlaveDialog->setResult(false, "Send command failed");
+                        m_addSlaveDialog->setResult(false, "命令发送失败");
                         return;
                     }
 
@@ -262,7 +262,7 @@ void Widget::initUI()
 
                 if (bit < 0) {
                     if (m_operationOverlay)
-                        m_operationOverlay->showFailure("Unknown relay channel");
+                    m_operationOverlay->showFailure("未知继电器通道");
                     return;
                 }
 
@@ -279,7 +279,7 @@ void Widget::initUI()
                 payload.insert("states", states);
 
                 if (m_operationOverlay)
-                    m_operationOverlay->showLoading("Sending relay command...");
+                    m_operationOverlay->showLoading("正在发送继电器命令...");
 
                 if (sendCommand("set_relay", payload)) {
                     m_relayStates.insert(key, states);
@@ -292,7 +292,7 @@ void Widget::initUI()
                                                      QDateTime::currentDateTime().toString("HH:mm:ss"));
                     }
                 } else if (m_operationOverlay) {
-                    m_operationOverlay->showFailure("Relay command failed");
+                    m_operationOverlay->showFailure("继电器命令失败");
                 }
             });
 
@@ -326,10 +326,10 @@ void Widget::initUI()
                         SlaveDeviceInfo info;
                         info.masterSlot = m_pendingAddSlave.masterSlot;
                         info.slaveAddr = m_pendingAddSlave.slaveId;
-                        info.deviceName = QString("Slave %1").arg(m_pendingAddSlave.slaveId);
+                        info.deviceName = QString("从站 %1").arg(m_pendingAddSlave.slaveId);
                         info.displayName = m_pendingAddSlave.deviceType == "sensor_th"
-                            ? "Temp/Humi"
-                            : "Relay";
+                            ? "温湿度传感器"
+                            : "继电器";
                         info.deviceType = m_pendingAddSlave.deviceType;
                         info.online = false;
                         m_slaveDevices.append(info);
@@ -351,13 +351,13 @@ void Widget::initUI()
                 }
 
                 if (cmd == "connect_port")
-                    m_operationOverlay->showSuccess("Connect complete");
+                    m_operationOverlay->showSuccess("连接完成");
                 else if (cmd == "disconnect_port")
-                    m_operationOverlay->showSuccess("Disconnect complete");
+                    m_operationOverlay->showSuccess("断开完成");
                 else if (cmd == "add_device")
-                    m_operationOverlay->showSuccess("Add slave complete");
+                    m_operationOverlay->showSuccess("添加从站完成");
                 else if (cmd == "set_relay")
-                    m_operationOverlay->showSuccess("Relay command complete");
+                    m_operationOverlay->showSuccess("继电器命令完成");
             });
 
     connect(_Myclient,
@@ -385,7 +385,7 @@ void Widget::initUI()
                     : ">";
 
                 if (m_pageStatus) {
-                    m_pageStatus->setAlarmText(QString("Alarm: Slave %1 %2 %3 %4 %5")
+                    m_pageStatus->setAlarmText(QString("告警：从站 %1 %2 %3 %4 %5")
                                                    .arg(deviceId)
                                                    .arg(alarmName)
                                                    .arg(value, 0, 'f', 1)
@@ -441,7 +441,7 @@ void Widget::handleIpcConnected(TopStatusBar *topBar, Pageinfo *pageInfo)
     if (pageInfo)
         pageInfo->setIpcConnected(true);
     if (m_pageStatus)
-        m_pageStatus->setAlarmText("Alarm: --");
+        m_pageStatus->setAlarmText("告警：--");
 }
 
 void Widget::handleIpcDisconnected(TopStatusBar *topBar,
@@ -465,13 +465,13 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
     refreshStatusSummary();
 
     if (m_pageStatus)
-        m_pageStatus->setAlarmText("IPC disconnected, please reconnect backend");
+        m_pageStatus->setAlarmText("告警：IPC 未连接，请重新连接后端");
 
     if (m_addSlaveDialog)
-        m_addSlaveDialog->setResult(false, "IPC disconnected");
+        m_addSlaveDialog->setResult(false, "IPC 未连接");
 
     if (m_operationOverlay)
-        m_operationOverlay->showFailure("IPC disconnected, please reconnect backend");
+        m_operationOverlay->showFailure("IPC 未连接，请重新连接后端");
 }
 
 void Widget::handleDeviceStatus(const DataPack &pack)
@@ -617,7 +617,7 @@ void Widget::refreshStatusSummary()
 
 QString Widget::masterNameForSlot(int masterSlot) const
 {
-    return QString("Master %1").arg(masterSlot + 1);
+    return QString("RS485-%1").arg(masterSlot + 1);
 }
 
 QString Widget::relayStateKey(int masterSlot, int slaveAddr) const

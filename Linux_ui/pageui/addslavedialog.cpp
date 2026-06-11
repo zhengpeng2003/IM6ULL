@@ -111,10 +111,10 @@ void AddSlaveDialog::showEvent(QShowEvent *event)
 
 void AddSlaveDialog::initUI()
 {
-    QLabel *titleLabel = new QLabel("Add Slave", this);
+    QLabel *titleLabel = new QLabel("添加从站", this);
     titleLabel->setObjectName("PanelTitle");
 
-    QLabel *masterLabel = new QLabel(QString("Master %1   Slot:%2")
+    QLabel *masterLabel = new QLabel(QString("RS485-%1   Slot:%2")
                                          .arg(m_masterSlot + 1)
                                          .arg(m_masterSlot),
                                      this);
@@ -140,20 +140,20 @@ void AddSlaveDialog::initUI()
     QFormLayout *formLayout = new QFormLayout;
     formLayout->setContentsMargins(0, 0, 0, 0);
     formLayout->setSpacing(5);
-    formLayout->addRow("Slave ID:", m_slaveIdSpin);
-    formLayout->addRow("Type:", m_deviceTypeCombo);
-    formLayout->addRow("Poll:", m_pollIntervalSpin);
+    formLayout->addRow("从站地址：", m_slaveIdSpin);
+    formLayout->addRow("设备类型：", m_deviceTypeCombo);
+    formLayout->addRow("轮询间隔：", m_pollIntervalSpin);
 
     m_thresholdPanel = new QFrame(this);
     m_thresholdPanel->setObjectName("Panel");
 
-    m_thresholdEnableBox = new QCheckBox("Enable thresholds", m_thresholdPanel);
+    m_thresholdEnableBox = new QCheckBox("启用阈值告警", m_thresholdPanel);
     m_thresholdEnableBox->setObjectName("DetailValue");
 
-    m_tempEnableBox = new QCheckBox("Temp", m_thresholdPanel);
+    m_tempEnableBox = new QCheckBox("温度", m_thresholdPanel);
     m_tempLowBox = new QCheckBox("L", m_thresholdPanel);
     m_tempHighBox = new QCheckBox("H", m_thresholdPanel);
-    m_humiEnableBox = new QCheckBox("Humi", m_thresholdPanel);
+    m_humiEnableBox = new QCheckBox("湿度", m_thresholdPanel);
     m_humiLowBox = new QCheckBox("L", m_thresholdPanel);
     m_humiHighBox = new QCheckBox("H", m_thresholdPanel);
 
@@ -211,7 +211,7 @@ void AddSlaveDialog::initUI()
     m_spinner = new LoadingSpinnerWidget(this);
     m_spinner->setColors(QColor(0, 191, 165), QColor(95, 110, 116));
 
-    m_statusLabel = new QLabel("Ready", this);
+    m_statusLabel = new QLabel("就绪", this);
     m_statusLabel->setObjectName("HintText");
 
     QHBoxLayout *statusLayout = new QHBoxLayout;
@@ -220,11 +220,11 @@ void AddSlaveDialog::initUI()
     statusLayout->addWidget(m_spinner);
     statusLayout->addWidget(m_statusLabel, 1);
 
-    m_cancelButton = new QPushButton("Cancel", this);
+    m_cancelButton = new QPushButton("取消", this);
     m_cancelButton->setObjectName("GhostButton");
     m_cancelButton->setFixedWidth(72);
 
-    m_addButton = new QPushButton("Add", this);
+    m_addButton = new QPushButton("添加", this);
     m_addButton->setObjectName("ActionButton");
     m_addButton->setFixedWidth(72);
 

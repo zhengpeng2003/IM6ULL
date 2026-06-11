@@ -3,7 +3,7 @@
 #include <QDialog>
 #include <QVector>
 
-#include "PageStatus.h"
+#include "pages/PageStatus.h"
 
 class QLabel;
 class QEvent;

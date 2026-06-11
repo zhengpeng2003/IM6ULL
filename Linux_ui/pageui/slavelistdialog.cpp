@@ -20,7 +20,7 @@ SlaveListDialog::SlaveListDialog(QWidget *parent)
     titleLabel = new QLabel(this);
     titleLabel->setObjectName("PopupTitle");
 
-    QPushButton *closeButton = new QPushButton("X", this);
+    QPushButton *closeButton = new QPushButton("×", this);
     closeButton->setObjectName("PopupCloseButton");
     closeButton->setFixedSize(24, 22);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
@@ -37,7 +37,7 @@ SlaveListDialog::SlaveListDialog(QWidget *parent)
     listLayout->setContentsMargins(0, 0, 0, 0);
     listLayout->setSpacing(4);
 
-    emptyLabel = new QLabel("No slave devices", content);
+    emptyLabel = new QLabel("暂无从站设备", content);
     emptyLabel->setObjectName("HintText");
     emptyLabel->setAlignment(Qt::AlignCenter);
 
@@ -61,7 +61,7 @@ void SlaveListDialog::setSlaveList(const QList<SlaveDeviceInfo> &slaves,
     currentSlaves = slaves;
     currentRuntime = runtime;
     currentMasterName = masterName;
-    titleLabel->setText(QString("Slave List (%1)").arg(currentSlaves.size()));
+    titleLabel->setText(QString("全部从站设备（%1）").arg(currentSlaves.size()));
     rebuildRows();
 }
 
@@ -136,9 +136,9 @@ void SlaveListDialog::updateRow(Row &row,
                                 const SlaveRuntimeInfo &runtime)
 {
     const QString name = slave.displayName.isEmpty() ? slave.deviceType : slave.displayName;
-    row.title->setText(QString("[%1] %2").arg(slave.slaveAddr).arg(name));
+    row.title->setText(QString("地址 %1  %2").arg(slave.slaveAddr).arg(name));
     row.meta->setText(QString("%1  %2").arg(currentMasterName).arg(slave.deviceName));
-    row.state->setText(runtime.online ? "Online" : "Offline");
+    row.state->setText(runtime.online ? "在线" : "离线");
     row.state->setProperty("state", runtime.online ? "online" : "offline");
     row.state->style()->unpolish(row.state);
     row.state->style()->polish(row.state);

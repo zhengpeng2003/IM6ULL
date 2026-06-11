@@ -2,7 +2,7 @@
 
 #include <QDialog>
 
-#include "PageStatus.h"
+#include "pages/PageStatus.h"
 
 class MeterUi;
 class RelayUi;

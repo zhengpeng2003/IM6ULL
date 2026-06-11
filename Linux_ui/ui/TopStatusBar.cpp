@@ -13,8 +13,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 void TopStatusBar::setBackendConnected(bool connected)
 {
     titleLabel->setText(connected
-        ? "Industrial HMI"
-        : "Industrial HMI - IPC disconnected");
+        ? "工业物联网终端"
+        : "工业物联网终端 - IPC未连接");
     statusDot->setObjectName(connected ? "StatusGreen" : "StatusGray");
     statusDot->style()->unpolish(statusDot);
     statusDot->style()->polish(statusDot);
@@ -25,7 +25,7 @@ void TopStatusBar::initUI()
     setFixedHeight(28);
     setObjectName("TopStatusBar");
 
-    titleLabel = new QLabel("Industrial HMI");
+    titleLabel = new QLabel("工业物联网终端");
     timeLabel = new QLabel("00:00");
     statusDot = new QLabel;
 

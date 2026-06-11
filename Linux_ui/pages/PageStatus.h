@@ -11,12 +11,11 @@
 #include <QWidget>
 
 class QComboBox;
+class QGridLayout;
+class QHBoxLayout;
+class QPushButton;
 class QScrollArea;
-class QStackedWidget;
 class QVBoxLayout;
-class SensorThUi;
-class RelayUi;
-class MeterUi;
 class SlaveDetailDialog;
 class SlaveListDialog;
 
@@ -107,7 +106,16 @@ private:
     struct SlaveCard {
         QFrame *frame = nullptr;
         QLabel *title = nullptr;
+        QLabel *dot = nullptr;
         QLabel *state = nullptr;
+    };
+
+    struct MetricCard {
+        QFrame *frame = nullptr;
+        QLabel *icon = nullptr;
+        QLabel *name = nullptr;
+        QLabel *value = nullptr;
+        QLabel *unit = nullptr;
     };
 
     void initUI();
@@ -117,6 +125,18 @@ private:
     void clearCurrentDetail();
     void updateSlaveCardStyle(int index, bool selected);
     QFrame *createSlaveCard(int index);
+    MetricCard createMetricCard(const QString &iconText, const QString &name);
+    void setMetricCard(MetricCard &card,
+                       const QString &iconText,
+                       const QString &name,
+                       const QString &value,
+                       const QString &unit);
+    void setDetailMeta(const SlaveDeviceInfo &slave);
+    void showSensorDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
+    void showRelayDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
+    void showMeterDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
+    QString displayTypeName(const QString &deviceType) const;
+    QString displayMasterName() const;
     void openSlaveListDialog();
     void openSlaveDetailDialog(int index);
     void updateOpenDialogs();
@@ -127,6 +147,7 @@ private:
 
     QLabel *summaryLabel = nullptr;
     QLabel *listTitleLabel = nullptr;
+    QLabel *currentPortLabel = nullptr;
     QComboBox *masterCombo = nullptr;
     QLabel *slaveCountLabel = nullptr;
     QPushButton *addSlaveButton = nullptr;
@@ -145,8 +166,25 @@ private:
     int currentMasterSlot = -1;
     QString currentMasterName;
 
-    QStackedWidget *detailStack = nullptr;
-    SensorThUi *sensorThUi = nullptr;
-    RelayUi *relayUi = nullptr;
-    MeterUi *meterUi = nullptr;
+    QFrame *detailPanel = nullptr;
+    QLabel *detailTitleLabel = nullptr;
+    QLabel *detailStateLabel = nullptr;
+    QLabel *detailPortLabel = nullptr;
+    QLabel *detailAddrLabel = nullptr;
+    QLabel *detailTypeLabel = nullptr;
+    QFrame *metricPanel = nullptr;
+    QGridLayout *metricGrid = nullptr;
+    MetricCard metricA;
+    MetricCard metricB;
+    MetricCard metricC;
+    MetricCard metricD;
+    QWidget *relayControlPanel = nullptr;
+    QPushButton *ledOnButton = nullptr;
+    QPushButton *ledOffButton = nullptr;
+    QPushButton *fanOnButton = nullptr;
+    QPushButton *fanOffButton = nullptr;
+    QPushButton *buzzerOnButton = nullptr;
+    QPushButton *buzzerOffButton = nullptr;
+    QLabel *pollIntervalLabel = nullptr;
+    QLabel *lastUpdateLabel = nullptr;
 };

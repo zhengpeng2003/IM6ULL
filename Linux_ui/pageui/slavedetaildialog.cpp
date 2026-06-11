@@ -16,10 +16,10 @@ SlaveDetailDialog::SlaveDetailDialog(QWidget *parent)
     setModal(false);
     setFixedSize(330, 220);
 
-    QLabel *titleLabel = new QLabel("Slave Detail", this);
+    QLabel *titleLabel = new QLabel("从站详细信息", this);
     titleLabel->setObjectName("PopupTitle");
 
-    QPushButton *closeButton = new QPushButton("X", this);
+    QPushButton *closeButton = new QPushButton("×", this);
     closeButton->setObjectName("PopupCloseButton");
     closeButton->setFixedSize(24, 22);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
