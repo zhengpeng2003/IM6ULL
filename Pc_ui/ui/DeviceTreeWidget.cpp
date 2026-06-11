@@ -7,6 +7,9 @@ namespace {
 
 constexpr int DeviceKeyRole = Qt::UserRole;
 constexpr int NodeKeyRole = Qt::UserRole + 1;
+constexpr int PointIdRole = Qt::UserRole + 2;
+constexpr int PointNameRole = Qt::UserRole + 3;
+constexpr int PointUnitRole = Qt::UserRole + 4;
 
 void collectExpandedNodeKeys(QTreeWidgetItem *item, QSet<QString> &expandedKeys)
 {
@@ -51,6 +54,23 @@ QTreeWidgetItem *findDeviceItem(QTreeWidgetItem *item, const QString &deviceKey)
     return nullptr;
 }
 
+QTreeWidgetItem *findPointItem(QTreeWidgetItem *item, const QString &pointId)
+{
+    if (!item) return nullptr;
+
+    if (item->data(0, PointIdRole).toString() == pointId) {
+        return item;
+    }
+
+    for (int i = 0; i < item->childCount(); ++i) {
+        if (auto *found = findPointItem(item->child(i), pointId)) {
+            return found;
+        }
+    }
+
+    return nullptr;
+}
+
 } // namespace
 
 DeviceTreeWidget::DeviceTreeWidget(QWidget *parent) : QTreeWidget(parent)
@@ -58,6 +78,15 @@ DeviceTreeWidget::DeviceTreeWidget(QWidget *parent) : QTreeWidget(parent)
     setHeaderHidden(true);
     setObjectName("DeviceTree");
     connect(this, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int){
+        const QString pointId = item->data(0, PointIdRole).toString();
+        if (!pointId.isEmpty()) {
+            emit pointSelected(pointId,
+                               item->data(0, DeviceKeyRole).toString(),
+                               item->data(0, PointNameRole).toString(),
+                               item->data(0, PointUnitRole).toString());
+            return;
+        }
+
         const QString deviceKey = item->data(0, DeviceKeyRole).toString();
         if (!deviceKey.isEmpty()) emit deviceSelected(deviceKey);
     });
@@ -118,6 +147,69 @@ void DeviceTreeWidget::setDevices(const QList<DeviceNode> &devices)
     }
 }
 
+void DeviceTreeWidget::setRealtimeDevices(const QList<RealtimeDeviceData> &devices, bool includePoints)
+{
+    const QString selectedPointId = currentItem()
+        ? currentItem()->data(0, PointIdRole).toString()
+        : QString();
+    const QString selectedDeviceKey = currentItem()
+        ? currentItem()->data(0, DeviceKeyRole).toString()
+        : QString();
+
+    QList<DeviceNode> nodes;
+    nodes.reserve(devices.size());
+    for (const RealtimeDeviceData &device : devices) {
+        nodes.append(device.node);
+    }
+
+    setDevices(nodes);
+
+    if (!includePoints) {
+        return;
+    }
+
+    for (const RealtimeDeviceData &device : devices) {
+        QTreeWidgetItem *deviceItem = findDeviceItem(device.node.key());
+        if (!deviceItem) {
+            continue;
+        }
+
+        for (const TelemetryPointData &point : device.points) {
+            if (point.pointId.isEmpty() || point.valueType == "text") {
+                continue;
+            }
+
+            QString pointName = point.pointName.isEmpty() ? point.pointKey : point.pointName;
+            if (pointName.isEmpty()) {
+                pointName = point.pointId;
+            }
+
+            QString label = pointName;
+            if (!point.unit.isEmpty()) {
+                label += QStringLiteral(" (%1)").arg(point.unit);
+            }
+
+            auto *pointItem = new QTreeWidgetItem(deviceItem, QStringList() << label);
+            pointItem->setData(0, DeviceKeyRole, device.node.key());
+            pointItem->setData(0, NodeKeyRole, device.node.key() + "/point/" + point.pointId);
+            pointItem->setData(0, PointIdRole, point.pointId);
+            pointItem->setData(0, PointNameRole, pointName);
+            pointItem->setData(0, PointUnitRole, point.unit);
+        }
+    }
+
+    if (!selectedPointId.isEmpty()) {
+        if (QTreeWidgetItem *pointItem = findPointItem(selectedPointId)) {
+            setCurrentItem(pointItem);
+            return;
+        }
+    }
+
+    if (!selectedDeviceKey.isEmpty()) {
+        setCurrentItem(findDeviceItem(selectedDeviceKey));
+    }
+}
+
 QSet<QString> DeviceTreeWidget::expandedNodeKeys() const
 {
     QSet<QString> expandedKeys;
@@ -138,6 +230,16 @@ QTreeWidgetItem *DeviceTreeWidget::findDeviceItem(const QString &deviceKey) cons
 {
     for (int i = 0; i < topLevelItemCount(); ++i) {
         if (auto *found = ::findDeviceItem(topLevelItem(i), deviceKey)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem *DeviceTreeWidget::findPointItem(const QString &pointId) const
+{
+    for (int i = 0; i < topLevelItemCount(); ++i) {
+        if (auto *found = ::findPointItem(topLevelItem(i), pointId)) {
             return found;
         }
     }

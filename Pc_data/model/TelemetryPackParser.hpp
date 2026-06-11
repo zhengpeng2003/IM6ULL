@@ -9,6 +9,7 @@
 class TelemetryPackParser
 {
 public:
+
     static bool parseJson(const std::string& payload,
                           TelemetryPack& outPack,
                           std::string& errorMessage);

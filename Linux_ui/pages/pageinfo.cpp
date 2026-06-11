@@ -79,7 +79,7 @@ void Pageinfo::setIpcConnected(bool connected)
     m_ipcConnected = connected;
     updateIpcStatusLabel();
 }
-
+//qt版本不适配低版本隐式类型转换
 void Pageinfo::updateIpcStatusLabel()
 {
     if (!ipcStatusLabel || !reconnectButton)

@@ -9,6 +9,7 @@
 class PointConfigPackParser
 {
 public:
+
     static bool parseJson(const std::string& payload,
                           std::vector<PointConfig>& outConfigs,
                           std::string& errorMessage);
