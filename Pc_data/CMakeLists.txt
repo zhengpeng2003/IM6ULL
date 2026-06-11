@@ -15,20 +15,23 @@ set(VCPKG_TARGET "x64-windows")
 add_executable(Pc_data
     main.cpp
 
+    common/JsonUtils.cpp
+    common/JsonUtils.hpp
+
     ipc/IpcServer.cpp
     ipc/IpcServer.hpp
+    ipc/IpcMessageHandler.cpp
+    ipc/IpcMessageHandler.hpp
+    ipc/PcUiPublisher.cpp
+    ipc/PcUiPublisher.hpp
 
     model/DeviceData.hpp
     model/DeviceRecord.hpp
     model/ModelConverter.cpp
     model/ModelConverter.hpp
     model/PointConfig.hpp
-    model/PointConfigPackParser.cpp
-    model/PointConfigPackParser.hpp
     model/SiteContext.hpp
     model/TelemetryPack.hpp
-    model/TelemetryPackParser.cpp
-    model/TelemetryPackParser.hpp
     model/TelemetryPoint.hpp
 
     service/PcDataService.cpp
@@ -41,7 +44,19 @@ add_executable(Pc_data
 
     third_party/sqlite/sqlite3.c
     third_party/sqlite/sqlite3.h
-    mqtt/MqttClient.cpp mqtt/MqttClient.hpp
+    protocol/PcDataMessages.cpp
+    protocol/PcDataMessages.hpp
+    protocol/PointConfigPackParser.cpp
+    protocol/PointConfigPackParser.hpp
+    protocol/TelemetryPackParser.cpp
+    protocol/TelemetryPackParser.hpp
+
+    mqtt/MqttClient.cpp
+    mqtt/MqttClient.hpp
+    mqtt/MqttConfig.cpp
+    mqtt/MqttConfig.hpp
+    mqtt/MqttMessageHandler.cpp
+    mqtt/MqttMessageHandler.hpp
 )
 
 target_include_directories(Pc_data PRIVATE

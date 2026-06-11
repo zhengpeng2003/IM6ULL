@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "TelemetryPack.hpp"
+#include "model/TelemetryPack.hpp"
 
 class TelemetryPackParser
 {

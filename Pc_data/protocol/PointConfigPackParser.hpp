@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "PointConfig.hpp"
+#include "model/PointConfig.hpp"
 
 class PointConfigPackParser
 {
