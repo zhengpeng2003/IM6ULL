@@ -30,19 +30,20 @@ private:
         QString gatewayName;
         QString portId;
         QString portName;
+        QString devicePath;
         int masterSlot = 0;
         int baud = 9600;
         QString areaName;
         int slaveCount = 0;
         qint64 lastUpdateTime = 0;
-        bool online = false;
+        QString status;
     };
 
-    QList<MasterRow> buildMasterRows(const QList<DeviceNode> &devices) const;
-    QString statusText(bool online) const;
+    QList<MasterRow> buildMasterRows() const;
+    QString statusText(const QString &status) const;
     QString displayTime(qint64 timestampMs) const;
     void setupTable(QTableWidget *table) const;
-    void addStatusItem(QTableWidget *table, int row, int column, bool online) const;
+    void addStatusItem(QTableWidget *table, int row, int column, const QString &status) const;
     void addDeleteButton(QTableWidget *table, int row, bool master, const QString &gatewayId,
                          const QString &portId, int deviceId = 0);
     void showScanPlaceholder();

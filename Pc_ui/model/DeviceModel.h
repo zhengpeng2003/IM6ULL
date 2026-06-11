@@ -36,4 +36,46 @@ struct DeviceNode
     }
 };
 
+struct GatewayNode
+{
+    QString gatewayId;
+    QString gatewayName;
+    QString factoryId;
+    QString areaId;
+    QString status;
+    qint64 lastRegisterTimeMs = 0;
+    qint64 lastHeartbeatTimeMs = 0;
+    qint64 updateTimeMs = 0;
+
+    bool online() const
+    {
+        return status == QStringLiteral("online");
+    }
+};
+
+struct PortNode
+{
+    QString gatewayId;
+    QString portId;
+    QString portName;
+    int slot = 0;
+    QString devicePath;
+    int baud = 0;
+    QString status;
+    qint64 lastRegisterTimeMs = 0;
+    qint64 updateTimeMs = 0;
+
+    QString key() const
+    {
+        return gatewayId + QStringLiteral("/") + portId;
+    }
+
+    bool connected() const
+    {
+        return status == QStringLiteral("connected");
+    }
+};
+
 Q_DECLARE_METATYPE(DeviceNode)
+Q_DECLARE_METATYPE(GatewayNode)
+Q_DECLARE_METATYPE(PortNode)

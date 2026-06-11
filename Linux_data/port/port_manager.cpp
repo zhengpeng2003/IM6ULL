@@ -746,14 +746,14 @@ int PortManager::addDevice(int slot,
     }
 
     if (poll_interval_ms < kMinPollIntervalMs) {
-        setReason(reason, reason_size, "invalid_poll_interval");
+        setReason(reason, reason_size, "invalid_argument");
         return -1;
     }
 
     std::lock_guard<std::mutex> guard(impl_->lock);
     PortChannel &channel = impl_->channels[slot];
     if (!channel.connected || !channel.bus) {
-        setReason(reason, reason_size, "port_not_connected");
+        setReason(reason, reason_size, "port_not_found");
         return -1;
     }
 
@@ -762,7 +762,7 @@ int PortManager::addDevice(int slot,
                                    return device.sensor && device.sensor->slaveId() == slave_id;
                                });
     if (exists != channel.devices.end()) {
-        setReason(reason, reason_size, "device_exists");
+        setReason(reason, reason_size, "slave_address_conflict");
         return -1;
     }
 

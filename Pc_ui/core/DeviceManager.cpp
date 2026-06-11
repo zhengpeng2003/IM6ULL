@@ -12,6 +12,30 @@ void DeviceManager::setDevices(const QList<DeviceNode> &devices)
     emit onlineDeviceCountChanged(onlineDeviceCount());
 }
 
+void DeviceManager::setGateways(const QList<GatewayNode> &gateways)
+{
+    m_gateways.clear();
+    for (const auto &gateway : gateways) {
+        if (!gateway.gatewayId.isEmpty()) {
+            m_gateways.insert(gateway.gatewayId, gateway);
+        }
+    }
+    emit gatewayStatusChanged();
+    emit onlineGatewayCountChanged(onlineGatewayCount());
+}
+
+void DeviceManager::setPorts(const QList<PortNode> &ports)
+{
+    m_ports.clear();
+    for (const auto &port : ports) {
+        if (!port.gatewayId.isEmpty() && !port.portId.isEmpty()) {
+            m_ports.insert(port.key(), port);
+        }
+    }
+    emit portStatusChanged();
+    emit deviceConfigChanged();
+}
+
 void DeviceManager::upsertDevice(const DeviceNode &node)
 {
     m_devices.insert(node.key(), node);
@@ -69,6 +93,16 @@ QList<DeviceNode> DeviceManager::allDevices() const
     return m_devices.values();
 }
 
+QList<GatewayNode> DeviceManager::allGateways() const
+{
+    return m_gateways.values();
+}
+
+QList<PortNode> DeviceManager::allPorts() const
+{
+    return m_ports.values();
+}
+
 DeviceNode DeviceManager::device(const QString &key) const
 {
     return m_devices.value(key);
@@ -88,6 +122,14 @@ void DeviceManager::updateDeviceOnline(const QString &key, bool online)
 
 int DeviceManager::onlineGatewayCount() const
 {
+    if (!m_gateways.isEmpty()) {
+        int count = 0;
+        for (const auto &gateway : m_gateways) {
+            if (gateway.online()) ++count;
+        }
+        return count;
+    }
+
     QSet<QString> gateways;
     for (const auto &d : m_devices) if (d.online) gateways.insert(d.gatewayId);
     return gateways.size();

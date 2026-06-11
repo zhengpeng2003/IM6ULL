@@ -278,6 +278,25 @@ static std::string buildLatestPointsJson(const std::vector<TelemetryPoint>& poin
     return oss.str();
 }
 
+static std::string buildCommandLogUpdateJson(std::int64_t seq,
+                                             const std::string& commandType,
+                                             const std::string& status,
+                                             const std::string& reason,
+                                             const std::string& message)
+{
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"type\":\"command_log_update\",";
+    oss << "\"seq\":" << seq << ",";
+    oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"status\":\"" << jsonEscape(status) << "\",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    oss << "\"timestampMs\":" << currentTimeMs();
+    oss << "}";
+    return oss.str();
+}
+
 static std::string buildDevicesSnapshotJson(const std::vector<DeviceRecord>& devices)
 {
     std::ostringstream oss;
@@ -321,6 +340,134 @@ static std::string buildDevicesSnapshotJson(const std::vector<DeviceRecord>& dev
     oss << "}";
 
     return oss.str();
+}
+
+static std::string buildGatewayStatusSnapshotJson(const std::vector<GatewayStatus>& gateways)
+{
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"type\":\"gateway_status_snapshot\",";
+    oss << "\"count\":" << gateways.size() << ",";
+    oss << "\"gateways\":[";
+
+    for (size_t i = 0; i < gateways.size(); ++i) {
+        const GatewayStatus& g = gateways[i];
+        if (i > 0) {
+            oss << ",";
+        }
+
+        oss << "{";
+        oss << "\"gatewayId\":\"" << jsonEscape(g.gatewayId) << "\",";
+        oss << "\"gatewayName\":\"" << jsonEscape(g.gatewayName) << "\",";
+        oss << "\"factoryId\":\"" << jsonEscape(g.factoryId) << "\",";
+        oss << "\"areaId\":\"" << jsonEscape(g.areaId) << "\",";
+        oss << "\"status\":\"" << jsonEscape(g.status) << "\",";
+        oss << "\"lastRegisterTimeMs\":" << g.lastRegisterTimeMs << ",";
+        oss << "\"lastHeartbeatTimeMs\":" << g.lastHeartbeatTimeMs << ",";
+        oss << "\"updateTimeMs\":" << g.updateTimeMs;
+        oss << "}";
+    }
+
+    oss << "]}";
+    return oss.str();
+}
+
+static std::string buildPortStatusSnapshotJson(const std::vector<GatewayPort>& ports)
+{
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"type\":\"port_status_snapshot\",";
+    oss << "\"count\":" << ports.size() << ",";
+    oss << "\"ports\":[";
+
+    for (size_t i = 0; i < ports.size(); ++i) {
+        const GatewayPort& p = ports[i];
+        if (i > 0) {
+            oss << ",";
+        }
+
+        oss << "{";
+        oss << "\"gatewayId\":\"" << jsonEscape(p.gatewayId) << "\",";
+        oss << "\"portId\":\"" << jsonEscape(p.portId) << "\",";
+        oss << "\"portName\":\"" << jsonEscape(p.portName) << "\",";
+        oss << "\"slot\":" << p.slot << ",";
+        oss << "\"devicePath\":\"" << jsonEscape(p.devicePath) << "\",";
+        oss << "\"baud\":" << p.baud << ",";
+        oss << "\"status\":\"" << jsonEscape(p.status) << "\",";
+        oss << "\"lastRegisterTimeMs\":" << p.lastRegisterTimeMs << ",";
+        oss << "\"updateTimeMs\":" << p.updateTimeMs;
+        oss << "}";
+    }
+
+    oss << "]}";
+    return oss.str();
+}
+
+static bool parseGatewayRegister(const std::string& payload, GatewayStatus& gateway)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+    if (root.HasParseError() || !root.IsObject() || getJsonString(root, "type") != "gateway_register") {
+        return false;
+    }
+
+    const std::int64_t nowMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    gateway.gatewayId = getJsonString(root, "gatewayId");
+    gateway.gatewayName = getJsonString(root, "gatewayName");
+    gateway.factoryId = getJsonString(root, "factoryId");
+    gateway.areaId = getJsonString(root, "areaId");
+    gateway.status = "online";
+    gateway.lastRegisterTimeMs = nowMs;
+    gateway.lastHeartbeatTimeMs = nowMs;
+    gateway.updateTimeMs = nowMs;
+
+    return !gateway.gatewayId.empty();
+}
+
+static bool parseGatewayHeartbeat(const std::string& payload,
+                                  std::string& gatewayId,
+                                  std::int64_t& timestampMs,
+                                  std::string& status)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+    if (root.HasParseError() || !root.IsObject() || getJsonString(root, "type") != "gateway_heartbeat") {
+        return false;
+    }
+
+    gatewayId = getJsonString(root, "gatewayId");
+    timestampMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    status = getJsonString(root, "status");
+    if (status.empty()) {
+        status = "online";
+    }
+
+    return !gatewayId.empty();
+}
+
+static bool parsePortRegister(const std::string& payload, GatewayPort& port)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+    if (root.HasParseError() || !root.IsObject() || getJsonString(root, "type") != "port_register") {
+        return false;
+    }
+
+    const std::int64_t nowMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    port.gatewayId = getJsonString(root, "gatewayId");
+    port.portId = getJsonString(root, "portId");
+    port.portName = getJsonString(root, "portName");
+    port.slot = getJsonInt(root, "slot", 0);
+    port.devicePath = getJsonString(root, "devicePath");
+    port.baud = getJsonInt(root, "baud", 0);
+    port.status = getJsonString(root, "status");
+    if (port.status.empty()) {
+        port.status = "connected";
+    }
+    port.lastRegisterTimeMs = nowMs;
+    port.updateTimeMs = nowMs;
+
+    return !port.gatewayId.empty() && !port.portId.empty();
 }
 
 static bool parseDeviceRegister(const std::string& payload,
@@ -718,6 +865,28 @@ static void sendDevicesSnapshot(IpcServer& ipc, PcDatabase& database)
     cout << "send devices_snapshot done, count: " << devices.size() << endl;
 }
 
+static void sendGatewayStatusSnapshot(IpcServer& ipc, PcDatabase& database)
+{
+    std::vector<GatewayStatus> gateways;
+    if (database.isOpen()) {
+        gateways = database.queryGatewayStatuses();
+    }
+
+    ipc.sendMessage(buildGatewayStatusSnapshotJson(gateways));
+    cout << "send gateway_status_snapshot done, count: " << gateways.size() << endl;
+}
+
+static void sendPortStatusSnapshot(IpcServer& ipc, PcDatabase& database)
+{
+    std::vector<GatewayPort> ports;
+    if (database.isOpen()) {
+        ports = database.queryGatewayPorts();
+    }
+
+    ipc.sendMessage(buildPortStatusSnapshotJson(ports));
+    cout << "send port_status_snapshot done, count: " << ports.size() << endl;
+}
+
 int main()
 {
     try {
@@ -748,6 +917,95 @@ int main()
             cout << "[MQTT RX] payload: " << payload << endl;
 
             const std::string messageType = extractJsonStringValue(payload, "type");
+            if (messageType == "gateway_register") {
+                GatewayStatus gateway;
+                if (!parseGatewayRegister(payload, gateway)) {
+                    cout << "[MQTT RX] gateway_register parse failed" << endl;
+                    return;
+                }
+
+                const bool ok = database.isOpen() && database.upsertGatewayStatus(gateway);
+                cout << "[MQTT RX] gateway_register "
+                     << (ok ? "ok" : "failed")
+                     << ", gateway: " << gateway.gatewayId << endl;
+
+                if (ok && ipc.hasClient()) {
+                    sendGatewayStatusSnapshot(ipc, database);
+                }
+                return;
+            }
+
+            if (messageType == "gateway_heartbeat") {
+                std::string gatewayId;
+                std::int64_t timestampMs = 0;
+                std::string status;
+                if (!parseGatewayHeartbeat(payload, gatewayId, timestampMs, status)) {
+                    cout << "[MQTT RX] gateway_heartbeat parse failed" << endl;
+                    return;
+                }
+
+                const bool ok = database.isOpen() &&
+                    database.updateGatewayHeartbeat(gatewayId, timestampMs, status);
+                cout << "[MQTT RX] gateway_heartbeat "
+                     << (ok ? "ok" : "failed")
+                     << ", gateway: " << gatewayId << endl;
+
+                if (ok && ipc.hasClient()) {
+                    sendGatewayStatusSnapshot(ipc, database);
+                }
+                return;
+            }
+
+            if (messageType == "port_register") {
+                GatewayPort port;
+                if (!parsePortRegister(payload, port)) {
+                    cout << "[MQTT RX] port_register parse failed" << endl;
+                    return;
+                }
+
+                const bool ok = database.isOpen() && database.upsertGatewayPort(port);
+                cout << "[MQTT RX] port_register "
+                     << (ok ? "ok" : "failed")
+                     << ", gateway: " << port.gatewayId
+                     << ", port: " << port.portId
+                     << ", status: " << port.status << endl;
+
+                if (ok && ipc.hasClient()) {
+                    sendPortStatusSnapshot(ipc, database);
+                }
+                return;
+            }
+
+            if (messageType == "ack") {
+                rapidjson::Document root;
+                root.Parse(payload.c_str());
+                if (root.HasParseError() || !root.IsObject()) {
+                    cout << "[MQTT RX] ack parse failed" << endl;
+                    return;
+                }
+
+                const std::int64_t seq = getJsonInt64(root, "seq", 0);
+                std::string commandType = getJsonString(root, "commandType");
+                if (commandType.empty()) {
+                    commandType = getJsonString(root, "cmd");
+                }
+                const std::string ackStatus = getJsonString(root, "status");
+                const std::string logStatus = ackStatus == "ok" ? "success" : "failed";
+                const std::string reason = getJsonString(root, "reason");
+                const std::string message = getJsonString(root, "message");
+
+                if (database.isOpen()) {
+                    database.updateCommandLogBySeq(seq, logStatus, reason, message, currentTimeMs());
+                }
+                if (ipc.hasClient()) {
+                    ipc.sendMessage(buildCommandLogUpdateJson(seq, commandType, logStatus, reason, message));
+                }
+                cout << "[MQTT RX] ack seq: " << seq
+                     << ", command: " << commandType
+                     << ", status: " << logStatus << endl;
+                return;
+            }
+
             if (messageType == "device_register") {
                 DeviceRecord device;
                 std::uint32_t sequence = 0;
@@ -879,6 +1137,8 @@ int main()
             cout << "send hello done" << endl;
 
             sendLatestPoints(ipc, dataService, database);
+            sendGatewayStatusSnapshot(ipc, database);
+            sendPortStatusSnapshot(ipc, database);
             sendDevicesSnapshot(ipc, database);
         });
 
@@ -1031,7 +1291,11 @@ int main()
              * 兼容你之前 Pc_ui 可能发送的 get_snapshot。
              * 后面建议统一改成 get_latest_points。
              */
-            if (msg.find("get_devices") != std::string::npos) {
+            if (msg.find("get_gateway_status") != std::string::npos) {
+                sendGatewayStatusSnapshot(ipc, database);
+            } else if (msg.find("get_port_status") != std::string::npos) {
+                sendPortStatusSnapshot(ipc, database);
+            } else if (msg.find("get_devices") != std::string::npos) {
                 sendDevicesSnapshot(ipc, database);
             } else if (msg.find("get_latest_points") != std::string::npos ||
                 msg.find("get_snapshot") != std::string::npos) {
@@ -1039,9 +1303,84 @@ int main()
                 sendLatestPoints(ipc, dataService, database);
             } else if (msg.find("\"type\":\"command\"") != std::string::npos ||
                        msg.find("\"msg_type\":\"command\"") != std::string::npos) {
+                rapidjson::Document root;
+                root.Parse(msg.c_str());
                 const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
-                ipc.sendMessage(buildCommandAckJson(cmdId, true, ""));
+                const std::string commandType = root.IsObject() ? getJsonString(root, "commandType") : "";
+                std::string gatewayId;
+                std::string portId;
+                if (root.IsObject() && root.HasMember("target") && root["target"].IsObject()) {
+                    gatewayId = getJsonString(root["target"], "gatewayId");
+                    portId = getJsonString(root["target"], "portId");
+                }
+                if (gatewayId.empty() && root.IsObject()) {
+                    gatewayId = getJsonString(root, "gatewayId");
+                }
+                if (portId.empty() && root.IsObject()) {
+                    portId = getJsonString(root, "portId");
+                }
 
+                if (commandType == "add_device") {
+                    const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+                    int deviceId = 0;
+                    if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
+                        deviceId = getJsonInt(root["device"], "deviceId", getJsonInt(root["device"], "slaveAddress", 0));
+                    }
+                    if (deviceId <= 0 && root.IsObject()) {
+                        deviceId = getJsonInt(root, "deviceId", 0);
+                    }
+
+                    if (seq <= 0) {
+                        ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_argument"));
+                        cout << "add_device rejected, missing seq" << endl;
+                        return;
+                    }
+
+                    const std::string commandId = cmdId.empty()
+                        ? std::string("CMD") + std::to_string(seq)
+                        : cmdId;
+                    if (database.isOpen()) {
+                        database.createCommandLog(commandId,
+                                                  seq,
+                                                  commandType,
+                                                  gatewayId,
+                                                  portId,
+                                                  deviceId,
+                                                  currentTimeMs());
+                    }
+
+                    if (!database.isOpen() || !database.isGatewayPortConnected(gatewayId, portId)) {
+                        if (database.isOpen()) {
+                            database.updateCommandLogBySeq(seq,
+                                                           "failed",
+                                                           "port_not_found",
+                                                           "gateway port is not connected",
+                                                           currentTimeMs());
+                        }
+                        ipc.sendMessage(buildCommandAckJson(cmdId, false, "port_not_found"));
+                        cout << "add_device rejected, port not connected, gateway: "
+                             << gatewayId << ", port: " << portId << endl;
+                        return;
+                    }
+
+                    const std::string topic = "cmd/" + gatewayId;
+                    const bool publishOk = mqtt.publish(topic, msg);
+                    if (database.isOpen()) {
+                        database.updateCommandLogBySeq(seq,
+                                                       publishOk ? "sent" : "failed",
+                                                       publishOk ? "" : "mqtt_publish_failed",
+                                                       publishOk ? "command sent" : "mqtt publish failed",
+                                                       currentTimeMs());
+                    }
+                    ipc.sendMessage(buildCommandAckJson(cmdId, publishOk, publishOk ? "sent" : "mqtt_publish_failed"));
+                    cout << "add_device publish "
+                         << (publishOk ? "ok" : "failed")
+                         << ", topic: " << topic
+                         << ", cmd_id: " << cmdId << endl;
+                    return;
+                }
+
+                ipc.sendMessage(buildCommandAckJson(cmdId, true, ""));
                 cout << "send command_ack done, cmd_id: " << cmdId << endl;
             } else {
                 ipc.sendMessage(R"({"type":"ack","cmd":"unknown","status":"ok","message":"Pc_data received"})");
@@ -1074,6 +1413,10 @@ int main()
                 const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
                 if (offlineChanged > 0 && ipc.hasClient()) {
                     sendDevicesSnapshot(ipc, database);
+                }
+                const int staleGatewayChanged = database.markStaleGateways(nowMs, 30000);
+                if (staleGatewayChanged > 0 && ipc.hasClient()) {
+                    sendGatewayStatusSnapshot(ipc, database);
                 }
             }
             this_thread::sleep_for(chrono::seconds(1));

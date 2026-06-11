@@ -8,6 +8,13 @@ extern "C" {
 #endif
 
 int data_publish_device_status(const device_data_t *dev);
+int data_publish_gateway_register(uint32_t seq);
+int data_publish_gateway_heartbeat(uint32_t seq);
+int data_publish_port_register(uint32_t seq,
+                               int slot,
+                               const char *device_path,
+                               int baud,
+                               const char *status);
 int data_publish_device_register(uint32_t seq,
                                  int slot,
                                  int slave_id,

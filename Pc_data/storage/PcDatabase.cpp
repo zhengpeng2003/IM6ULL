@@ -366,6 +366,125 @@ int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
     return changed;
 }
 
+int PcDatabase::markStaleGateways(std::int64_t nowMs, std::int64_t timeoutMs)
+{
+    if (!m_db || nowMs <= 0 || timeoutMs <= 0) {
+        return 0;
+    }
+
+    static const char* sql =
+        "UPDATE gateway_status "
+        "SET status='stale', update_time_ms=? "
+        "WHERE status='online' "
+        "AND last_heartbeat_time_ms > 0 "
+        "AND (? - last_heartbeat_time_ms) > ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare mark stale gateways failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return 0;
+    }
+
+    sqlite3_bind_int64(stmt, 1, nowMs);
+    sqlite3_bind_int64(stmt, 2, nowMs);
+    sqlite3_bind_int64(stmt, 3, timeoutMs);
+
+    rc = sqlite3_step(stmt);
+    const int changed = sqlite3_changes(m_db);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Mark stale gateways failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return 0;
+    }
+
+    return changed;
+}
+
+std::vector<GatewayStatus> PcDatabase::queryGatewayStatuses()
+{
+    std::vector<GatewayStatus> gateways;
+    if (!m_db) {
+        return gateways;
+    }
+
+    static const char* sql =
+        "SELECT gateway_id,gateway_name,factory_id,area_id,status,"
+        "last_register_time_ms,last_heartbeat_time_ms,update_time_ms "
+        "FROM gateway_status ORDER BY gateway_id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query gateway_status failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return gateways;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const auto textColumn = [stmt](int column) -> std::string {
+            const unsigned char* text = sqlite3_column_text(stmt, column);
+            return text ? reinterpret_cast<const char*>(text) : "";
+        };
+
+        GatewayStatus gateway;
+        gateway.gatewayId = textColumn(0);
+        gateway.gatewayName = textColumn(1);
+        gateway.factoryId = textColumn(2);
+        gateway.areaId = textColumn(3);
+        gateway.status = textColumn(4);
+        gateway.lastRegisterTimeMs = sqlite3_column_int64(stmt, 5);
+        gateway.lastHeartbeatTimeMs = sqlite3_column_int64(stmt, 6);
+        gateway.updateTimeMs = sqlite3_column_int64(stmt, 7);
+        gateways.push_back(gateway);
+    }
+
+    sqlite3_finalize(stmt);
+    return gateways;
+}
+
+std::vector<GatewayPort> PcDatabase::queryGatewayPorts()
+{
+    std::vector<GatewayPort> ports;
+    if (!m_db) {
+        return ports;
+    }
+
+    static const char* sql =
+        "SELECT gateway_id,port_id,port_name,slot,device_path,baud,status,"
+        "last_register_time_ms,update_time_ms "
+        "FROM gateway_port ORDER BY gateway_id,slot,port_id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query gateway_port failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return ports;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const auto textColumn = [stmt](int column) -> std::string {
+            const unsigned char* text = sqlite3_column_text(stmt, column);
+            return text ? reinterpret_cast<const char*>(text) : "";
+        };
+
+        GatewayPort port;
+        port.gatewayId = textColumn(0);
+        port.portId = textColumn(1);
+        port.portName = textColumn(2);
+        port.slot = sqlite3_column_int(stmt, 3);
+        port.devicePath = textColumn(4);
+        port.baud = sqlite3_column_int(stmt, 5);
+        port.status = textColumn(6);
+        port.lastRegisterTimeMs = sqlite3_column_int64(stmt, 7);
+        port.updateTimeMs = sqlite3_column_int64(stmt, 8);
+        ports.push_back(port);
+    }
+
+    sqlite3_finalize(stmt);
+    return ports;
+}
+
 std::vector<DeviceRecord> PcDatabase::queryDevices()
 {
     std::vector<DeviceRecord> devices;
@@ -696,6 +815,229 @@ bool PcDatabase::clearRecoveredAlarms()
 
     std::cout << "Clear recovered alarms ok" << std::endl;
     return true;
+}
+
+bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)
+{
+    if (!m_db || gateway.gatewayId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT INTO gateway_status ("
+        "gateway_id,gateway_name,factory_id,area_id,status,"
+        "last_register_time_ms,last_heartbeat_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id) DO UPDATE SET "
+        "gateway_name=excluded.gateway_name,"
+        "factory_id=excluded.factory_id,"
+        "area_id=excluded.area_id,"
+        "status=excluded.status,"
+        "last_register_time_ms=excluded.last_register_time_ms,"
+        "last_heartbeat_time_ms=excluded.last_heartbeat_time_ms,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare upsert gateway_status failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gateway.gatewayId);
+    bindText(stmt, 2, gateway.gatewayName);
+    bindText(stmt, 3, gateway.factoryId);
+    bindText(stmt, 4, gateway.areaId);
+    bindText(stmt, 5, gateway.status.empty() ? std::string("online") : gateway.status);
+    sqlite3_bind_int64(stmt, 6, gateway.lastRegisterTimeMs);
+    sqlite3_bind_int64(stmt, 7, gateway.lastHeartbeatTimeMs);
+    sqlite3_bind_int64(stmt, 8, gateway.updateTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return rc == SQLITE_DONE;
+}
+
+bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
+                                        std::int64_t heartbeatTimeMs,
+                                        const std::string& status)
+{
+    if (!m_db || gatewayId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT INTO gateway_status ("
+        "gateway_id,status,last_register_time_ms,last_heartbeat_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?) "
+        "ON CONFLICT(gateway_id) DO UPDATE SET "
+        "status=excluded.status,"
+        "last_heartbeat_time_ms=excluded.last_heartbeat_time_ms,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare update gateway heartbeat failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    bindText(stmt, 2, status.empty() ? std::string("online") : status);
+    sqlite3_bind_int64(stmt, 3, 0);
+    sqlite3_bind_int64(stmt, 4, heartbeatTimeMs);
+    sqlite3_bind_int64(stmt, 5, heartbeatTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return rc == SQLITE_DONE;
+}
+
+bool PcDatabase::upsertGatewayPort(const GatewayPort& port)
+{
+    if (!m_db || port.gatewayId.empty() || port.portId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT INTO gateway_port ("
+        "gateway_id,port_id,port_name,slot,device_path,baud,status,"
+        "last_register_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id, port_id) DO UPDATE SET "
+        "port_name=excluded.port_name,"
+        "slot=excluded.slot,"
+        "device_path=excluded.device_path,"
+        "baud=excluded.baud,"
+        "status=excluded.status,"
+        "last_register_time_ms=excluded.last_register_time_ms,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare upsert gateway_port failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, port.gatewayId);
+    bindText(stmt, 2, port.portId);
+    bindText(stmt, 3, port.portName);
+    sqlite3_bind_int(stmt, 4, port.slot);
+    bindText(stmt, 5, port.devicePath);
+    sqlite3_bind_int(stmt, 6, port.baud);
+    bindText(stmt, 7, port.status.empty() ? std::string("connected") : port.status);
+    sqlite3_bind_int64(stmt, 8, port.lastRegisterTimeMs);
+    sqlite3_bind_int64(stmt, 9, port.updateTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return rc == SQLITE_DONE;
+}
+
+bool PcDatabase::isGatewayPortConnected(const std::string& gatewayId,
+                                        const std::string& portId)
+{
+    if (!m_db || gatewayId.empty() || portId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT status FROM gateway_port WHERE gateway_id=? AND port_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    bindText(stmt, 2, portId);
+
+    bool connected = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        connected = text && std::string(reinterpret_cast<const char*>(text)) == "connected";
+    }
+
+    sqlite3_finalize(stmt);
+    return connected;
+}
+
+bool PcDatabase::createCommandLog(const std::string& commandId,
+                                  std::int64_t seq,
+                                  const std::string& commandType,
+                                  const std::string& gatewayId,
+                                  const std::string& portId,
+                                  int deviceId,
+                                  std::int64_t createTimeMs)
+{
+    if (!m_db || commandId.empty() || seq <= 0 || commandType.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT OR REPLACE INTO command_log ("
+        "command_id,seq,command_type,gateway_id,port_id,device_id,status,"
+        "reason,message,create_time_ms,send_time_ms,finish_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,'','',?,?,0);";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare create command_log failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, commandId);
+    sqlite3_bind_int64(stmt, 2, seq);
+    bindText(stmt, 3, commandType);
+    bindText(stmt, 4, gatewayId);
+    bindText(stmt, 5, portId);
+    sqlite3_bind_int(stmt, 6, deviceId);
+    bindText(stmt, 7, "pending");
+    sqlite3_bind_int64(stmt, 8, createTimeMs);
+    sqlite3_bind_int64(stmt, 9, createTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+bool PcDatabase::updateCommandLogBySeq(std::int64_t seq,
+                                       const std::string& status,
+                                       const std::string& reason,
+                                       const std::string& message,
+                                       std::int64_t finishTimeMs)
+{
+    if (!m_db || seq <= 0 || status.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "UPDATE command_log "
+        "SET status=?, reason=?, message=?, finish_time_ms=? "
+        "WHERE seq=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare update command_log failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, status);
+    bindText(stmt, 2, reason);
+    bindText(stmt, 3, message);
+    sqlite3_bind_int64(stmt, 4, finishTimeMs);
+    sqlite3_bind_int64(stmt, 5, seq);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
 }
 
 void PcDatabase::close()

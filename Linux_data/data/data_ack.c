@@ -2,6 +2,7 @@
 
 #include "data_protocol.h"
 #include "ipc_server.h"
+#include "mqtt_wrapper.h"
 
 #include <json-c/json.h>
 #include <string.h>
@@ -10,7 +11,7 @@ static int data_ack_code_from_reason(const char *reason)
 {
     if (!reason || reason[0] == '\0')
         return DATA_SEND_OK;
-    if (strcmp(reason, "invalid_request") == 0)
+    if (strcmp(reason, "invalid_request") == 0 || strcmp(reason, "invalid_argument") == 0)
         return DATA_SEND_INVALID_ARG;
     if (strcmp(reason, "config_write_failed") == 0)
         return DATA_SEND_IPC_WRITE_FAILED;
@@ -35,7 +36,9 @@ void data_ack_send(uint32_t seq,
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
 
-    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    ipc_server_send(payload);
+    mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
     json_object_put(root);
 }
 
@@ -136,6 +139,14 @@ const char *data_ack_message_from_reason(const char *reason)
         return "invalid request";
     if (strcmp(reason, "unknown_command") == 0)
         return "unknown command";
+    if (strcmp(reason, "invalid_argument") == 0)
+        return "invalid argument";
+    if (strcmp(reason, "port_not_found") == 0)
+        return "port not found";
+    if (strcmp(reason, "slave_address_conflict") == 0)
+        return "slave address already exists";
+    if (strcmp(reason, "unsupported_device_type") == 0)
+        return "unsupported device type";
     if (strcmp(reason, "port_already_connected") == 0)
         return "port already connected";
     if (strcmp(reason, "open_failed") == 0)

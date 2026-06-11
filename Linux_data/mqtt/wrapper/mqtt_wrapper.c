@@ -2,12 +2,16 @@
 #include "mqtt_gpio.h"
 #include "mqttclient.h"
 #include "mqtt_log.h"
+#include "data_command.h"
 #include "data_protocol.h"
+#include "data_publish.h"
+#include "data_telemetry.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 
 #define MQTT_HOST              "192.168.10.100"
 #define MQTT_PORT              "1883"
@@ -16,6 +20,7 @@
 #define MQTT_SUB_TOPIC_GPIO    "imx6ull/gpio/+/set"
 #define MQTT_QUEUE_MAX         32
 #define MQTT_PAYLOAD_MAX       4096
+#define MQTT_GATEWAY_HEARTBEAT_MS 10000
 
 const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "pc_data/telemetry/test";
 
@@ -31,6 +36,8 @@ typedef struct {
 static mqtt_client_t *g_client = NULL;
 static int g_connected = 0;
 static int g_subscribed = 0;  // 新增：订阅状态标志
+static unsigned int g_gateway_seq = 1000;
+static long long g_last_gateway_heartbeat_ms = 0;
 
 /* 发送队列 */
 static mqtt_item_t g_queue[MQTT_QUEUE_MAX];
@@ -88,6 +95,18 @@ static int queue_push(const char *topic, const char *payload)
     return 0;
 }
 
+static long long mqtt_time_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static unsigned int next_gateway_seq(void)
+{
+    return ++g_gateway_seq;
+}
+
 static int queue_pop(mqtt_item_t *out)
 {
     pthread_mutex_lock(&g_mutex);
@@ -130,6 +149,13 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
         printf("[MQTT] Sensor data received, skip GPIO dispatch\n");
         // 如果需要处理传感器数据，在这里添加逻辑
         // 或者转发给其他模块
+    }
+    else if (strcmp(topic, "cmd/" DEFAULT_GATEWAY_ID) == 0) {
+        char command[MQTT_PAYLOAD_MAX];
+        int copy_len = payloadlen < (MQTT_PAYLOAD_MAX - 1) ? payloadlen : (MQTT_PAYLOAD_MAX - 1);
+        memcpy(command, payload, copy_len);
+        command[copy_len] = '\0';
+        data_command_process_message(command);
     }
     else {
         printf("[MQTT] Unknown topic: %s\n", topic);
@@ -207,6 +233,9 @@ void mqtt_poll(void)
                    MQTT_HOST, MQTT_PORT, connect_attempts);
             g_connected = 1;
             connect_attempts = 0;
+            g_subscribed = 0;
+            data_publish_gateway_register(next_gateway_seq());
+            g_last_gateway_heartbeat_ms = 0;
         } else {
             if (connect_attempts == 1 || (connect_attempts % 50) == 0) {
                 printf("[MQTT] connect failed broker=%s:%s ret=%d queue=%d\n",
@@ -224,11 +253,22 @@ void mqtt_poll(void)
         mqtt_subscribe(g_client, MQTT_SUB_TOPIC_GPIO, QOS0, mqtt_message_handler);
         printf("[MQTT] subscribe topic: %s\n", MQTT_SUB_TOPIC_GPIO);
 
+        mqtt_subscribe(g_client, "cmd/" DEFAULT_GATEWAY_ID, QOS0, mqtt_message_handler);
+        printf("[MQTT] subscribe topic: cmd/%s\n", DEFAULT_GATEWAY_ID);
+
         g_subscribed = 1;
     }
 
     /* 3. 心跳 */
     mqtt_keep_alive(g_client);
+
+    long long now_ms = mqtt_time_ms();
+    if (g_connected &&
+        (g_last_gateway_heartbeat_ms == 0 ||
+         now_ms - g_last_gateway_heartbeat_ms >= MQTT_GATEWAY_HEARTBEAT_MS)) {
+        data_publish_gateway_heartbeat(next_gateway_seq());
+        g_last_gateway_heartbeat_ms = now_ms;
+    }
 
     /* 4. 发送一条 */
     if (queue_pop(&item) == 0) {

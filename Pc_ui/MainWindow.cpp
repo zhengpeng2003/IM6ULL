@@ -22,10 +22,66 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonParseError>
 
 #include "ipc/ipcclient.h"
+
+namespace {
+
+QList<GatewayNode> parseGatewayStatusSnapshot(const QJsonObject &root)
+{
+    QList<GatewayNode> gateways;
+    const QJsonArray rows = root.value(QStringLiteral("gateways")).toArray();
+    for (const QJsonValue &value : rows) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject row = value.toObject();
+        GatewayNode gateway;
+        gateway.gatewayId = row.value(QStringLiteral("gatewayId")).toString();
+        gateway.gatewayName = row.value(QStringLiteral("gatewayName")).toString();
+        gateway.factoryId = row.value(QStringLiteral("factoryId")).toString();
+        gateway.areaId = row.value(QStringLiteral("areaId")).toString();
+        gateway.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
+        gateway.lastRegisterTimeMs = row.value(QStringLiteral("lastRegisterTimeMs")).toVariant().toLongLong();
+        gateway.lastHeartbeatTimeMs = row.value(QStringLiteral("lastHeartbeatTimeMs")).toVariant().toLongLong();
+        gateway.updateTimeMs = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
+        if (!gateway.gatewayId.isEmpty()) {
+            gateways.append(gateway);
+        }
+    }
+    return gateways;
+}
+
+QList<PortNode> parsePortStatusSnapshot(const QJsonObject &root)
+{
+    QList<PortNode> ports;
+    const QJsonArray rows = root.value(QStringLiteral("ports")).toArray();
+    for (const QJsonValue &value : rows) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject row = value.toObject();
+        PortNode port;
+        port.gatewayId = row.value(QStringLiteral("gatewayId")).toString();
+        port.portId = row.value(QStringLiteral("portId")).toString();
+        port.portName = row.value(QStringLiteral("portName")).toString();
+        port.slot = row.value(QStringLiteral("slot")).toInt();
+        port.devicePath = row.value(QStringLiteral("devicePath")).toString();
+        port.baud = row.value(QStringLiteral("baud")).toInt();
+        port.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
+        port.lastRegisterTimeMs = row.value(QStringLiteral("lastRegisterTimeMs")).toVariant().toLongLong();
+        port.updateTimeMs = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
+        if (!port.gatewayId.isEmpty() && !port.portId.isEmpty()) {
+            ports.append(port);
+        }
+    }
+    return ports;
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -48,6 +104,8 @@ void MainWindow::initIpc()
         if (m_systemSettingPage) {
             m_systemSettingPage->setIpcConnected(true);
         }
+        requestGatewayStatus();
+        requestPortStatus();
         requestDevices();
         requestLatestPoints();
     });
@@ -82,6 +140,8 @@ void MainWindow::initIpc()
         }
 
         requestDevices();
+        requestGatewayStatus();
+        requestPortStatus();
         requestLatestPoints();
 
     });
@@ -154,6 +214,20 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "gateway_status_snapshot") {
+        if (m_device) {
+            m_device->setGateways(parseGatewayStatusSnapshot(root));
+        }
+        return;
+    }
+
+    if (type == "port_status_snapshot") {
+        if (m_device) {
+            m_device->setPorts(parsePortStatusSnapshot(root));
+        }
+        return;
+    }
+
     if (type == "history_points") {
         if (m_trendPage) {
             m_trendPage->onHistoryPointsMessage(root);
@@ -200,6 +274,11 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "command_log_update") {
+        qDebug() << "command log update:" << root;
+        return;
+    }
+
     qDebug() << "unknown IPC message type:" << type
              << "frame:" << frame;
 }
@@ -220,6 +299,24 @@ void MainWindow::requestDevices()
     }
 
     m_ipcClient->sendMessage(QString(R"({"type":"get_devices"})"));
+}
+
+void MainWindow::requestGatewayStatus()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+
+    m_ipcClient->sendMessage(QString(R"({"type":"get_gateway_status"})"));
+}
+
+void MainWindow::requestPortStatus()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+
+    m_ipcClient->sendMessage(QString(R"({"type":"get_port_status"})"));
 }
 
 void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit)

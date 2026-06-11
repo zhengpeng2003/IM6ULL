@@ -129,7 +129,7 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
 void DeviceConfigPage::refreshTables()
 {
     const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
-    const QList<MasterRow> masters = buildMasterRows(devices);
+    const QList<MasterRow> masters = buildMasterRows();
 
     m_masterTable->setRowCount(masters.size());
     for (int row = 0; row < masters.size(); ++row) {
@@ -140,14 +140,20 @@ void DeviceConfigPage::refreshTables()
 
         m_masterTable->setItem(row, 0, readonlyItem(portName));
         m_masterTable->setItem(row, 1, readonlyItem(m.gatewayName.isEmpty() ? m.gatewayId : m.gatewayName));
-        m_masterTable->setItem(row, 2, readonlyItem(m.portId));
+        m_masterTable->setItem(row, 2, readonlyItem(m.devicePath.isEmpty() ? m.portId : m.devicePath));
         m_masterTable->setItem(row, 3, readonlyItem(QString::number(m.baud)));
         m_masterTable->setItem(row, 4, readonlyItem(m.areaName));
         m_masterTable->setItem(row, 5, readonlyItem(QString::number(m.slaveCount)));
         m_masterTable->setItem(row, 6, readonlyItem(displayTime(m.lastUpdateTime)));
-        addStatusItem(m_masterTable, row, 7, m.online);
-        m_masterTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
-        addDeleteButton(m_masterTable, row, true, m.gatewayId, m.portId);
+        addStatusItem(m_masterTable, row, 7, m.status);
+        m_masterTable->setItem(row, 8, readonlyItem(m.portId.isEmpty()
+            ? QStringLiteral("暂无已连接端口，请先在板端扫描并连接端口")
+            : QStringLiteral("端口注册")));
+        if (m.portId.isEmpty()) {
+            m_masterTable->setItem(row, 9, readonlyItem(QStringLiteral("-")));
+        } else {
+            addDeleteButton(m_masterTable, row, true, m.gatewayId, m.portId);
+        }
     }
 
     m_slaveTable->setRowCount(devices.size());
@@ -162,15 +168,60 @@ void DeviceConfigPage::refreshTables()
         m_slaveTable->setItem(row, 4, readonlyItem(d.areaName));
         m_slaveTable->setItem(row, 5, readonlyItem(d.gatewayName.isEmpty() ? d.gatewayId : d.gatewayName));
         m_slaveTable->setItem(row, 6, readonlyItem(displayTime(d.lastUpdateTime)));
-        addStatusItem(m_slaveTable, row, 7, d.online);
+        addStatusItem(m_slaveTable, row, 7, d.online ? QStringLiteral("online") : d.status);
         m_slaveTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
         addDeleteButton(m_slaveTable, row, false, d.gatewayId, d.port, d.deviceId);
     }
 }
 
-QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows(const QList<DeviceNode> &devices) const
+QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows() const
 {
     QMap<QString, MasterRow> rows;
+    const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
+    const QList<GatewayNode> gateways = m_device ? m_device->allGateways() : QList<GatewayNode>();
+    const QList<PortNode> ports = m_device ? m_device->allPorts() : QList<PortNode>();
+    QMap<QString, GatewayNode> gatewayMap;
+
+    for (const GatewayNode &gateway : gateways) {
+        gatewayMap.insert(gateway.gatewayId, gateway);
+    }
+
+    for (const PortNode &p : ports) {
+        const QString key = masterKey(p.gatewayId, p.portId);
+        MasterRow row;
+        const GatewayNode gateway = gatewayMap.value(p.gatewayId);
+        row.gatewayId = p.gatewayId;
+        row.gatewayName = gateway.gatewayName;
+        row.portId = p.portId;
+        row.portName = p.portName.isEmpty() ? p.portId : p.portName;
+        row.devicePath = p.devicePath;
+        row.masterSlot = p.slot;
+        row.baud = p.baud;
+        row.areaName = gateway.areaId;
+        row.lastUpdateTime = p.updateTimeMs;
+        row.status = p.status;
+        rows.insert(key, row);
+    }
+
+    for (const GatewayNode &gateway : gateways) {
+        bool hasPort = false;
+        for (const PortNode &port : ports) {
+            if (port.gatewayId == gateway.gatewayId) {
+                hasPort = true;
+                break;
+            }
+        }
+        if (!hasPort) {
+            MasterRow row;
+            row.gatewayId = gateway.gatewayId;
+            row.gatewayName = gateway.gatewayName;
+            row.portName = QStringLiteral("暂无端口");
+            row.areaName = gateway.areaId;
+            row.lastUpdateTime = gateway.updateTimeMs;
+            row.status = gateway.status;
+            rows.insert(masterKey(gateway.gatewayId, QString()), row);
+        }
+    }
 
     for (const DeviceNode &d : devices) {
         const QString portId = d.port.isEmpty()
@@ -178,7 +229,6 @@ QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows(const QList
             : d.port;
         const QString key = masterKey(d.gatewayId, portId);
         MasterRow row = rows.value(key);
-
         if (row.gatewayId.isEmpty()) {
             row.gatewayId = d.gatewayId;
             row.gatewayName = d.gatewayName;
@@ -187,24 +237,31 @@ QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows(const QList
             row.masterSlot = d.masterSlot;
             row.baud = d.baud;
             row.areaName = d.areaName;
+            row.status = d.online ? QStringLiteral("connected") : QStringLiteral("unknown");
         }
-
-        if (row.gatewayName.isEmpty()) row.gatewayName = d.gatewayName;
-        if (row.areaName.isEmpty()) row.areaName = d.areaName;
-        if (row.portName.isEmpty()) row.portName = defaultPortName(d);
         if (d.lastUpdateTime > row.lastUpdateTime) row.lastUpdateTime = d.lastUpdateTime;
-        row.online = row.online || d.online;
         ++row.slaveCount;
-
         rows.insert(key, row);
     }
 
     return rows.values();
 }
 
-QString DeviceConfigPage::statusText(bool online) const
+QString DeviceConfigPage::statusText(const QString &status) const
 {
-    return online ? QStringLiteral("在线") : QStringLiteral("离线");
+    if (status == QStringLiteral("online") || status == QStringLiteral("connected")) {
+        return QStringLiteral("在线");
+    }
+    if (status == QStringLiteral("stale")) {
+        return QStringLiteral("心跳超时");
+    }
+    if (status == QStringLiteral("disconnected")) {
+        return QStringLiteral("已断开");
+    }
+    if (status == QStringLiteral("offline")) {
+        return QStringLiteral("离线");
+    }
+    return QStringLiteral("未知");
 }
 
 QString DeviceConfigPage::displayTime(qint64 timestampMs) const
@@ -228,10 +285,11 @@ void DeviceConfigPage::setupTable(QTableWidget *table) const
     table->setAlternatingRowColors(true);
 }
 
-void DeviceConfigPage::addStatusItem(QTableWidget *table, int row, int column, bool online) const
+void DeviceConfigPage::addStatusItem(QTableWidget *table, int row, int column, const QString &status) const
 {
-    auto *item = readonlyItem(statusText(online));
-    item->setForeground(online ? QColor(QStringLiteral("#16A34A")) : QColor(QStringLiteral("#6B7280")));
+    auto *item = readonlyItem(statusText(status));
+    const bool ok = status == QStringLiteral("online") || status == QStringLiteral("connected");
+    item->setForeground(ok ? QColor(QStringLiteral("#16A34A")) : QColor(QStringLiteral("#6B7280")));
     table->setItem(row, column, item);
 }
 

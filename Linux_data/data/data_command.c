@@ -5,6 +5,7 @@
 #include "data_ack.h"
 #include "data_protocol.h"
 #include "data_publish.h"
+#include "data_telemetry.h"
 #include "port_manager.h"
 
 #include <json-c/json.h>
@@ -28,6 +29,17 @@ static device_type_t parse_device_type(const char *type)
     if (strcmp(type, "relay") == 0) return DEV_RELAY;
     if (strcmp(type, "sysinfo") == 0) return DEV_SYSINFO;
     return DEV_UNKNOWN;
+}
+
+static int slot_from_port_id(const char *port_id)
+{
+    if (!port_id)
+        return -1;
+    if (strcmp(port_id, "port_001") == 0 || strcmp(port_id, "RS485-1") == 0)
+        return 0;
+    if (strcmp(port_id, "port_002") == 0 || strcmp(port_id, "RS485-2") == 0)
+        return 1;
+    return -1;
 }
 
 static int parse_point_threshold(struct json_object *obj, point_threshold_config_t *threshold)
@@ -125,6 +137,8 @@ static int handle_connect_port(uint32_t seq, struct json_object *root, const cha
                               "unknown",
                               baud,
                               ret == 0);
+    if (ret == 0)
+        data_publish_port_register(seq, slot, port, baud, "connected");
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -148,6 +162,8 @@ static int handle_disconnect_port(uint32_t seq, struct json_object *root, const 
                               "unknown",
                               0,
                               0);
+    if (ret == 0)
+        data_publish_port_register(seq, slot, "", 0, "disconnected");
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -161,16 +177,49 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
     sensor_threshold_config_t *threshold_config_ptr = NULL;
     char reason[MAX_ACK_MSG_LEN] = "";
     struct json_object *v;
+    struct json_object *target = NULL;
+    struct json_object *device = NULL;
 
-    if (json_object_object_get_ex(root, "slot", &v))
+    if (json_object_object_get_ex(root, "target", &target) && target) {
+        const char *gateway_id = "";
+        const char *port_id = "";
+        if (json_object_object_get_ex(target, "gatewayId", &v))
+            gateway_id = json_object_get_string(v);
+        if (json_object_object_get_ex(target, "portId", &v))
+            port_id = json_object_get_string(v);
+        if (gateway_id && gateway_id[0] != '\0' && strcmp(gateway_id, DEFAULT_GATEWAY_ID) != 0) {
+            snprintf(reason, sizeof(reason), "invalid_argument");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+        slot = slot_from_port_id(port_id);
+        if (slot < 0) {
+            snprintf(reason, sizeof(reason), "port_not_found");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+    } else if (json_object_object_get_ex(root, "slot", &v)) {
         slot = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "slave_id", &v))
+    }
+
+    if (!json_object_object_get_ex(root, "device", &device))
+        device = root;
+
+    if (json_object_object_get_ex(device, "deviceId", &v))
         slave_id = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "device_type", &v))
+    if (slave_id <= 0 && json_object_object_get_ex(device, "slaveAddress", &v))
+        slave_id = json_object_get_int(v);
+    if (slave_id <= 0 && json_object_object_get_ex(device, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+    if (json_object_object_get_ex(device, "deviceType", &v))
         device_type = json_object_get_string(v);
-    if (json_object_object_get_ex(root, "poll_interval_ms", &v))
+    if (strcmp(device_type, "unknown") == 0 && json_object_object_get_ex(device, "device_type", &v))
+        device_type = json_object_get_string(v);
+    if (json_object_object_get_ex(device, "pollIntervalMs", &v))
         poll_interval_ms = json_object_get_int(v);
-    if (parse_sensor_threshold_config(root, &threshold_config))
+    if (poll_interval_ms <= 0 && json_object_object_get_ex(device, "poll_interval_ms", &v))
+        poll_interval_ms = json_object_get_int(v);
+    if (parse_sensor_threshold_config(device, &threshold_config))
         threshold_config_ptr = &threshold_config;
 
     int ret = port_manager_add_device_ex(slot,
@@ -184,7 +233,7 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
                   cmd,
                   ret == 0,
                   ret == 0 ? "" : reason,
-                  ret == 0 ? "device added" : data_ack_message_from_reason(reason));
+                  ret == 0 ? "device config added, waiting for first poll" : data_ack_message_from_reason(reason));
     if (ret == 0) {
         int publish_ret = data_publish_device_register(seq,
                                                        slot,
@@ -459,8 +508,10 @@ int data_command_process_message(const char *json_str)
     if (json_object_object_get_ex(root, "type", &type_obj))
         msg_type = json_object_get_string(type_obj);
 
-    struct json_object *cmd_obj;
-    if (json_object_object_get_ex(root, "cmd", &cmd_obj)) {
+    struct json_object *cmd_obj = NULL;
+    if (!json_object_object_get_ex(root, "cmd", &cmd_obj))
+        json_object_object_get_ex(root, "commandType", &cmd_obj);
+    if (cmd_obj) {
         if (msg_type && msg_type[0] != '\0' && strcmp(msg_type, "command") != 0) {
             data_ack_send(seq, json_object_get_string(cmd_obj), 0,
                           "invalid_request",

@@ -11,6 +11,31 @@
 
 struct sqlite3;
 
+struct GatewayStatus
+{
+    std::string gatewayId;
+    std::string gatewayName;
+    std::string factoryId;
+    std::string areaId;
+    std::string status;
+    std::int64_t lastRegisterTimeMs = 0;
+    std::int64_t lastHeartbeatTimeMs = 0;
+    std::int64_t updateTimeMs = 0;
+};
+
+struct GatewayPort
+{
+    std::string gatewayId;
+    std::string portId;
+    std::string portName;
+    int slot = 0;
+    std::string devicePath;
+    int baud = 0;
+    std::string status;
+    std::int64_t lastRegisterTimeMs = 0;
+    std::int64_t updateTimeMs = 0;
+};
+
 class PcDatabase
 {
 public:
@@ -22,8 +47,30 @@ public:
     bool saveTelemetryPoints(const std::vector<TelemetryPoint>& points);
     bool savePointConfigs(const std::vector<PointConfig>& configs);
     bool upsertDevice(const DeviceRecord& device);
+    bool upsertGatewayStatus(const GatewayStatus& gateway);
+    bool updateGatewayHeartbeat(const std::string& gatewayId,
+                                std::int64_t heartbeatTimeMs,
+                                const std::string& status);
+    bool upsertGatewayPort(const GatewayPort& port);
+    bool isGatewayPortConnected(const std::string& gatewayId,
+                                const std::string& portId);
+    bool createCommandLog(const std::string& commandId,
+                          std::int64_t seq,
+                          const std::string& commandType,
+                          const std::string& gatewayId,
+                          const std::string& portId,
+                          int deviceId,
+                          std::int64_t createTimeMs);
+    bool updateCommandLogBySeq(std::int64_t seq,
+                               const std::string& status,
+                               const std::string& reason,
+                               const std::string& message,
+                               std::int64_t finishTimeMs);
     bool updateDeviceOnlineFromTelemetry(const TelemetryPoint& point);
     int markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs);
+    int markStaleGateways(std::int64_t nowMs, std::int64_t timeoutMs);
+    std::vector<GatewayStatus> queryGatewayStatuses();
+    std::vector<GatewayPort> queryGatewayPorts();
     std::vector<DeviceRecord> queryDevices();
     std::vector<TelemetryPoint> queryLatestPoints();
     std::vector<TelemetryPoint> queryHistoryPoints(const std::string& pointId,

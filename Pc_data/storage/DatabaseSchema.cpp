@@ -4,6 +4,51 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 {
     return {
         R"SQL(
+        CREATE TABLE IF NOT EXISTS gateway_status (
+            gateway_id TEXT PRIMARY KEY,
+            gateway_name TEXT,
+            factory_id TEXT,
+            area_id TEXT,
+            status TEXT NOT NULL,
+            last_register_time_ms INTEGER,
+            last_heartbeat_time_ms INTEGER,
+            update_time_ms INTEGER
+        );
+        )SQL",
+
+        R"SQL(
+        CREATE TABLE IF NOT EXISTS gateway_port (
+            gateway_id TEXT NOT NULL,
+            port_id TEXT NOT NULL,
+            port_name TEXT,
+            slot INTEGER,
+            device_path TEXT,
+            baud INTEGER,
+            status TEXT NOT NULL,
+            last_register_time_ms INTEGER,
+            update_time_ms INTEGER,
+            PRIMARY KEY(gateway_id, port_id)
+        );
+        )SQL",
+
+        R"SQL(
+        CREATE TABLE IF NOT EXISTS command_log (
+            command_id TEXT PRIMARY KEY,
+            seq INTEGER NOT NULL,
+            command_type TEXT NOT NULL,
+            gateway_id TEXT,
+            port_id TEXT,
+            device_id INTEGER,
+            status TEXT NOT NULL,
+            reason TEXT,
+            message TEXT,
+            create_time_ms INTEGER,
+            send_time_ms INTEGER,
+            finish_time_ms INTEGER
+        );
+        )SQL",
+
+        R"SQL(
         CREATE TABLE IF NOT EXISTS device (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -189,6 +234,21 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 std::vector<std::string> DatabaseSchema::indexSqlList()
 {
     return {
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_gateway_status_state
+        ON gateway_status(status);
+        )SQL",
+
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_gateway_port_gateway
+        ON gateway_port(gateway_id, status);
+        )SQL",
+
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_command_log_seq
+        ON command_log(seq);
+        )SQL",
+
         R"SQL(
         CREATE INDEX IF NOT EXISTS idx_device_location
         ON device(gateway_id, port_id, device_id);

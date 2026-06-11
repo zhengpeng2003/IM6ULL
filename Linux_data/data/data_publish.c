@@ -34,6 +34,25 @@ static const char *port_name_from_slot(int slot)
     return slot == 0 ? "RS485-1" : "RS485-2";
 }
 
+static int publish_json_to_mqtt(struct json_object *root, const char *log_name)
+{
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    const char *json = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    if (!json)
+        return DATA_SEND_JSON_ERROR;
+
+    int ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, json);
+    if (ret == DATA_SEND_OK) {
+        printf("%s publish queued: %s\n", log_name ? log_name : "message", json);
+    } else {
+        printf("%s publish failed, code=%d\n", log_name ? log_name : "message", ret);
+    }
+
+    return ret;
+}
+
 static int device_type_expects_telemetry(const char *device_type)
 {
     if (!device_type)
@@ -116,6 +135,71 @@ int data_publish_device_status(const device_data_t *dev)
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);
 
     return code;
+}
+
+int data_publish_gateway_register(uint32_t seq)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    add_string(root, "type", "gateway_register");
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(current_time_ms()));
+    add_string(root, "gatewayId", DEFAULT_GATEWAY_ID);
+    add_string(root, "gatewayName", DEFAULT_GATEWAY_NAME);
+    add_string(root, "factoryId", DEFAULT_FACTORY_ID);
+    add_string(root, "areaId", DEFAULT_AREA_ID);
+
+    int ret = publish_json_to_mqtt(root, "gateway_register");
+    json_object_put(root);
+    return ret;
+}
+
+int data_publish_gateway_heartbeat(uint32_t seq)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    add_string(root, "type", "gateway_heartbeat");
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(current_time_ms()));
+    add_string(root, "gatewayId", DEFAULT_GATEWAY_ID);
+    add_string(root, "status", "online");
+
+    int ret = publish_json_to_mqtt(root, "gateway_heartbeat");
+    json_object_put(root);
+    return ret;
+}
+
+int data_publish_port_register(uint32_t seq,
+                               int slot,
+                               const char *device_path,
+                               int baud,
+                               const char *status)
+{
+    if (slot < 0)
+        return DATA_SEND_INVALID_ARG;
+
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    add_string(root, "type", "port_register");
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(current_time_ms()));
+    add_string(root, "gatewayId", DEFAULT_GATEWAY_ID);
+    add_string(root, "portId", port_id_from_slot(slot));
+    add_string(root, "portName", port_name_from_slot(slot));
+    json_object_object_add(root, "slot", json_object_new_int(slot));
+    add_string(root, "devicePath", device_path);
+    json_object_object_add(root, "baud", json_object_new_int(baud));
+    add_string(root, "status", status && status[0] ? status : "connected");
+
+    int ret = publish_json_to_mqtt(root, "port_register");
+    json_object_put(root);
+    return ret;
 }
 
 int data_publish_device_register(uint32_t seq,
