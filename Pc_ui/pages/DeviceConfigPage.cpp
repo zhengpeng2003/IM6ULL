@@ -19,8 +19,6 @@
 
 namespace {
 
-constexpr qint64 kOfflineTimeoutMs = 30000;
-
 QString masterKey(const QString &gatewayId, const QString &portId)
 {
     return gatewayId + QStringLiteral("/") + portId;
@@ -148,14 +146,13 @@ void DeviceConfigPage::refreshTables()
         m_masterTable->setItem(row, 5, readonlyItem(QString::number(m.slaveCount)));
         m_masterTable->setItem(row, 6, readonlyItem(displayTime(m.lastUpdateTime)));
         addStatusItem(m_masterTable, row, 7, m.online);
-        m_masterTable->setItem(row, 8, readonlyItem(QStringLiteral("接收数据")));
+        m_masterTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
         addDeleteButton(m_masterTable, row, true, m.gatewayId, m.portId);
     }
 
     m_slaveTable->setRowCount(devices.size());
     for (int row = 0; row < devices.size(); ++row) {
         const DeviceNode &d = devices.at(row);
-        const bool online = isOnline(d.lastUpdateTime);
         const QString portName = defaultPortName(d);
 
         m_slaveTable->setItem(row, 0, readonlyItem(portName));
@@ -165,8 +162,8 @@ void DeviceConfigPage::refreshTables()
         m_slaveTable->setItem(row, 4, readonlyItem(d.areaName));
         m_slaveTable->setItem(row, 5, readonlyItem(d.gatewayName.isEmpty() ? d.gatewayId : d.gatewayName));
         m_slaveTable->setItem(row, 6, readonlyItem(displayTime(d.lastUpdateTime)));
-        addStatusItem(m_slaveTable, row, 7, online);
-        m_slaveTable->setItem(row, 8, readonlyItem(QStringLiteral("接收数据")));
+        addStatusItem(m_slaveTable, row, 7, d.online);
+        m_slaveTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
         addDeleteButton(m_slaveTable, row, false, d.gatewayId, d.port, d.deviceId);
     }
 }
@@ -196,23 +193,13 @@ QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows(const QList
         if (row.areaName.isEmpty()) row.areaName = d.areaName;
         if (row.portName.isEmpty()) row.portName = defaultPortName(d);
         if (d.lastUpdateTime > row.lastUpdateTime) row.lastUpdateTime = d.lastUpdateTime;
-        row.online = row.online || isOnline(d.lastUpdateTime);
+        row.online = row.online || d.online;
         ++row.slaveCount;
 
         rows.insert(key, row);
     }
 
     return rows.values();
-}
-
-bool DeviceConfigPage::isOnline(qint64 lastUpdateTime) const
-{
-    if (lastUpdateTime <= 0) {
-        return false;
-    }
-
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    return now - lastUpdateTime <= kOfflineTimeoutMs;
 }
 
 QString DeviceConfigPage::statusText(bool online) const

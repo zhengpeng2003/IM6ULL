@@ -19,6 +19,7 @@ add_executable(Pc_data
     ipc/IpcServer.hpp
 
     model/DeviceData.hpp
+    model/DeviceRecord.hpp
     model/ModelConverter.cpp
     model/ModelConverter.hpp
     model/PointConfig.hpp

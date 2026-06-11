@@ -26,6 +26,7 @@ public:
 
 public slots:
     void onLatestPointsMessage(const QJsonObject &obj);
+    void onDevicesSnapshotMessage(const QJsonObject &obj);
 
 signals:
     void realtimeDataUpdated();
@@ -33,6 +34,7 @@ signals:
 
 private:
     QList<RealtimeDeviceData> parseLatestPoints(const QJsonObject &obj) const;
+    QList<DeviceNode> parseDevicesSnapshot(const QJsonObject &obj) const;
     TelemetryPointData parseTelemetryPoint(const QJsonObject &obj) const;
     QHash<QString, QList<TelemetryPointData>> groupPointsByDevice(const QJsonObject &obj) const;
     RealtimeDeviceData buildRealtimeDeviceData(const QList<TelemetryPointData> &points) const;

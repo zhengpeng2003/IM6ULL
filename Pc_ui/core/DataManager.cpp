@@ -118,6 +118,10 @@ void DataManager::refreshOfflineStates(qint64 timeoutMs)
     bool changed = false;
 
     for (const DeviceNode &device : devices) {
+        if (!device.expectTelemetry) {
+            continue;
+        }
+
         const bool online = device.lastUpdateTime > 0 && now - device.lastUpdateTime <= timeoutMs;
         if (device.online == online) {
             continue;
@@ -213,6 +217,42 @@ void DataManager::onLatestPointsMessage(const QJsonObject &obj)
     emit realtimeDataUpdated();
 }
 
+void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
+{
+    const QList<DeviceNode> devices = parseDevicesSnapshot(obj);
+    if (m_deviceManager) {
+        m_deviceManager->setDevices(devices);
+    }
+
+    {
+        QMutexLocker locker(&m_mutex);
+        for (const DeviceNode &node : devices) {
+            RealtimeDeviceData data = m_realtimeMap.value(node.key());
+            data.node = node;
+            if (node.status == QStringLiteral("offline")) {
+                data.statusText = QStringLiteral("设备离线");
+                data.statusLevel = QStringLiteral("offline");
+            } else if (node.status == QStringLiteral("online")) {
+                data.statusText = QStringLiteral("正常");
+                data.statusLevel = QStringLiteral("normal");
+            } else if (node.status == QStringLiteral("error")) {
+                data.statusText = node.statusReason.isEmpty()
+                    ? QStringLiteral("设备异常")
+                    : node.statusReason;
+                data.statusLevel = QStringLiteral("error");
+            } else {
+                data.statusText = QStringLiteral("未知");
+                data.statusLevel = QStringLiteral("unknown");
+            }
+            data.timestamp = node.lastUpdateTime;
+            m_realtimeMap.insert(node.key(), data);
+        }
+    }
+
+    emit deviceTreeChanged();
+    emit realtimeDataUpdated();
+}
+
 QList<RealtimeDeviceData> DataManager::parseLatestPoints(const QJsonObject &obj) const
 {
     QList<RealtimeDeviceData> devices;
@@ -223,6 +263,48 @@ QList<RealtimeDeviceData> DataManager::parseLatestPoints(const QJsonObject &obj)
         if (!data.node.factoryId.isEmpty()) {
             devices.append(data);
         }
+    }
+
+    return devices;
+}
+
+QList<DeviceNode> DataManager::parseDevicesSnapshot(const QJsonObject &obj) const
+{
+    QList<DeviceNode> devices;
+    const QJsonArray rows = obj.value(QStringLiteral("devices")).toArray();
+
+    for (const QJsonValue &value : rows) {
+        if (!value.isObject()) {
+            continue;
+        }
+
+        const QJsonObject row = value.toObject();
+        DeviceNode node;
+        node.factoryId = row.value(QStringLiteral("factoryId")).toString();
+        node.factoryName = row.value(QStringLiteral("factoryName")).toString();
+        node.areaId = row.value(QStringLiteral("areaId")).toString();
+        node.areaName = row.value(QStringLiteral("areaName")).toString();
+        node.gatewayId = row.value(QStringLiteral("gatewayId")).toString();
+        node.gatewayName = row.value(QStringLiteral("gatewayName")).toString();
+        node.port = row.value(QStringLiteral("portId")).toString();
+        node.masterSlot = masterSlotFromPortId(node.port);
+        node.masterName = row.value(QStringLiteral("portName")).toString();
+        node.deviceId = row.value(QStringLiteral("deviceId")).toInt();
+        node.slaveAddr = node.deviceId;
+        node.deviceName = row.value(QStringLiteral("deviceName")).toString();
+        node.deviceType = normalizeDeviceType(row.value(QStringLiteral("deviceType")).toString());
+        node.expectTelemetry = row.value(QStringLiteral("expectTelemetry")).toBool(true);
+        node.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
+        node.statusReason = row.value(QStringLiteral("statusReason")).toString();
+        node.online = node.status == QStringLiteral("online");
+        node.lastUpdateTime = row.value(QStringLiteral("lastSeenMs")).toVariant().toLongLong();
+
+        if (node.factoryId.isEmpty() || node.areaId.isEmpty() || node.gatewayId.isEmpty() ||
+            node.port.isEmpty() || node.deviceId <= 0) {
+            continue;
+        }
+
+        devices.append(node);
     }
 
     return devices;
@@ -301,7 +383,10 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
     data.node.deviceId = first.deviceId;
     data.node.deviceName = first.deviceName;
     data.node.deviceType = first.deviceType;
+    data.node.expectTelemetry = data.node.deviceType != QStringLiteral("relay") &&
+                                data.node.deviceType != QStringLiteral("led");
     data.node.online = true;
+    data.node.status = QStringLiteral("online");
     data.node.lastUpdateTime = first.timestampMs;
     data.timestamp = first.timestampMs;
     data.valid = true;

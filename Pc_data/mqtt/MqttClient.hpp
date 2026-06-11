@@ -25,6 +25,7 @@ public:
 
     void disconnect();
 
+    bool publish(const std::string& topic, const std::string& payload, int qos = 1);
     void setMessageCallback(MessageCallback callback);
     std::string status() const;
 

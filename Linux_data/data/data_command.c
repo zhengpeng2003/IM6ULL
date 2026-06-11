@@ -185,6 +185,16 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
                   ret == 0,
                   ret == 0 ? "" : reason,
                   ret == 0 ? "device added" : data_ack_message_from_reason(reason));
+    if (ret == 0) {
+        int publish_ret = data_publish_device_register(seq,
+                                                       slot,
+                                                       slave_id,
+                                                       device_type,
+                                                       poll_interval_ms);
+        if (publish_ret != DATA_SEND_OK) {
+            printf("device_register publish failed, code=%d\n", publish_ret);
+        }
+    }
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 

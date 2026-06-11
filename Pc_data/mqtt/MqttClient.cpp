@@ -93,6 +93,31 @@ void MqttClient::disconnect()
     std::cout << "MQTT disconnected." << std::endl;
 }
 
+bool MqttClient::publish(const std::string& topic, const std::string& payload, int qos)
+{
+    if (!m_client || topic.empty()) {
+        return false;
+    }
+
+    MQTTAsync_message message = MQTTAsync_message_initializer;
+    message.payload = const_cast<char*>(payload.c_str());
+    message.payloadlen = static_cast<int>(payload.size());
+    message.qos = qos;
+    message.retained = 0;
+
+    int rc = MQTTAsync_sendMessage(m_client, topic.c_str(), &message, nullptr);
+    if (rc != MQTTASYNC_SUCCESS) {
+        std::cerr << "MQTT publish failed, topic="
+                  << topic
+                  << ", rc="
+                  << rc
+                  << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
 std::string MqttClient::status() const
 {
     std::lock_guard<std::mutex> lock(m_statusMutex);

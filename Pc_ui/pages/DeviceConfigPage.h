@@ -39,7 +39,6 @@ private:
     };
 
     QList<MasterRow> buildMasterRows(const QList<DeviceNode> &devices) const;
-    bool isOnline(qint64 lastUpdateTime) const;
     QString statusText(bool online) const;
     QString displayTime(qint64 timestampMs) const;
     void setupTable(QTableWidget *table) const;

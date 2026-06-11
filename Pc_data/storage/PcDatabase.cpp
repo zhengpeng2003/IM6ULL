@@ -8,6 +8,8 @@
 #include "DatabaseSchema.hpp"
 #include "sqlite3.h"
 
+static void bindText(sqlite3_stmt* stmt, int index, const std::string& value);
+
 PcDatabase::PcDatabase()
 {
 }
@@ -99,6 +101,11 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
             ok = false;
             break;
         }
+
+        if (!updateDeviceOnlineFromTelemetry(point)) {
+            ok = false;
+            break;
+        }
     }
 
     if (ok) {
@@ -156,6 +163,279 @@ bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
               << std::endl;
 
     return ok;
+}
+
+bool PcDatabase::upsertDevice(const DeviceRecord& device)
+{
+    if (!m_db || device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0 ||
+        device.deviceType.empty()) {
+        return false;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = true;
+
+    static const char* sql =
+        "INSERT INTO device ("
+        "factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,"
+        "port_id,port_name,device_id,device_name,device_type,poll_interval_ms,"
+        "expect_telemetry,enabled,create_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id, port_id, device_id) DO UPDATE SET "
+        "factory_id=excluded.factory_id,"
+        "factory_name=excluded.factory_name,"
+        "area_id=excluded.area_id,"
+        "area_name=excluded.area_name,"
+        "gateway_name=excluded.gateway_name,"
+        "port_name=excluded.port_name,"
+        "device_name=excluded.device_name,"
+        "device_type=excluded.device_type,"
+        "poll_interval_ms=excluded.poll_interval_ms,"
+        "expect_telemetry=excluded.expect_telemetry,"
+        "enabled=excluded.enabled,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare upsert device failed: " << sqlite3_errmsg(m_db) << std::endl;
+        execSql("ROLLBACK;");
+        return false;
+    }
+
+    const std::int64_t nowMs = device.updateTimeMs > 0 ? device.updateTimeMs : device.createTimeMs;
+
+    bindText(stmt, 1, device.factoryId);
+    bindText(stmt, 2, device.factoryName);
+    bindText(stmt, 3, device.areaId);
+    bindText(stmt, 4, device.areaName);
+    bindText(stmt, 5, device.gatewayId);
+    bindText(stmt, 6, device.gatewayName);
+    bindText(stmt, 7, device.portId);
+    bindText(stmt, 8, device.portName);
+    sqlite3_bind_int(stmt, 9, device.deviceId);
+    bindText(stmt, 10, device.deviceName);
+    bindText(stmt, 11, device.deviceType);
+    sqlite3_bind_int(stmt, 12, device.pollIntervalMs);
+    sqlite3_bind_int(stmt, 13, device.expectTelemetry ? 1 : 0);
+    sqlite3_bind_int(stmt, 14, device.enabled ? 1 : 0);
+    sqlite3_bind_int64(stmt, 15, device.createTimeMs > 0 ? device.createTimeMs : nowMs);
+    sqlite3_bind_int64(stmt, 16, nowMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Upsert device failed: " << sqlite3_errmsg(m_db) << std::endl;
+        ok = false;
+    }
+
+    if (ok) {
+        ok = upsertDeviceStatus(device);
+    }
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    return ok;
+}
+
+bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
+{
+    if (!m_db || point.gatewayId.empty() || point.portId.empty() || point.deviceId <= 0) {
+        return false;
+    }
+
+    DeviceRecord device;
+    device.factoryId = point.factoryId;
+    device.factoryName = point.factoryName;
+    device.areaId = point.areaId;
+    device.areaName = point.areaName;
+    device.gatewayId = point.gatewayId;
+    device.gatewayName = point.gatewayName;
+    device.portId = point.portId;
+    device.portName = point.portName;
+    device.deviceId = point.deviceId;
+    device.deviceName = point.deviceName;
+    device.deviceType = point.deviceType.empty() ? "unknown" : point.deviceType;
+    device.pollIntervalMs = 1000;
+    device.expectTelemetry = device.deviceType != "relay";
+    device.enabled = true;
+    device.status = point.valid ? "online" : "error";
+    device.lastSeenMs = point.timestampMs;
+    device.statusReason = point.valid ? "" : point.errorMessage;
+    device.createTimeMs = point.timestampMs;
+    device.updateTimeMs = point.timestampMs;
+
+    static const char* sql =
+        "INSERT INTO device ("
+        "factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,"
+        "port_id,port_name,device_id,device_name,device_type,poll_interval_ms,"
+        "expect_telemetry,enabled,create_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id, port_id, device_id) DO UPDATE SET "
+        "factory_id=excluded.factory_id,"
+        "factory_name=excluded.factory_name,"
+        "area_id=excluded.area_id,"
+        "area_name=excluded.area_name,"
+        "gateway_name=excluded.gateway_name,"
+        "port_name=excluded.port_name,"
+        "device_name=excluded.device_name,"
+        "device_type=excluded.device_type,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare telemetry device upsert failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, device.factoryId);
+    bindText(stmt, 2, device.factoryName);
+    bindText(stmt, 3, device.areaId);
+    bindText(stmt, 4, device.areaName);
+    bindText(stmt, 5, device.gatewayId);
+    bindText(stmt, 6, device.gatewayName);
+    bindText(stmt, 7, device.portId);
+    bindText(stmt, 8, device.portName);
+    sqlite3_bind_int(stmt, 9, device.deviceId);
+    bindText(stmt, 10, device.deviceName);
+    bindText(stmt, 11, device.deviceType);
+    sqlite3_bind_int(stmt, 12, device.pollIntervalMs);
+    sqlite3_bind_int(stmt, 13, device.expectTelemetry ? 1 : 0);
+    sqlite3_bind_int(stmt, 14, 1);
+    sqlite3_bind_int64(stmt, 15, device.createTimeMs);
+    sqlite3_bind_int64(stmt, 16, device.updateTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Telemetry device upsert failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return upsertDeviceStatus(device);
+}
+
+int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
+{
+    if (!m_db || nowMs <= 0 || timeoutMs <= 0) {
+        return 0;
+    }
+
+    static const char* sql =
+        "UPDATE device_status "
+        "SET status='offline', last_offline_ms=?, status_reason='telemetry_timeout', update_time_ms=? "
+        "WHERE status != 'offline' AND EXISTS ("
+        "  SELECT 1 FROM device d "
+        "  WHERE d.gateway_id=device_status.gateway_id "
+        "    AND d.port_id=device_status.port_id "
+        "    AND d.device_id=device_status.device_id "
+        "    AND d.enabled=1 "
+        "    AND d.expect_telemetry=1"
+        ") AND last_seen_ms > 0 AND (? - last_seen_ms) > ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare mark offline failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return 0;
+    }
+
+    sqlite3_bind_int64(stmt, 1, nowMs);
+    sqlite3_bind_int64(stmt, 2, nowMs);
+    sqlite3_bind_int64(stmt, 3, nowMs);
+    sqlite3_bind_int64(stmt, 4, timeoutMs);
+
+    rc = sqlite3_step(stmt);
+    const int changed = sqlite3_changes(m_db);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Mark offline failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return 0;
+    }
+
+    return changed;
+}
+
+std::vector<DeviceRecord> PcDatabase::queryDevices()
+{
+    std::vector<DeviceRecord> devices;
+    if (!m_db) {
+        return devices;
+    }
+
+    static const char* sql =
+        "SELECT d.factory_id,d.factory_name,d.area_id,d.area_name,"
+        "d.gateway_id,d.gateway_name,d.port_id,d.port_name,d.device_id,"
+        "d.device_name,d.device_type,d.poll_interval_ms,d.expect_telemetry,"
+        "d.enabled,d.create_time_ms,d.update_time_ms,"
+        "COALESCE(s.status,'unknown'),COALESCE(s.last_seen_ms,0),"
+        "COALESCE(s.last_offline_ms,0),COALESCE(s.status_reason,''),"
+        "COALESCE(s.update_time_ms,0) "
+        "FROM device d "
+        "LEFT JOIN device_status s "
+        "ON s.gateway_id=d.gateway_id AND s.port_id=d.port_id AND s.device_id=d.device_id "
+        "WHERE d.enabled=1 "
+        "ORDER BY d.gateway_id,d.port_id,d.device_id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query devices failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return devices;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        DeviceRecord device;
+        const auto textColumn = [stmt](int column) -> std::string {
+            const unsigned char* text = sqlite3_column_text(stmt, column);
+            return text ? reinterpret_cast<const char*>(text) : "";
+        };
+
+        device.factoryId = textColumn(0);
+        device.factoryName = textColumn(1);
+        device.areaId = textColumn(2);
+        device.areaName = textColumn(3);
+        device.gatewayId = textColumn(4);
+        device.gatewayName = textColumn(5);
+        device.portId = textColumn(6);
+        device.portName = textColumn(7);
+        device.deviceId = sqlite3_column_int(stmt, 8);
+        device.deviceName = textColumn(9);
+        device.deviceType = textColumn(10);
+        device.pollIntervalMs = sqlite3_column_int(stmt, 11);
+        device.expectTelemetry = sqlite3_column_int(stmt, 12) != 0;
+        device.enabled = sqlite3_column_int(stmt, 13) != 0;
+        device.createTimeMs = sqlite3_column_int64(stmt, 14);
+        device.updateTimeMs = sqlite3_column_int64(stmt, 15);
+        device.status = textColumn(16);
+        device.lastSeenMs = sqlite3_column_int64(stmt, 17);
+        device.lastOfflineMs = sqlite3_column_int64(stmt, 18);
+        device.statusReason = textColumn(19);
+        const std::int64_t statusUpdate = sqlite3_column_int64(stmt, 20);
+        if (statusUpdate > device.updateTimeMs) {
+            device.updateTimeMs = statusUpdate;
+        }
+
+        devices.push_back(device);
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Query devices failed: " << sqlite3_errmsg(m_db) << std::endl;
+        devices.clear();
+    }
+
+    sqlite3_finalize(stmt);
+    return devices;
 }
 
 std::vector<TelemetryPoint> PcDatabase::queryLatestPoints()
@@ -329,7 +609,9 @@ bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
         return false;
     }
 
-    bool ok = deleteRowsByDevice("latest_point", gatewayId, portId, deviceId) &&
+    bool ok = deleteRowsByDevice("device_status", gatewayId, portId, deviceId) &&
+              deleteRowsByDevice("device", gatewayId, portId, deviceId) &&
+              deleteRowsByDevice("latest_point", gatewayId, portId, deviceId) &&
               deleteRowsByDevice("point_config", gatewayId, portId, deviceId) &&
               deleteRowsByDevice("telemetry_history", gatewayId, portId, deviceId) &&
               deleteRowsByDevice("alarm_event", gatewayId, portId, deviceId);
@@ -361,7 +643,9 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
         return false;
     }
 
-    bool ok = deleteRowsByMaster("latest_point", gatewayId, portId) &&
+    bool ok = deleteRowsByMaster("device_status", gatewayId, portId) &&
+              deleteRowsByMaster("device", gatewayId, portId) &&
+              deleteRowsByMaster("latest_point", gatewayId, portId) &&
               deleteRowsByMaster("point_config", gatewayId, portId) &&
               deleteRowsByMaster("telemetry_history", gatewayId, portId) &&
               deleteRowsByMaster("alarm_event", gatewayId, portId);
@@ -599,6 +883,53 @@ bool PcDatabase::savePointConfig(const PointConfig& config)
 
     if (rc != SQLITE_DONE) {
         std::cerr << "Insert point_config failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool PcDatabase::upsertDeviceStatus(const DeviceRecord& device)
+{
+    if (!m_db || device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT INTO device_status ("
+        "gateway_id,port_id,device_id,status,last_seen_ms,last_offline_ms,"
+        "status_reason,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id, port_id, device_id) DO UPDATE SET "
+        "status=excluded.status,"
+        "last_seen_ms=CASE "
+        "  WHEN excluded.last_seen_ms > device_status.last_seen_ms THEN excluded.last_seen_ms "
+        "  ELSE device_status.last_seen_ms END,"
+        "last_offline_ms=excluded.last_offline_ms,"
+        "status_reason=excluded.status_reason,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare upsert device_status failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, device.gatewayId);
+    bindText(stmt, 2, device.portId);
+    sqlite3_bind_int(stmt, 3, device.deviceId);
+    bindText(stmt, 4, device.status.empty() ? std::string("unknown") : device.status);
+    sqlite3_bind_int64(stmt, 5, device.lastSeenMs);
+    sqlite3_bind_int64(stmt, 6, device.lastOfflineMs);
+    bindText(stmt, 7, device.statusReason);
+    sqlite3_bind_int64(stmt, 8, device.updateTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Upsert device_status failed: " << sqlite3_errmsg(m_db) << std::endl;
         return false;
     }
 

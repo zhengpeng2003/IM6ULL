@@ -48,6 +48,7 @@ void MainWindow::initIpc()
         if (m_systemSettingPage) {
             m_systemSettingPage->setIpcConnected(true);
         }
+        requestDevices();
         requestLatestPoints();
     });
 
@@ -80,6 +81,7 @@ void MainWindow::initIpc()
             return;
         }
 
+        requestDevices();
         requestLatestPoints();
 
     });
@@ -145,6 +147,13 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "devices_snapshot") {
+        if (m_data) {
+            m_data->onDevicesSnapshotMessage(root);
+        }
+        return;
+    }
+
     if (type == "history_points") {
         if (m_trendPage) {
             m_trendPage->onHistoryPointsMessage(root);
@@ -167,6 +176,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         m_pendingDeleteGatewayId.clear();
         m_pendingDeletePortId.clear();
         m_pendingDeleteDeviceId = 0;
+        requestDevices();
         requestLatestPoints();
         return;
     }
@@ -201,6 +211,15 @@ void MainWindow::requestLatestPoints()
     }
 
     m_ipcClient->sendMessage(QString(R"({"type":"get_latest_points"})"));
+}
+
+void MainWindow::requestDevices()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+
+    m_ipcClient->sendMessage(QString(R"({"type":"get_devices"})"));
 }
 
 void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit)

@@ -11,6 +11,7 @@
 #include <QHeaderView>
 #include <QTimer>
 #include <QLabel>
+#include <QHash>
 #include <QSet>
 
 DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmManager *alarm, QWidget *parent)
@@ -70,13 +71,22 @@ void DashboardPage::refreshView()
 {
     const auto devices = m_device->allDevices();
     QSet<QString> gateways, masters;
+    QSet<QString> onlineMasters;
+    QHash<QString, int> masterDeviceCounts;
+    int onlineSlaveCount = 0;
     for (const auto &d : devices) {
-        if (d.online) gateways.insert(d.gatewayId);
-        masters.insert(d.gatewayId + "/" + QString::number(d.masterSlot));
+        const QString masterKey = d.gatewayId + "/" + QString::number(d.masterSlot);
+        if (d.online) {
+            gateways.insert(d.gatewayId);
+            onlineMasters.insert(masterKey);
+            ++onlineSlaveCount;
+        }
+        masters.insert(masterKey);
+        masterDeviceCounts[masterKey] += 1;
     }
     m_gatewayCard->setValue(QString::number(gateways.size()));
-    m_masterCard->setValue(QString::number(masters.size()));
-    m_slaveCard->setValue(QString::number(devices.size()));
+    m_masterCard->setValue(QString::number(onlineMasters.size()));
+    m_slaveCard->setValue(QString::number(onlineSlaveCount));
     m_alarmCard->setValue(QString::number(m_alarm->activeAlarmCount()));
 
     m_masterTable->setRowCount(masters.size());
@@ -84,8 +94,8 @@ void DashboardPage::refreshView()
     for (const auto &m : masters) {
         m_masterTable->setItem(row, 0, new QTableWidgetItem(m.section('/', 0, 0)));
         m_masterTable->setItem(row, 1, new QTableWidgetItem("RS485-" + QString::number(m.section('/', 1, 1).toInt() + 1)));
-        m_masterTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("在线")));
-        m_masterTable->setItem(row, 3, new QTableWidgetItem(QString::number(devices.size())));
+        m_masterTable->setItem(row, 2, new QTableWidgetItem(onlineMasters.contains(m) ? QStringLiteral("在线") : QStringLiteral("离线")));
+        m_masterTable->setItem(row, 3, new QTableWidgetItem(QString::number(masterDeviceCounts.value(m))));
         ++row;
     }
 

@@ -20,6 +20,9 @@ struct DeviceNode
     int deviceId = 0;
     QString deviceName;
     QString deviceType;
+    bool expectTelemetry = true;
+    QString status;
+    QString statusReason;
 
     bool online = false;
     qint64 lastUpdateTime = 0;

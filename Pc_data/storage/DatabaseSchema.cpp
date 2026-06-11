@@ -4,6 +4,51 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 {
     return {
         R"SQL(
+        CREATE TABLE IF NOT EXISTS device (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            factory_id TEXT,
+            factory_name TEXT,
+            area_id TEXT,
+            area_name TEXT,
+            gateway_id TEXT NOT NULL,
+            gateway_name TEXT,
+            port_id TEXT NOT NULL,
+            port_name TEXT,
+
+            device_id INTEGER NOT NULL,
+            device_name TEXT,
+            device_type TEXT NOT NULL,
+            poll_interval_ms INTEGER DEFAULT 1000,
+            expect_telemetry INTEGER DEFAULT 1,
+            enabled INTEGER DEFAULT 1,
+
+            create_time_ms INTEGER,
+            update_time_ms INTEGER,
+
+            UNIQUE(gateway_id, port_id, device_id)
+        );
+        )SQL",
+
+        R"SQL(
+        CREATE TABLE IF NOT EXISTS device_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            gateway_id TEXT NOT NULL,
+            port_id TEXT NOT NULL,
+            device_id INTEGER NOT NULL,
+
+            status TEXT NOT NULL DEFAULT 'unknown',
+            last_seen_ms INTEGER DEFAULT 0,
+            last_offline_ms INTEGER DEFAULT 0,
+            status_reason TEXT,
+            update_time_ms INTEGER,
+
+            UNIQUE(gateway_id, port_id, device_id)
+        );
+        )SQL",
+
+        R"SQL(
         CREATE TABLE IF NOT EXISTS point_config (
             point_id TEXT PRIMARY KEY,
 
@@ -144,6 +189,16 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 std::vector<std::string> DatabaseSchema::indexSqlList()
 {
     return {
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_device_location
+        ON device(gateway_id, port_id, device_id);
+        )SQL",
+
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_device_status_state
+        ON device_status(status);
+        )SQL",
+
         R"SQL(
         CREATE INDEX IF NOT EXISTS idx_point_config_device
         ON point_config(factory_id, area_id, gateway_id, port_id, device_id);

@@ -37,6 +37,7 @@ private:
     void initIpc();
     void handleIpcMessage(const QByteArray &frame);
     void requestLatestPoints();
+    void requestDevices();
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);

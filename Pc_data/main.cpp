@@ -15,6 +15,7 @@
 
 #include "ipc/IpcServer.hpp"
 #include "mqtt/MqttClient.hpp"
+#include "model/DeviceRecord.hpp"
 #include "model/ModelConverter.hpp"
 #include "model/PointConfigPackParser.hpp"
 #include "model/TelemetryPackParser.hpp"
@@ -22,6 +23,8 @@
 #include "storage/PcDatabase.hpp"
 
 using namespace std;
+
+static const char* kDeviceRegisterAckTopic = "imx6ull/device/data";
 
 struct MqttConfig
 {
@@ -154,6 +157,23 @@ static int getJsonInt(const rapidjson::Value& obj, const char* key, int defaultV
     return defaultValue;
 }
 
+static bool getJsonBool(const rapidjson::Value& obj, const char* key, bool defaultValue)
+{
+    if (!obj.IsObject() || !obj.HasMember(key)) {
+        return defaultValue;
+    }
+
+    const rapidjson::Value& value = obj[key];
+    if (value.IsBool()) {
+        return value.GetBool();
+    }
+    if (value.IsInt()) {
+        return value.GetInt() != 0;
+    }
+
+    return defaultValue;
+}
+
 static std::string getJsonString(const rapidjson::Value& obj, const char* key)
 {
     if (!obj.IsObject() || !obj.HasMember(key) || !obj[key].IsString()) {
@@ -253,6 +273,129 @@ static std::string buildLatestPointsJson(const std::vector<TelemetryPoint>& poin
     }
 
     oss << "]";
+    oss << "}";
+
+    return oss.str();
+}
+
+static std::string buildDevicesSnapshotJson(const std::vector<DeviceRecord>& devices)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"devices_snapshot\",";
+    oss << "\"count\":" << devices.size() << ",";
+    oss << "\"devices\":[";
+
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const DeviceRecord& d = devices[i];
+        if (i > 0) {
+            oss << ",";
+        }
+
+        oss << "{";
+        oss << "\"factoryId\":\"" << jsonEscape(d.factoryId) << "\",";
+        oss << "\"factoryName\":\"" << jsonEscape(d.factoryName) << "\",";
+        oss << "\"areaId\":\"" << jsonEscape(d.areaId) << "\",";
+        oss << "\"areaName\":\"" << jsonEscape(d.areaName) << "\",";
+        oss << "\"gatewayId\":\"" << jsonEscape(d.gatewayId) << "\",";
+        oss << "\"gatewayName\":\"" << jsonEscape(d.gatewayName) << "\",";
+        oss << "\"portId\":\"" << jsonEscape(d.portId) << "\",";
+        oss << "\"portName\":\"" << jsonEscape(d.portName) << "\",";
+        oss << "\"deviceId\":" << d.deviceId << ",";
+        oss << "\"deviceName\":\"" << jsonEscape(d.deviceName) << "\",";
+        oss << "\"deviceType\":\"" << jsonEscape(d.deviceType) << "\",";
+        oss << "\"pollIntervalMs\":" << d.pollIntervalMs << ",";
+        oss << "\"expectTelemetry\":" << (d.expectTelemetry ? "true" : "false") << ",";
+        oss << "\"enabled\":" << (d.enabled ? "true" : "false") << ",";
+        oss << "\"status\":\"" << jsonEscape(d.status) << "\",";
+        oss << "\"lastSeenMs\":" << d.lastSeenMs << ",";
+        oss << "\"lastOfflineMs\":" << d.lastOfflineMs << ",";
+        oss << "\"statusReason\":\"" << jsonEscape(d.statusReason) << "\",";
+        oss << "\"createTimeMs\":" << d.createTimeMs << ",";
+        oss << "\"updateTimeMs\":" << d.updateTimeMs;
+        oss << "}";
+    }
+
+    oss << "]";
+    oss << "}";
+
+    return oss.str();
+}
+
+static bool parseDeviceRegister(const std::string& payload,
+                                DeviceRecord& device,
+                                std::uint32_t& sequence,
+                                std::string& reason)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "device_register") {
+        return false;
+    }
+
+    sequence = static_cast<std::uint32_t>(getJsonInt(root, "sequence", getJsonInt(root, "seq", 0)));
+    const std::int64_t timestampMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject()
+        ? root["site"]
+        : root;
+
+    device.factoryId = getJsonString(site, "factoryId");
+    device.factoryName = getJsonString(site, "factoryName");
+    device.areaId = getJsonString(site, "areaId");
+    device.areaName = getJsonString(site, "areaName");
+    device.gatewayId = getJsonString(site, "gatewayId");
+    device.gatewayName = getJsonString(site, "gatewayName");
+    device.portId = getJsonString(site, "portId");
+    device.portName = getJsonString(site, "portName");
+    device.deviceId = getJsonInt(root, "deviceId", getJsonInt(root, "slave_id", 0));
+    device.deviceName = getJsonString(root, "deviceName");
+    device.deviceType = getJsonString(root, "deviceType");
+    device.pollIntervalMs = getJsonInt(root, "pollIntervalMs", 1000);
+    device.expectTelemetry = getJsonBool(root, "expectTelemetry", device.deviceType != "relay");
+    device.enabled = true;
+    device.status = "online";
+    device.lastSeenMs = timestampMs;
+    device.statusReason.clear();
+    device.createTimeMs = timestampMs;
+    device.updateTimeMs = timestampMs;
+
+    if (device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0 ||
+        device.deviceType.empty()) {
+        reason = "invalid_device_register";
+        return true;
+    }
+
+    if (device.deviceName.empty()) {
+        device.deviceName = "Device " + std::to_string(device.deviceId);
+    }
+
+    reason.clear();
+    return true;
+}
+
+static std::string buildDeviceRegisterAckJson(std::uint32_t sequence,
+                                              const DeviceRecord& device,
+                                              bool ok,
+                                              const std::string& reason)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"device_register_ack\",";
+    oss << "\"sequence\":" << sequence << ",";
+    oss << "\"seq\":" << sequence << ",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"gatewayId\":\"" << jsonEscape(device.gatewayId) << "\",";
+    oss << "\"portId\":\"" << jsonEscape(device.portId) << "\",";
+    oss << "\"deviceId\":" << device.deviceId << ",";
+    oss << "\"timestampMs\":" << currentTimeMs();
     oss << "}";
 
     return oss.str();
@@ -564,6 +707,17 @@ static void sendLatestPoints(IpcServer& ipc, PcDataService& dataService, PcDatab
     cout << "send latest_points done" << endl;
 }
 
+static void sendDevicesSnapshot(IpcServer& ipc, PcDatabase& database)
+{
+    std::vector<DeviceRecord> devices;
+    if (database.isOpen()) {
+        devices = database.queryDevices();
+    }
+
+    ipc.sendMessage(buildDevicesSnapshotJson(devices));
+    cout << "send devices_snapshot done, count: " << devices.size() << endl;
+}
+
 int main()
 {
     try {
@@ -594,6 +748,49 @@ int main()
             cout << "[MQTT RX] payload: " << payload << endl;
 
             const std::string messageType = extractJsonStringValue(payload, "type");
+            if (messageType == "device_register") {
+                DeviceRecord device;
+                std::uint32_t sequence = 0;
+                std::string reason;
+
+                if (!parseDeviceRegister(payload, device, sequence, reason)) {
+                    cout << "[MQTT RX] device_register parse failed" << endl;
+                    return;
+                }
+
+                bool ok = reason.empty();
+                if (ok) {
+                    if (database.isOpen()) {
+                        ok = database.upsertDevice(device);
+                        if (!ok) {
+                            reason = "device_db_save_failed";
+                        }
+                    } else {
+                        ok = false;
+                        reason = "database_not_open";
+                    }
+                }
+
+                const std::string ack = buildDeviceRegisterAckJson(sequence, device, ok, reason);
+                const bool publishOk = mqtt.publish(kDeviceRegisterAckTopic, ack);
+                cout << "[MQTT RX] device_register "
+                     << (ok ? "ok" : "failed")
+                     << ", ack publish: "
+                     << (publishOk ? "ok" : "failed")
+                     << ", gateway: "
+                     << device.gatewayId
+                     << ", port: "
+                     << device.portId
+                     << ", device: "
+                     << device.deviceId
+                     << endl;
+
+                if (ipc.hasClient()) {
+                    sendDevicesSnapshot(ipc, database);
+                }
+                return;
+            }
+
             if (messageType == "threshold_config") {
                 std::vector<PointConfig> configs;
                 std::string errorMessage;
@@ -682,6 +879,7 @@ int main()
             cout << "send hello done" << endl;
 
             sendLatestPoints(ipc, dataService, database);
+            sendDevicesSnapshot(ipc, database);
         });
 
         ipc.setClientDisconnectedCallback([]() {
@@ -728,6 +926,7 @@ int main()
 
                 ipc.sendMessage(buildDeleteDataAckJson("delete_device_data", ok, reason));
                 sendLatestPoints(ipc, dataService, database);
+                sendDevicesSnapshot(ipc, database);
 
                 cout << "delete_device_data done, gateway: "
                      << gatewayId
@@ -757,6 +956,7 @@ int main()
 
                 ipc.sendMessage(buildDeleteDataAckJson("delete_master_data", ok, reason));
                 sendLatestPoints(ipc, dataService, database);
+                sendDevicesSnapshot(ipc, database);
 
                 cout << "delete_master_data done, gateway: "
                      << gatewayId
@@ -831,7 +1031,9 @@ int main()
              * 兼容你之前 Pc_ui 可能发送的 get_snapshot。
              * 后面建议统一改成 get_latest_points。
              */
-            if (msg.find("get_latest_points") != std::string::npos ||
+            if (msg.find("get_devices") != std::string::npos) {
+                sendDevicesSnapshot(ipc, database);
+            } else if (msg.find("get_latest_points") != std::string::npos ||
                 msg.find("get_snapshot") != std::string::npos) {
 
                 sendLatestPoints(ipc, dataService, database);
@@ -864,7 +1066,16 @@ int main()
             cout << "MQTT connectToBroker call failed" << endl;
         }
 
+        std::int64_t lastOfflineScanMs = 0;
         while (true) {
+            const std::int64_t nowMs = currentTimeMs();
+            if (database.isOpen() && nowMs - lastOfflineScanMs >= 1000) {
+                lastOfflineScanMs = nowMs;
+                const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
+                if (offlineChanged > 0 && ipc.hasClient()) {
+                    sendDevicesSnapshot(ipc, database);
+                }
+            }
             this_thread::sleep_for(chrono::seconds(1));
         }
 
