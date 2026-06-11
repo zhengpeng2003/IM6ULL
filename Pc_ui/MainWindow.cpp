@@ -150,6 +150,8 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 m_data->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
             } else if (m_pendingDeleteAction == "delete_device_data") {
                 m_data->removeDeviceData(m_pendingDeleteGatewayId, m_pendingDeletePortId, m_pendingDeleteDeviceId);
+            } else if (m_pendingDeleteAction == "clear_recovered_alarms" && m_alarm) {
+                m_alarm->clearRecoveredAlarms();
             }
         }
         m_pendingDeleteAction.clear();
@@ -235,6 +237,25 @@ void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &p
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 
+void MainWindow::sendClearRecoveredAlarms()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        qDebug() << "clear_recovered_alarms skipped: IPC is not connected.";
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("clear_recovered_alarms"));
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_pendingDeleteAction = QStringLiteral("clear_recovered_alarms");
+    m_pendingDeleteGatewayId.clear();
+    m_pendingDeletePortId.clear();
+    m_pendingDeleteDeviceId = 0;
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
 void MainWindow::markIpcDataOffline()
 {
     if (m_data) {
@@ -314,4 +335,7 @@ void MainWindow::initConnections()
 
     connect(m_deviceConfigPage, &DeviceConfigPage::deleteDeviceDataRequested,
             this, &MainWindow::sendDeleteDeviceData);
+
+    connect(m_alarmLogPage, &AlarmLogPage::clearRecoveredAlarmsRequested,
+            this, &MainWindow::sendClearRecoveredAlarms);
 }

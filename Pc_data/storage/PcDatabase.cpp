@@ -381,6 +381,39 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
     return ok;
 }
 
+bool PcDatabase::clearRecoveredAlarms()
+{
+    if (!m_db) {
+        return false;
+    }
+
+    static const char* sql =
+        "DELETE FROM alarm_event "
+        "WHERE status = 'recovered' OR status = '已恢复';";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare clear recovered alarms failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Clear recovered alarms failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    std::cout << "Clear recovered alarms ok" << std::endl;
+    return true;
+}
+
 void PcDatabase::close()
 {
     if (m_db) {

@@ -60,8 +60,7 @@ public:
                           int onlineSlaveCount,
                           int alarmCount,
                           const QString &mqttState);
-    void setMasterList(const QList<MasterStatusInfo> &masters,
-                       int preferredMasterSlot = -1);
+
     void setCurrentMaster(const QString &masterName, int slaveCount);
     void setSlaveList(const QList<SlaveDeviceInfo> &slaveList);
     int currentMasterSlotValue() const;
@@ -148,8 +147,7 @@ private:
     QLabel *summaryLabel = nullptr;
     QLabel *listTitleLabel = nullptr;
     QLabel *currentPortLabel = nullptr;
-    QComboBox *masterCombo = nullptr;
-    QLabel *slaveCountLabel = nullptr;
+
     QPushButton *addSlaveButton = nullptr;
     QLabel *alarmLabel = nullptr;
     QFrame *slaveListPanel = nullptr;

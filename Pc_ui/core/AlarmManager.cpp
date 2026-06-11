@@ -36,6 +36,7 @@ void AlarmManager::onAlarmMessage(const QJsonObject &obj)
     const bool existed = m_alarms.contains(a.alarmId);
     m_alarms.insert(a.alarmId, a);
     existed ? emit alarmUpdated(a) : emit alarmAdded(a);
+    emit alarmsChanged();
     emit activeAlarmCountChanged(activeAlarmCount());
 }
 
@@ -47,6 +48,7 @@ void AlarmManager::acknowledgeAlarm(const QString &alarmId)
     a.ackTime = QDateTime::currentSecsSinceEpoch();
     m_alarms.insert(alarmId, a);
     emit alarmUpdated(a);
+    emit alarmsChanged();
     emit activeAlarmCountChanged(activeAlarmCount());
 }
 
@@ -58,5 +60,24 @@ void AlarmManager::recoverAlarm(const QString &alarmId)
     a.recoverTime = QDateTime::currentSecsSinceEpoch();
     m_alarms.insert(alarmId, a);
     emit alarmUpdated(a);
+    emit alarmsChanged();
     emit activeAlarmCountChanged(activeAlarmCount());
+}
+
+void AlarmManager::clearRecoveredAlarms()
+{
+    bool changed = false;
+    for (auto it = m_alarms.begin(); it != m_alarms.end(); ) {
+        if (it.value().state == "recovered") {
+            it = m_alarms.erase(it);
+            changed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (changed) {
+        emit alarmsChanged();
+        emit activeAlarmCountChanged(activeAlarmCount());
+    }
 }

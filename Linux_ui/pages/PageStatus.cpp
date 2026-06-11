@@ -26,59 +26,16 @@ void PageStatus::setMasterSummary(int masterCount,
                                   const QString &mqttState)
 {
     Q_UNUSED(masterCount);
-    summaryLabel->setText(QString("MQTT：%1    在线从站：%2    告警：%3")
-                              .arg(mqttState)
-                              .arg(onlineSlaveCount)
-                              .arg(alarmCount));
+    //显示在顶部都可以看到这个直接删掉
+    // summaryLabel->setText(QString("MQTT：%1    在线从站：%2    告警：%3")
+    //                           .arg(mqttState)
+    //                           .arg(onlineSlaveCount)
+    //                           .arg(alarmCount));
 }
 
-void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters,
-                               int preferredMasterSlot)
-{
-    const int targetMasterSlot = preferredMasterSlot >= 0
-        ? preferredMasterSlot
-        : currentMasterSlot;
 
-    masterCombo->blockSignals(true);
-    masterCombo->clear();
 
-    for (const MasterStatusInfo &master : masters)
-        masterCombo->addItem(master.masterName, master.masterSlot);
 
-    int index = -1;
-    for (int i = 0; i < masterCombo->count(); ++i) {
-        if (masterCombo->itemData(i).toInt() == targetMasterSlot) {
-            index = i;
-            break;
-        }
-    }
-    if (index < 0 && masterCombo->count() > 0)
-        index = 0;
-    if (index >= 0)
-        masterCombo->setCurrentIndex(index);
-
-    masterCombo->blockSignals(false);
-
-    if (masterCombo->count() > 0) {
-        currentMasterSlot = masterCombo->currentData().toInt();
-        currentMasterName = masterCombo->currentText();
-    } else {
-        currentMasterSlot = -1;
-        currentMasterName.clear();
-    }
-
-    refreshMasterLabels();
-}
-
-void PageStatus::setCurrentMaster(const QString &masterName, int slaveCount)
-{
-    currentMasterName = masterName;
-    const int comboIndex = masterCombo->findText(masterName);
-    if (comboIndex >= 0)
-        masterCombo->setCurrentIndex(comboIndex);
-
-    slaveCountLabel->setText(QString("从站：%1").arg(slaveCount));
-}
 
 void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
 {
@@ -248,15 +205,9 @@ void PageStatus::initUI()
     summaryLabel->setObjectName("SummaryBar");
     summaryLabel->setFixedHeight(24);
 
-    QLabel *masterLabel = new QLabel("端口：", this);
-    masterLabel->setObjectName("DetailKey");
 
-    masterCombo = new QComboBox(this);
-    masterCombo->setObjectName("CompactCombo");
-    masterCombo->setFixedWidth(112);
 
-    slaveCountLabel = new QLabel(this);
-    slaveCountLabel->setObjectName("DetailValue");
+
 
     addSlaveButton = new QPushButton("+ 从站", this);
     addSlaveButton->setObjectName("ActionButton");
@@ -266,9 +217,9 @@ void PageStatus::initUI()
     QHBoxLayout *masterRow = new QHBoxLayout;
     masterRow->setContentsMargins(0, 0, 0, 0);
     masterRow->setSpacing(4);
-    masterRow->addWidget(masterLabel);
-    masterRow->addWidget(masterCombo);
-    masterRow->addWidget(slaveCountLabel);
+
+
+
     masterRow->addStretch();
     masterRow->addWidget(addSlaveButton);
 
@@ -439,22 +390,10 @@ void PageStatus::initUI()
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(6, 4, 6, 4);
     mainLayout->setSpacing(4);
-    mainLayout->addWidget(summaryLabel);
     mainLayout->addLayout(bodyLayout, 1);
     mainLayout->addWidget(alarmLabel);
 
-    connect(masterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        if (index >= 0) {
-            currentMasterSlot = masterCombo->itemData(index).toInt();
-            currentMasterName = masterCombo->itemText(index);
-        } else {
-            currentMasterSlot = -1;
-            currentMasterName.clear();
-        }
 
-        refreshMasterLabels();
-        emit masterChanged(currentMasterSlot);
-    });
 
     connect(addSlaveButton, &QPushButton::clicked, this, [this]() {
         emit addSlaveRequested(currentMasterSlot);
@@ -468,7 +407,7 @@ void PageStatus::initUI()
 void PageStatus::refreshMasterLabels()
 {
     const QString portName = displayMasterName();
-    slaveCountLabel->setText(QString("从站：%1").arg(slaves.size()));
+
     addSlaveButton->setEnabled(currentMasterSlot >= 0);
     if (currentPortLabel)
         currentPortLabel->setText(QString("当前端口：%1").arg(portName));

@@ -566,7 +566,6 @@ void Widget::refreshHomeMasterAndSlaveList(int preferredMasterSlot)
     if (targetSlot >= 0 && !m_connectedMasterSlots.contains(targetSlot))
         targetSlot = -1;
 
-    m_pageStatus->setMasterList(masters, targetSlot);
 
     const int currentSlot = m_pageStatus->currentMasterSlotValue();
     QList<SlaveDeviceInfo> visibleSlaves;

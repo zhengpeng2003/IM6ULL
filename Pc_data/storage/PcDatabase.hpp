@@ -30,6 +30,7 @@ public:
                           int deviceId);
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);
+    bool clearRecoveredAlarms();
 
     bool isOpen() const;
     void close();

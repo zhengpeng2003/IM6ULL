@@ -377,6 +377,18 @@ static bool parseDeleteMasterRequest(const std::string& msg,
     return !gatewayId.empty() && !portId.empty();
 }
 
+static bool parseClearRecoveredAlarmsRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    return getJsonString(root, "type") == "clear_recovered_alarms";
+}
+
 static void sendLatestPoints(IpcServer& ipc, PcDataService& dataService, PcDatabase& database)
 {
     std::vector<TelemetryPoint> points = dataService.getLatestPoints();
@@ -595,6 +607,23 @@ int main()
                      << dbOk
                      << ", snapshotRemoved: "
                      << snapshotRemoved
+                     << endl;
+                return;
+            }
+
+            if (parseClearRecoveredAlarmsRequest(msg)) {
+                bool dbOk = false;
+                if (database.isOpen()) {
+                    dbOk = database.clearRecoveredAlarms();
+                } else {
+                    cout << "clear_recovered_alarms skipped: database is not open" << endl;
+                }
+
+                const std::string reason = dbOk ? "" : "clear_recovered_alarms_failed";
+                ipc.sendMessage(buildDeleteDataAckJson("clear_recovered_alarms", dbOk, reason));
+
+                cout << "clear_recovered_alarms done, dbOk: "
+                     << dbOk
                      << endl;
                 return;
             }

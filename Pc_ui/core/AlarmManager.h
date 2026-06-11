@@ -17,10 +17,12 @@ public slots:
     void onAlarmMessage(const QJsonObject &obj);
     void acknowledgeAlarm(const QString &alarmId);
     void recoverAlarm(const QString &alarmId);
+    void clearRecoveredAlarms();
 
 signals:
     void alarmAdded(const AlarmRecord &alarm);
     void alarmUpdated(const AlarmRecord &alarm);
+    void alarmsChanged();
     void activeAlarmCountChanged(int count);
 
 private:

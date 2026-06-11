@@ -116,3 +116,62 @@ QLabel[state="offline"] {
     color: #6B7280;
     font-weight: 600;
 }
+
+#AlarmLogPanel {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+}
+
+#AlarmFilterLabel {
+    color: #374151;
+    font-weight: 600;
+    background: transparent;
+}
+
+#AlarmPrimaryButton {
+    min-width: 56px;
+    padding: 7px 16px;
+}
+
+#AlarmSecondaryButton {
+    background: #FFFFFF;
+    color: #334155;
+    border: 1px solid #E5E7EB;
+    min-width: 72px;
+}
+
+#AlarmSecondaryButton:hover {
+    background: #F8FAFC;
+    color: #0F172A;
+}
+
+#AlarmSecondaryButton:disabled {
+    color: #94A3B8;
+    background: #F8FAFC;
+}
+
+#AlarmDangerOutlineButton {
+    background: #FFFFFF;
+    color: #EF4444;
+    border: 1px solid #FECACA;
+    font-weight: 700;
+    min-width: 118px;
+}
+
+#AlarmDangerOutlineButton:hover {
+    background: #FEF2F2;
+}
+
+#AlarmInlineButton {
+    background: transparent;
+    color: #2563EB;
+    border: none;
+    padding: 4px 8px;
+    font-weight: 700;
+}
+
+#AlarmInlineButton:hover {
+    color: #1D4ED8;
+    background: transparent;
+}
