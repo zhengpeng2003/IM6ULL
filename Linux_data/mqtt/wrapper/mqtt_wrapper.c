@@ -6,6 +6,8 @@
 #include "data_protocol.h"
 #include "data_publish.h"
 #include "data_telemetry.h"
+#include "OfflinePublishQueueC.h"
+#include "port_manager.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -21,6 +23,7 @@
 #define MQTT_QUEUE_MAX         32
 #define MQTT_PAYLOAD_MAX       4096
 #define MQTT_GATEWAY_HEARTBEAT_MS 10000
+#define MQTT_OFFLINE_CACHE_DB_PATH "/etc/qt_object/offline_cache.db"
 
 const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "pc_data/telemetry/test";
 
@@ -38,6 +41,7 @@ static int g_connected = 0;
 static int g_subscribed = 0;  // 新增：订阅状态标志
 static unsigned int g_gateway_seq = 1000;
 static long long g_last_gateway_heartbeat_ms = 0;
+static long long g_last_offline_flush_ms = 0;
 
 /* 发送队列 */
 static mqtt_item_t g_queue[MQTT_QUEUE_MAX];
@@ -204,6 +208,11 @@ int mqtt_init(void)
     printf("[MQTT] default subscribe topic: %s\n", MQTT_SUB_TOPIC_DATA);
     printf("[MQTT] default subscribe topic: %s\n", MQTT_SUB_TOPIC_GPIO);
 
+    offline_publish_queue_set_sender(mqtt_send_direct_if_connected);
+    if (offline_publish_queue_init(MQTT_OFFLINE_CACHE_DB_PATH) != 0) {
+        printf("[MQTT] offline publish cache init failed, continue without cache\n");
+    }
+
     g_connected = 0;
     g_subscribed = 0;  // 初始化订阅状态
     return 0;
@@ -235,6 +244,11 @@ void mqtt_poll(void)
             connect_attempts = 0;
             g_subscribed = 0;
             data_publish_gateway_register(next_gateway_seq());
+            port_manager_publish_latest_status();
+            printf("[MQTT] reconnected, start offline cache flush pending=%d\n",
+                   offline_publish_pending_count());
+            offline_publish_flush_once();
+            g_last_offline_flush_ms = mqtt_time_ms();
             g_last_gateway_heartbeat_ms = 0;
         } else {
             if (connect_attempts == 1 || (connect_attempts % 50) == 0) {
@@ -274,6 +288,11 @@ void mqtt_poll(void)
     if (queue_pop(&item) == 0) {
         mqtt_publish_one(&item);
     }
+
+    if (now_ms - g_last_offline_flush_ms >= 200) {
+        offline_publish_flush_once();
+        g_last_offline_flush_ms = now_ms;
+    }
 }
 
 /* 业务层唯一发送接口 */
@@ -285,6 +304,9 @@ int mqtt_send(const char *topic, const char *payload)
     if (!g_client)
         return DATA_SEND_MQTT_NOT_READY;
 
+    if (!g_connected)
+        return DATA_SEND_MQTT_NOT_READY;
+
     /* 队列满，直接返回失败 */
     if (queue_push(topic, payload) < 0) {
         printf("[MQTT] send queue full, drop topic=%s queue=%d/%d connected=%d broker=%s:%s\n",
@@ -293,4 +315,29 @@ int mqtt_send(const char *topic, const char *payload)
         return DATA_SEND_MQTT_QUEUE_FULL;
     }
     return DATA_SEND_OK;   // 表示：已接收发送请求
+}
+
+int mqtt_is_connected(void)
+{
+    return g_connected;
+}
+
+int mqtt_send_direct_if_connected(const char *topic, const char *payload)
+{
+    if (!topic || !payload)
+        return DATA_SEND_INVALID_ARG;
+
+    if (!g_client)
+        return DATA_SEND_MQTT_NOT_READY;
+
+    if (!g_connected)
+        return DATA_SEND_MQTT_NOT_READY;
+
+    if (queue_push(topic, payload) < 0) {
+        printf("[MQTT] direct send queue full topic=%s queue=%d/%d\n",
+               topic, queue_count(), MQTT_QUEUE_MAX - 1);
+        return DATA_SEND_MQTT_QUEUE_FULL;
+    }
+
+    return DATA_SEND_OK;
 }

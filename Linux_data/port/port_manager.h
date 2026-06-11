@@ -46,6 +46,7 @@ public:
                     const device_data_t *dev,
                     char *reason,
                     size_t reason_size);
+    void publishLatestStatus();
 
 private:
     struct Impl;
@@ -93,6 +94,7 @@ int port_manager_handle_relay(int slot,
                               const device_data_t *dev,
                               char *reason,
                               size_t reason_size);
+void port_manager_publish_latest_status(void);
 
 #ifdef __cplusplus
 }

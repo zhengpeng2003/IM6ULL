@@ -6,6 +6,7 @@ set(CMAKE_C_FLAGS "-Wall -O2")
 
 find_package(Threads REQUIRED)
 
+add_subdirectory(offline_cache)
 add_subdirectory(device)
 add_subdirectory(ipc)
 add_subdirectory(modbus)
@@ -25,5 +26,6 @@ target_link_libraries(qt_object
     device
     service
     mqttwrapper
+    offline_cache
     Threads::Threads
 )

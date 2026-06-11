@@ -6,6 +6,7 @@
 #include "ipc_server.h"
 #include "modbus_master.hpp"
 #include "mqtt_wrapper.h"
+#include "OfflinePublishQueueC.h"
 #include "relay.hpp"
 #include "sensor_device.hpp"
 #include "temperature_humidity_sensor.hpp"
@@ -39,6 +40,8 @@ enum class ManagedType {
 struct ManagedDevice {
     std::shared_ptr<SensorDevice> sensor;
     std::chrono::steady_clock::time_point next_poll_time;
+    device_data_t last_data = {};
+    bool has_last_data = false;
 };
 
 struct PortChannel {
@@ -341,13 +344,22 @@ struct PortManager::Impl {
         }
 
         const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
-        if (payload)
-            (void)mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
+        if (payload) {
+            offline_publish_meta_t meta = {};
+            meta.message_type = "threshold_config";
+            meta.gateway_id = DEFAULT_GATEWAY_ID;
+            meta.port_id = slot == 0 ? "port_001" : "port_002";
+            meta.device_id = device.sensor->slaveId();
+            meta.priority = 0;
+            meta.timestamp_ms = currentTimeMs();
+            (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+        }
 
         json_object_put(root);
     }
 
-    void publishThresholdAlarm(const SensorDevice &sensor,
+    void publishThresholdAlarm(int slot,
+                               const SensorDevice &sensor,
                                const device_data_t &dev,
                                const ThresholdAlarmEvent &event)
     {
@@ -375,7 +387,16 @@ struct PortManager::Impl {
         const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
         if (payload) {
             (void)ipc_server_send(payload);
-            (void)mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
+            offline_publish_meta_t meta = {};
+            meta.message_type = "alarm_event";
+            meta.gateway_id = DEFAULT_GATEWAY_ID;
+            meta.port_id = slot == 0 ? "port_001" : "port_002";
+            meta.device_id = sensor.slaveId();
+            meta.point_key = event.point_key;
+            meta.priority = 3;
+            meta.has_alarm = 1;
+            meta.timestamp_ms = currentTimeMs();
+            (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
         }
         json_object_put(root);
     }
@@ -587,12 +608,28 @@ struct PortManager::Impl {
         }
     }
 
-    void pollDevice(int slot, const ManagedDevice &device)
+    void updateLastData(int slot, int slave_id, const device_data_t &dev)
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        if (!validSlot(slot))
+            return;
+
+        PortChannel &channel = channels[slot];
+        for (ManagedDevice &device : channel.devices) {
+            if (device.sensor && device.sensor->slaveId() == slave_id) {
+                device.last_data = dev;
+                device.has_last_data = true;
+                return;
+            }
+        }
+    }
+
+    void pollDevice(int slot, std::shared_ptr<SensorDevice> sensor)
     {
         PortChannel *channel = nullptr;
         std::unique_lock<std::mutex> io_guard;
 
-        if (!device.sensor)
+        if (!sensor)
             return;
 
         {
@@ -606,15 +643,34 @@ struct PortManager::Impl {
         device_data_t dev = {};
         int ret = -1;
 
-        ret = device.sensor->read(*channel->bus, &dev);
+        ret = sensor->read(*channel->bus, &dev);
+        io_guard.unlock();
 
         if (ret == 0 || dev.type != DEV_UNKNOWN) {
             (void)data_publish_device_status(&dev);
+            updateLastData(slot, sensor->slaveId(), dev);
 
             ThresholdAlarmEvent event;
-            if (device.sensor->checkThreshold(dev, &event))
-                publishThresholdAlarm(*device.sensor, dev, event);
+            if (sensor->checkThreshold(dev, &event))
+                publishThresholdAlarm(slot, *sensor, dev, event);
         }
+    }
+
+    void publishLatestStatus()
+    {
+        std::vector<device_data_t> latest;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            for (const PortChannel &channel : channels) {
+                for (const ManagedDevice &device : channel.devices) {
+                    if (device.has_last_data)
+                        latest.push_back(device.last_data);
+                }
+            }
+        }
+
+        for (const device_data_t &dev : latest)
+            (void)data_publish_device_status(&dev);
     }
 };
 
@@ -701,7 +757,7 @@ void PortManager::pollSlot(int slot)
     if (!validSlot(slot))
         return;
 
-    std::vector<ManagedDevice> due_devices;
+    std::vector<std::shared_ptr<SensorDevice>> due_devices;
     auto now = std::chrono::steady_clock::now();
 
     {
@@ -714,7 +770,7 @@ void PortManager::pollSlot(int slot)
             if (now < device.next_poll_time)
                 continue;
 
-            due_devices.push_back(device);
+            due_devices.push_back(device.sensor);
             if (device.sensor) {
                 device.next_poll_time =
                     now + std::chrono::milliseconds(device.sensor->pollIntervalMs());
@@ -722,8 +778,13 @@ void PortManager::pollSlot(int slot)
         }
     }
 
-    for (const ManagedDevice &device : due_devices)
+    for (const std::shared_ptr<SensorDevice> &device : due_devices)
         impl_->pollDevice(slot, device);
+}
+
+void PortManager::publishLatestStatus()
+{
+    impl_->publishLatestStatus();
 }
 
 int PortManager::addDevice(int slot,
@@ -988,4 +1049,9 @@ extern "C" int port_manager_handle_relay(int slot,
                                           size_t reason_size)
 {
     return g_manager.handleRelay(slot, slave_id, dev, reason, reason_size);
+}
+
+extern "C" void port_manager_publish_latest_status(void)
+{
+    g_manager.publishLatestStatus();
 }

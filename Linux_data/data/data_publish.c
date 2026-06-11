@@ -3,8 +3,10 @@
 #include "data_telemetry.h"
 #include "ipc_server.h"
 #include "mqtt_wrapper.h"
+#include "OfflinePublishQueueC.h"
 
 #include <json-c/json.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
@@ -34,7 +36,86 @@ static const char *port_name_from_slot(int slot)
     return slot == 0 ? "RS485-1" : "RS485-2";
 }
 
-static int publish_json_to_mqtt(struct json_object *root, const char *log_name)
+static const char *point_key_from_device(const device_data_t *dev)
+{
+    if (!dev)
+        return "device";
+
+    switch (dev->type) {
+    case DEV_SENSOR_TH:
+        return "temperature_humidity";
+    case DEV_RELAY:
+        return "relay_states";
+    case DEV_ELECTRIC_METER:
+        return "meter_values";
+    case DEV_SYSINFO:
+        return "sysinfo";
+    default:
+        return "device";
+    }
+}
+
+typedef struct {
+    int device_id;
+    int valid;
+    int seen;
+} device_status_cache_t;
+
+static device_status_cache_t g_status_cache[64];
+static pthread_mutex_t g_status_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int check_device_status_changed(const device_data_t *dev)
+{
+    if (!dev)
+        return 0;
+
+    int changed = 0;
+    pthread_mutex_lock(&g_status_cache_lock);
+
+    device_status_cache_t *free_slot = NULL;
+    device_status_cache_t *slot = NULL;
+    for (size_t i = 0; i < sizeof(g_status_cache) / sizeof(g_status_cache[0]); ++i) {
+        if (g_status_cache[i].seen && g_status_cache[i].device_id == dev->device_id) {
+            slot = &g_status_cache[i];
+            break;
+        }
+        if (!g_status_cache[i].seen && !free_slot)
+            free_slot = &g_status_cache[i];
+    }
+
+    if (!slot)
+        slot = free_slot;
+
+    if (slot) {
+        if (!slot->seen || slot->valid != dev->valid)
+            changed = slot->seen ? 1 : 0;
+
+        slot->device_id = dev->device_id;
+        slot->valid = dev->valid;
+        slot->seen = 1;
+    }
+
+    pthread_mutex_unlock(&g_status_cache_lock);
+    return changed;
+}
+
+static void fill_base_meta(offline_publish_meta_t *meta,
+                           const char *message_type,
+                           int priority,
+                           int64_t timestamp_ms)
+{
+    memset(meta, 0, sizeof(*meta));
+    meta->message_type = message_type;
+    meta->gateway_id = DEFAULT_GATEWAY_ID;
+    meta->port_id = DEFAULT_PORT_ID;
+    meta->device_id = -1;
+    meta->priority = priority;
+    meta->timestamp_ms = timestamp_ms > 0 ? timestamp_ms : current_time_ms();
+}
+
+static int publish_json_to_mqtt_with_meta(struct json_object *root,
+                                          const char *log_name,
+                                          const offline_publish_meta_t *meta)
 {
     if (!root)
         return DATA_SEND_JSON_ERROR;
@@ -43,7 +124,7 @@ static int publish_json_to_mqtt(struct json_object *root, const char *log_name)
     if (!json)
         return DATA_SEND_JSON_ERROR;
 
-    int ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, json);
+    int ret = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, meta);
     if (ret == DATA_SEND_OK) {
         printf("%s publish queued: %s\n", log_name ? log_name : "message", json);
     } else {
@@ -129,7 +210,18 @@ int data_publish_device_status(const device_data_t *dev)
     }
 
     int ipc_code = ipc_server_send(json);
-    int mqtt_code = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, json);
+    offline_publish_meta_t meta;
+    const int status_changed = check_device_status_changed(dev);
+    fill_base_meta(&meta,
+                   "telemetry_pack",
+                   (!dev->valid || status_changed) ? 2 : 1,
+                   pack.timestamp_ms);
+    meta.device_id = dev->device_id;
+    meta.has_invalid_data = dev->valid ? 0 : 1;
+    meta.status_changed = status_changed;
+    meta.point_key = point_key_from_device(dev);
+
+    int mqtt_code = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, &meta);
     int code = merge_send_code(ipc_code, mqtt_code);
 
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);
@@ -151,7 +243,9 @@ int data_publish_gateway_register(uint32_t seq)
     add_string(root, "factoryId", DEFAULT_FACTORY_ID);
     add_string(root, "areaId", DEFAULT_AREA_ID);
 
-    int ret = publish_json_to_mqtt(root, "gateway_register");
+    offline_publish_meta_t meta;
+    fill_base_meta(&meta, "gateway_register", 0, current_time_ms());
+    int ret = publish_json_to_mqtt_with_meta(root, "gateway_register", &meta);
     json_object_put(root);
     return ret;
 }
@@ -168,7 +262,9 @@ int data_publish_gateway_heartbeat(uint32_t seq)
     add_string(root, "gatewayId", DEFAULT_GATEWAY_ID);
     add_string(root, "status", "online");
 
-    int ret = publish_json_to_mqtt(root, "gateway_heartbeat");
+    offline_publish_meta_t meta;
+    fill_base_meta(&meta, "gateway_heartbeat", 0, current_time_ms());
+    int ret = publish_json_to_mqtt_with_meta(root, "gateway_heartbeat", &meta);
     json_object_put(root);
     return ret;
 }
@@ -197,7 +293,10 @@ int data_publish_port_register(uint32_t seq,
     json_object_object_add(root, "baud", json_object_new_int(baud));
     add_string(root, "status", status && status[0] ? status : "connected");
 
-    int ret = publish_json_to_mqtt(root, "port_register");
+    offline_publish_meta_t meta;
+    fill_base_meta(&meta, "port_register", 0, current_time_ms());
+    meta.port_id = port_id_from_slot(slot);
+    int ret = publish_json_to_mqtt_with_meta(root, "port_register", &meta);
     json_object_put(root);
     return ret;
 }
@@ -256,7 +355,11 @@ int data_publish_device_register(uint32_t seq,
         return DATA_SEND_JSON_ERROR;
     }
 
-    int ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, json);
+    offline_publish_meta_t meta;
+    fill_base_meta(&meta, "device_register", 0, now_ms);
+    meta.port_id = port_id_from_slot(slot);
+    meta.device_id = slave_id;
+    int ret = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, &meta);
     json_object_put(root);
     return ret;
 }

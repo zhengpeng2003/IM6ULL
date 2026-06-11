@@ -1,8 +1,10 @@
 #include "data_ack.h"
 
 #include "data_protocol.h"
+#include "data_telemetry.h"
 #include "ipc_server.h"
 #include "mqtt_wrapper.h"
+#include "OfflinePublishQueueC.h"
 
 #include <json-c/json.h>
 #include <string.h>
@@ -38,7 +40,13 @@ void data_ack_send(uint32_t seq,
 
     const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
     ipc_server_send(payload);
-    mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, payload);
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.priority = 3;
+    meta.timestamp_ms = 0;
+    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
     json_object_put(root);
 }
 

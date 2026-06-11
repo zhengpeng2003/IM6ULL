@@ -7,9 +7,11 @@ target_include_directories(ipc PUBLIC
     ${CMAKE_SOURCE_DIR}/device
     ${CMAKE_SOURCE_DIR}/data
     ${CMAKE_SOURCE_DIR}/mqtt/wrapper
+    ${CMAKE_SOURCE_DIR}/offline_cache
 )
 
 target_link_libraries(ipc PUBLIC
     mqttwrapper
     device
+    offline_cache
 )

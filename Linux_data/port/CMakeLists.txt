@@ -9,4 +9,5 @@ target_include_directories(port_manager PUBLIC
     ${CMAKE_SOURCE_DIR}/modbus
     ${CMAKE_SOURCE_DIR}/ipc
     ${CMAKE_SOURCE_DIR}/mqtt/wrapper
+    ${CMAKE_SOURCE_DIR}/offline_cache
 )

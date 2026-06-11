@@ -9,6 +9,8 @@ target_include_directories(mqttwrapper
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/mqtt/mqttclient
         ${CMAKE_SOURCE_DIR}/data
+        ${CMAKE_SOURCE_DIR}/offline_cache
+        ${CMAKE_SOURCE_DIR}/port
 )
 
-target_link_libraries(mqttwrapper mqttclient data_protocol salof)
+target_link_libraries(mqttwrapper mqttclient data_protocol offline_cache salof)

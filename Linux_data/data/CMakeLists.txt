@@ -13,6 +13,7 @@ target_include_directories(data_protocol PUBLIC
     ${CMAKE_SOURCE_DIR}/port
     ${CMAKE_SOURCE_DIR}/ipc
     ${CMAKE_SOURCE_DIR}/mqtt/wrapper
+    ${CMAKE_SOURCE_DIR}/offline_cache
 )
 target_link_libraries(data_protocol
     json-c
@@ -20,4 +21,5 @@ target_link_libraries(data_protocol
     sensors
     ipc
     mqttwrapper
+    offline_cache
 )

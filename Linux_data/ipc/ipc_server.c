@@ -2,7 +2,9 @@
 #include "device_info.h"
 #include "data_command.h"
 #include "data_protocol.h"
+#include "data_telemetry.h"
 #include "mqtt_wrapper.h"
+#include "OfflinePublishQueueC.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,7 +73,12 @@ static void ipc_process_received_data(const char *buf, int len)
             const char *msg = recv_buf + start;
             int ret = data_command_process_message(msg);
             if (ret == CMD_PROCESS_FORWARD_MQTT) {
-                mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, msg);
+                offline_publish_meta_t meta;
+                memset(&meta, 0, sizeof(meta));
+                meta.message_type = "ipc_forward";
+                meta.gateway_id = DEFAULT_GATEWAY_ID;
+                meta.priority = 0;
+                (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, msg, &meta);
             } else if (ret == CMD_PROCESS_ERROR) {
                 printf("IPC process failed, skip MQTT: %s\n", msg);
             }
