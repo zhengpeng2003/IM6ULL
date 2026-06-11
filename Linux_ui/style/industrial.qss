@@ -50,6 +50,8 @@ QWidget {
 #DetailPanel,
 #MetricCard,
 #PortCard,
+#InfoCard,
+#RuntimePanel,
 #EmptyPanel,
 #TrendChart {
     background-color: #FFFFFF;
@@ -101,6 +103,67 @@ QWidget {
     font-weight: bold;
 }
 
+#InfoCardsArea {
+    background-color: transparent;
+}
+
+#InfoCardTitle,
+#RuntimeTitle {
+    color: #1F2A37;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+#InfoCardValue,
+#RuntimeValue {
+    color: #111827;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+#InfoIconSlot {
+    color: #126CFF;
+    border: 1px solid #BBD4FF;
+    border-radius: 12px;
+    background-color: #EFF6FF;
+}
+
+#RuntimeRow {
+    background-color: transparent;
+}
+
+#RuntimeDot {
+    border-radius: 3px;
+    background-color: #94A3B8;
+}
+
+#RuntimeDot[state="online"] {
+    background-color: #00A63E;
+}
+
+#RuntimeDot[state="offline"] {
+    background-color: #94A3B8;
+}
+
+#RuntimeDot[state="warning"] {
+    background-color: #EF4444;
+}
+
+#RuntimeActionButton {
+    background-color: #FFFFFF;
+    border: 1px solid #D7DEE8;
+    border-radius: 4px;
+    color: #1F2A37;
+    min-height: 22px;
+    padding: 1px 7px;
+}
+
+#RuntimeActionButton:disabled {
+    background-color: #E5EAF0;
+    border-color: #D7DEE8;
+    color: #94A3B8;
+}
+
 #DetailStateBadge {
     color: #64748B;
     font-size: 13px;
@@ -117,15 +180,24 @@ QWidget {
 }
 
 #DetailValue[state="online"],
+#InfoCardValue[state="online"],
+#RuntimeValue[state="online"],
 #SlaveState[state="online"],
 QLabel[state="online"] {
     color: #009E8E;
 }
 
 #DetailValue[state="offline"],
+#InfoCardValue[state="offline"],
+#RuntimeValue[state="offline"],
 #SlaveState[state="offline"],
 QLabel[state="offline"] {
     color: #64748B;
+}
+
+#InfoCardValue[state="warning"],
+#RuntimeValue[state="warning"] {
+    color: #EF4444;
 }
 
 #SlaveCard {
