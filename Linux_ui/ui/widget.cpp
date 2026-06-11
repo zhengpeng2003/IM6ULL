@@ -41,6 +41,7 @@ void Widget::initUI()
     PageTrend   *pageTrend   = new PageTrend(this);
     Pageinfo    *pageInfo    = new Pageinfo(this);
     m_pageStatus = pageStatus;
+    m_pageTrend = pageTrend;
     pageInfo->setIpcConnected(_Myclient->isConnected());
 
     stack->addWidget(pageStatus);
@@ -558,6 +559,10 @@ void Widget::refreshHomeMasterAndSlaveList(int preferredMasterSlot)
         info.masterSlot = slot;
         info.masterName = masterNameForSlot(slot);
         masters.append(info);
+    }
+    if (m_pageTrend) {
+        m_pageTrend->setMasterList(masters);
+        m_pageTrend->setSlaveList(m_slaveDevices);
     }
 
     int targetSlot = preferredMasterSlot >= 0

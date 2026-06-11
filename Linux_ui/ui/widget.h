@@ -68,6 +68,7 @@ private:
 
     QStackedWidget *m_stack = nullptr;
     PageStatus *m_pageStatus = nullptr;
+    PageTrend *m_pageTrend = nullptr;
     OperationOverlayWidget *m_operationOverlay = nullptr;
     QPointer<AddSlaveDialog> m_addSlaveDialog;
     QSet<int> m_connectedMasterSlots;
