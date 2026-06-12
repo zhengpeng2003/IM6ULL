@@ -188,6 +188,24 @@ void DataManager::removeMasterData(const QString &gatewayId, const QString &port
     emit realtimeDataUpdated();
 }
 
+void DataManager::clearAllData()
+{
+    if (m_deviceManager) {
+        m_deviceManager->clearAll();
+    }
+    if (m_alarmManager) {
+        m_alarmManager->clearAllAlarms();
+    }
+
+    {
+        QMutexLocker locker(&m_mutex);
+        m_realtimeMap.clear();
+    }
+
+    emit deviceTreeChanged();
+    emit realtimeDataUpdated();
+}
+
 void DataManager::markAllDevicesOffline()
 {
     const QList<DeviceNode> devices = m_deviceManager->allDevices();
@@ -255,22 +273,26 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
 
 QList<RealtimeDeviceData> DataManager::parseLatestPoints(const QJsonObject &obj) const
 {
-    QList<RealtimeDeviceData> devices;
+    QHash<QString, RealtimeDeviceData> deviceMap;
     const QHash<QString, QList<TelemetryPointData>> grouped = groupPointsByDevice(obj);
 
     for (const QList<TelemetryPointData> &points : grouped) {
         RealtimeDeviceData data = buildRealtimeDeviceData(points);
-        if (!data.node.factoryId.isEmpty()) {
-            devices.append(data);
+        if (!data.node.factoryId.isEmpty() && !data.node.key().isEmpty()) {
+            const QString key = data.node.key();
+            if (!deviceMap.contains(key) ||
+                data.node.lastUpdateTime >= deviceMap.value(key).node.lastUpdateTime) {
+                deviceMap.insert(key, data);
+            }
         }
     }
 
-    return devices;
+    return deviceMap.values();
 }
 
 QList<DeviceNode> DataManager::parseDevicesSnapshot(const QJsonObject &obj) const
 {
-    QList<DeviceNode> devices;
+    QHash<QString, DeviceNode> deviceMap;
     const QJsonArray rows = obj.value(QStringLiteral("devices")).toArray();
 
     for (const QJsonValue &value : rows) {
@@ -304,10 +326,14 @@ QList<DeviceNode> DataManager::parseDevicesSnapshot(const QJsonObject &obj) cons
             continue;
         }
 
-        devices.append(node);
+        const QString key = node.key();
+        if (!deviceMap.contains(key) ||
+            node.lastUpdateTime >= deviceMap.value(key).lastUpdateTime) {
+            deviceMap.insert(key, node);
+        }
     }
 
-    return devices;
+    return deviceMap.values();
 }
 
 TelemetryPointData DataManager::parseTelemetryPoint(const QJsonObject &obj) const

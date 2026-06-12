@@ -104,6 +104,7 @@ public:
                           int deviceId);
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);
+    bool clearAllData();
     bool clearRecoveredAlarms();
     bool replaceSelectedDeviceConfig(const std::string& gatewayId,
                                      const std::vector<DbSelectedDevice>& selectedDevices,

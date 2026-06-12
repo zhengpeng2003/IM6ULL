@@ -36,6 +36,18 @@ void DeviceManager::setPorts(const QList<PortNode> &ports)
     emit deviceConfigChanged();
 }
 
+void DeviceManager::clearAll()
+{
+    m_devices.clear();
+    m_gateways.clear();
+    m_ports.clear();
+    emit deviceConfigChanged();
+    emit gatewayStatusChanged();
+    emit portStatusChanged();
+    emit onlineGatewayCountChanged(0);
+    emit onlineDeviceCountChanged(0);
+}
+
 void DeviceManager::upsertDevice(const DeviceNode &node)
 {
     m_devices.insert(node.key(), node);

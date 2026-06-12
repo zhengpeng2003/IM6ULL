@@ -46,6 +46,7 @@ private:
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void sendSyncConfigRequest(const QJsonArray &targets);
     void sendClearRecoveredAlarms();
+    void sendClearAllData();
     void requestMqttConfig();
     void saveMqttConfig(const QString &host, int port);
     void markIpcDataOffline();

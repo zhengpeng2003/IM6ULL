@@ -237,13 +237,19 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
 
     if (type == "delete_data_ack") {
         qDebug() << "delete data ack:" << root;
+        const QString action = root.value("action").toString(m_pendingDeleteAction);
+        if (action == "clear_all_data" && m_systemSettingPage) {
+            m_systemSettingPage->onClearAllDataResult(root);
+        }
         if (root.value("ok").toBool() && m_data) {
-            if (m_pendingDeleteAction == "delete_master_data") {
+            if (action == "delete_master_data") {
                 m_data->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
-            } else if (m_pendingDeleteAction == "delete_device_data") {
+            } else if (action == "delete_device_data") {
                 m_data->removeDeviceData(m_pendingDeleteGatewayId, m_pendingDeletePortId, m_pendingDeleteDeviceId);
-            } else if (m_pendingDeleteAction == "clear_recovered_alarms" && m_alarm) {
+            } else if (action == "clear_recovered_alarms" && m_alarm) {
                 m_alarm->clearRecoveredAlarms();
+            } else if (action == "clear_all_data") {
+                m_data->clearAllData();
             }
         }
         m_pendingDeleteAction.clear();
@@ -435,6 +441,25 @@ void MainWindow::sendClearRecoveredAlarms()
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 
+void MainWindow::sendClearAllData()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        qDebug() << "clear_all_data skipped: IPC is not connected.";
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("clear_all_data"));
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_pendingDeleteAction = QStringLiteral("clear_all_data");
+    m_pendingDeleteGatewayId.clear();
+    m_pendingDeletePortId.clear();
+    m_pendingDeleteDeviceId = 0;
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
 void MainWindow::requestMqttConfig()
 {
     if (!m_ipcClient || !m_ipcClient->isConnected()) {
@@ -537,7 +562,7 @@ void MainWindow::initConnections()
             this, &MainWindow::sendDeleteMasterData);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::deleteDeviceDataRequested,
-            m_command, &CommandManager::sendRemoveDeviceCommand);
+            this, &MainWindow::sendDeleteDeviceData);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::addSlaveRequested,
             m_command, &CommandManager::sendAddDeviceCommand);
@@ -553,4 +578,7 @@ void MainWindow::initConnections()
 
     connect(m_systemSettingPage, &SystemSettingPage::mqttConfigSaveRequested,
             this, &MainWindow::saveMqttConfig);
+
+    connect(m_systemSettingPage, &SystemSettingPage::clearAllDataRequested,
+            this, &MainWindow::sendClearAllData);
 }

@@ -255,6 +255,31 @@ void IpcMessageHandler::handle(const std::string& msg)
         return;
     }
 
+    if (parseClearAllDataRequest(msg)) {
+        bool dbOk = false;
+        if (m_database.isOpen()) {
+            dbOk = m_database.clearAllData();
+        } else {
+            std::cout << "clear_all_data skipped: database is not open" << std::endl;
+        }
+
+        if (dbOk) {
+            m_dataService.clear();
+        }
+
+        const std::string reason = dbOk ? "" : "clear_all_data_failed";
+        m_ipc.sendMessage(buildDeleteDataAckJson("clear_all_data", dbOk, reason));
+        sendLatestPoints(m_ipc, m_dataService, m_database);
+        sendDevicesSnapshot(m_ipc, m_database);
+        sendGatewayStatusSnapshot(m_ipc, m_database);
+        sendPortStatusSnapshot(m_ipc, m_database);
+
+        std::cout << "clear_all_data done, dbOk: "
+                  << dbOk
+                  << std::endl;
+        return;
+    }
+
     if (parseGetMqttConfigRequest(msg)) {
         m_ipc.sendMessage(buildMqttConfigJson(m_mqttConfig, m_mqtt.status()));
         std::cout << "send mqtt_config done" << std::endl;

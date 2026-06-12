@@ -81,3 +81,14 @@ void AlarmManager::clearRecoveredAlarms()
         emit activeAlarmCountChanged(activeAlarmCount());
     }
 }
+
+void AlarmManager::clearAllAlarms()
+{
+    if (m_alarms.isEmpty()) {
+        return;
+    }
+
+    m_alarms.clear();
+    emit alarmsChanged();
+    emit activeAlarmCountChanged(0);
+}

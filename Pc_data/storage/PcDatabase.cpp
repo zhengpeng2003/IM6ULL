@@ -787,6 +787,36 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
     return ok;
 }
 
+bool PcDatabase::clearAllData()
+{
+    if (!m_db) {
+        return false;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = execSql("DELETE FROM alarm_event;") &&
+              execSql("DELETE FROM telemetry_history;") &&
+              execSql("DELETE FROM latest_point;") &&
+              execSql("DELETE FROM point_config;") &&
+              execSql("DELETE FROM device_status;") &&
+              execSql("DELETE FROM device;") &&
+              execSql("DELETE FROM command_log;") &&
+              execSql("DELETE FROM gateway_port;") &&
+              execSql("DELETE FROM gateway_status;");
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+    }
+
+    std::cout << "Clear all database data " << (ok ? "ok" : "failed") << std::endl;
+    return ok;
+}
+
 bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
                                              const std::vector<DbSelectedDevice>& selectedDevices,
                                              const std::vector<GatewayPort>& ports,

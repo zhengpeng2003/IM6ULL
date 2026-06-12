@@ -15,10 +15,12 @@ public:
     void setIpcConnected(bool connected);
     void onMqttConfigMessage(const QJsonObject &obj);
     void onMqttConfigAck(const QJsonObject &obj);
+    void onClearAllDataResult(const QJsonObject &obj);
 
 signals:
     void mqttConfigRequested();
     void mqttConfigSaveRequested(const QString &host, int port);
+    void clearAllDataRequested();
 
 private:
     QWidget *createCard(const QString &title, QWidget *content);
@@ -36,5 +38,6 @@ private:
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_testButton = nullptr;
     QPushButton *m_saveButton = nullptr;
+    QPushButton *m_clearDataButton = nullptr;
     bool m_ipcConnected = false;
 };

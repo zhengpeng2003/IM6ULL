@@ -12,6 +12,7 @@ public:
     void setDevices(const QList<DeviceNode> &devices);
     void setGateways(const QList<GatewayNode> &gateways);
     void setPorts(const QList<PortNode> &ports);
+    void clearAll();
     void upsertDevice(const DeviceNode &node);
     void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void removeMasterData(const QString &gatewayId, const QString &portId);

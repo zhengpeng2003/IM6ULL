@@ -22,6 +22,7 @@ public:
     void refreshOfflineStates(qint64 timeoutMs = 30000);
     void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void removeMasterData(const QString &gatewayId, const QString &portId);
+    void clearAllData();
     void markAllDevicesOffline();
 
 public slots:

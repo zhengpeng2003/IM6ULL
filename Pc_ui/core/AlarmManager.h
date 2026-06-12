@@ -18,6 +18,7 @@ public slots:
     void acknowledgeAlarm(const QString &alarmId);
     void recoverAlarm(const QString &alarmId);
     void clearRecoveredAlarms();
+    void clearAllAlarms();
 
 signals:
     void alarmAdded(const AlarmRecord &alarm);

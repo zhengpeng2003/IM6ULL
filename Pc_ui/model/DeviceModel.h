@@ -31,8 +31,8 @@ struct DeviceNode
     {
         return QString("%1/%2/%3/%4/%5")
             .arg(factoryId, areaId, gatewayId)
-            .arg(masterSlot)
-            .arg(slaveAddr);
+            .arg(port)
+            .arg(deviceId);
     }
 };
 

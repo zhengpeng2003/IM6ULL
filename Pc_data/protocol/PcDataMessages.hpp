@@ -69,5 +69,6 @@ bool parseDeleteMasterRequest(const std::string& msg,
                               std::string& gatewayId,
                               std::string& portId);
 bool parseClearRecoveredAlarmsRequest(const std::string& msg);
+bool parseClearAllDataRequest(const std::string& msg);
 
 #endif // PC_DATA_MESSAGES_HPP

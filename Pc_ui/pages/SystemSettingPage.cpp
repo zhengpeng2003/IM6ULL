@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
@@ -78,6 +79,9 @@ void SystemSettingPage::setIpcConnected(bool connected)
     if (m_saveButton) {
         m_saveButton->setEnabled(connected);
     }
+    if (m_clearDataButton) {
+        m_clearDataButton->setEnabled(connected);
+    }
 
     if (connected) {
         emit mqttConfigRequested();
@@ -111,6 +115,18 @@ void SystemSettingPage::onMqttConfigAck(const QJsonObject &obj)
 
     if (!ok && !reason.isEmpty()) {
         setStatusText(reason, false);
+    }
+}
+
+void SystemSettingPage::onClearAllDataResult(const QJsonObject &obj)
+{
+    const bool ok = obj.value(QStringLiteral("ok")).toBool(false);
+    const QString reason = obj.value(QStringLiteral("reason")).toString();
+
+    if (ok) {
+        setStatusText(QStringLiteral("数据库已清空"), true);
+    } else {
+        setStatusText(reason.isEmpty() ? QStringLiteral("清空数据库失败") : reason, false);
     }
 }
 
@@ -221,6 +237,9 @@ QWidget *SystemSettingPage::createDatabaseCard()
     auto *backupButton = new QPushButton(QStringLiteral("备份历史数据"), this);
     backupButton->setObjectName(QStringLiteral("SystemSettingOutlineButton"));
     backupButton->setEnabled(false);
+    m_clearDataButton = new QPushButton(QStringLiteral("清空数据库"), this);
+    m_clearDataButton->setObjectName(QStringLiteral("SystemSettingOutlineButton"));
+    m_clearDataButton->setProperty("danger", true);
 
     layout->addWidget(createFieldLabel(QStringLiteral("数据库类型:")), 0, 0);
     layout->addWidget(typeCombo, 0, 1);
@@ -231,9 +250,28 @@ QWidget *SystemSettingPage::createDatabaseCard()
     actions->setSpacing(8);
     actions->addWidget(openButton);
     actions->addWidget(backupButton);
+    actions->addWidget(m_clearDataButton);
     actions->addStretch();
     layout->addLayout(actions, 2, 0, 1, 2);
     layout->setRowStretch(3, 1);
+
+    connect(m_clearDataButton, &QPushButton::clicked, this, [this]() {
+        if (!m_ipcConnected) {
+            setStatusText(QStringLiteral("后端未连接"), false);
+            return;
+        }
+
+        const int ret = QMessageBox::question(
+            this,
+            QStringLiteral("确认清空数据库"),
+            QStringLiteral("确定要清空所有数据库业务数据吗？该操作会删除设备、端口、网关、历史、最新点、报警和命令记录。"));
+        if (ret != QMessageBox::Yes) {
+            return;
+        }
+
+        setStatusText(QStringLiteral("正在清空数据库"), true);
+        emit clearAllDataRequested();
+    });
 
     return createCard(QStringLiteral("数据库设置"), content);
 }

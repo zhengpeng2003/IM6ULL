@@ -617,3 +617,15 @@ bool parseClearRecoveredAlarmsRequest(const std::string& msg)
 
     return getJsonString(root, "type") == "clear_recovered_alarms";
 }
+
+bool parseClearAllDataRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    return getJsonString(root, "type") == "clear_all_data";
+}
