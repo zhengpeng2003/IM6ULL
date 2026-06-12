@@ -286,10 +286,33 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
     int slave_id = 0;
     char reason[MAX_ACK_MSG_LEN] = "";
     struct json_object *v;
+    struct json_object *target = NULL;
+
+    if (json_object_object_get_ex(root, "target", &target) && target) {
+        const char *gateway_id = "";
+        const char *port_id = "";
+        if (json_object_object_get_ex(target, "gatewayId", &v))
+            gateway_id = json_object_get_string(v);
+        if (json_object_object_get_ex(target, "portId", &v))
+            port_id = json_object_get_string(v);
+        if (gateway_id && gateway_id[0] != '\0' && strcmp(gateway_id, DEFAULT_GATEWAY_ID) != 0) {
+            snprintf(reason, sizeof(reason), "invalid_argument");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+        slot = slot_from_port_id(port_id);
+        if (slot < 0) {
+            snprintf(reason, sizeof(reason), "port_not_found");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+    }
 
     if (json_object_object_get_ex(root, "slot", &v))
         slot = json_object_get_int(v);
     if (json_object_object_get_ex(root, "slave_id", &v))
+        slave_id = json_object_get_int(v);
+    if (slave_id <= 0 && json_object_object_get_ex(root, "deviceId", &v))
         slave_id = json_object_get_int(v);
 
     int ret = port_manager_remove_device(slot, slave_id, reason, sizeof(reason));

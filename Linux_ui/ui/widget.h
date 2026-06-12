@@ -49,6 +49,9 @@ private:
                                int slaveAddr,
                                const QString &deviceName,
                                const QString &deviceType);
+    void removeRegisteredSlave(int masterSlot,
+                               int slaveAddr,
+                               const QString &deviceType);
     void updateSlaveOnline(int masterSlot,
                            int slaveAddr,
                            const QString &deviceType,
@@ -70,6 +73,14 @@ private:
         QString deviceType;
     };
 
+    struct PendingRemoveSlave {
+        bool active = false;
+        quint32 seq = 0;
+        int masterSlot = 0;
+        int slaveAddr = 0;
+        QString deviceType;
+    };
+
     QStackedWidget *m_stack = nullptr;
     PageStatus *m_pageStatus = nullptr;
     PageTrend *m_pageTrend = nullptr;
@@ -79,6 +90,7 @@ private:
     QList<SlaveDeviceInfo> m_slaveDevices;
     QHash<QString, int> m_relayStates;
     PendingAddSlave m_pendingAddSlave;
+    PendingRemoveSlave m_pendingRemoveSlave;
     int m_activeAlarmCount = 0;
     quint32 m_nextCommandSeq = 1;
     Ui::Widget *ui = nullptr;

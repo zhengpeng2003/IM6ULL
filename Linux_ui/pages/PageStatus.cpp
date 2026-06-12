@@ -33,9 +33,17 @@ void PageStatus::setMasterSummary(int masterCount,
     //                           .arg(alarmCount));
 }
 
+void PageStatus::setCurrentMaster(int masterSlot, const QString &masterName, int slaveCount)
+{
+    currentMasterSlot = masterSlot;
+    currentMasterName = masterName;
+    refreshMasterLabels();
 
-
-
+    if (listTitleLabel)
+        listTitleLabel->setText(QString("当前从站设备：%1").arg(slaveCount));
+    if (slaveListDialog)
+        slaveListDialog->setSlaveList(slaves, slaveRuntime, currentMasterName);
+}
 
 void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
 {
@@ -53,6 +61,34 @@ void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
     else
         clearCurrentDetail();
     updateOpenDialogs();
+}
+
+void PageStatus::removeSlave(int masterSlot, int slaveAddr, const QString &deviceType)
+{
+    for (int i = 0; i < slaves.size(); ++i) {
+        const SlaveDeviceInfo &slave = slaves.at(i);
+        if (slave.masterSlot != masterSlot ||
+            slave.slaveAddr != slaveAddr ||
+            slave.deviceType != deviceType) {
+            continue;
+        }
+
+        slaveRuntime.remove(runtimeKey(slave));
+        slaves.removeAt(i);
+        if (currentSlaveIndex >= slaves.size())
+            currentSlaveIndex = slaves.size() - 1;
+        if (currentSlaveIndex < 0 && !slaves.isEmpty())
+            currentSlaveIndex = 0;
+
+        rebuildSlaveCards();
+        refreshMasterLabels();
+        if (currentSlaveIndex >= 0)
+            selectSlave(currentSlaveIndex);
+        else
+            clearCurrentDetail();
+        updateOpenDialogs();
+        return;
+    }
 }
 
 int PageStatus::currentMasterSlotValue() const
@@ -356,6 +392,11 @@ void PageStatus::initUI()
     relayControlLayout->addWidget(buzzerOffButton);
     relayControlLayout->addStretch();
 
+    removeSlaveButton = new QPushButton("删除从站", detailPanel);
+    removeSlaveButton->setObjectName("SmallGhostButton");
+    removeSlaveButton->setFixedWidth(68);
+    removeSlaveButton->setEnabled(false);
+
     pollIntervalLabel = new QLabel("轮询间隔：1000 ms", detailPanel);
     lastUpdateLabel = new QLabel("最后更新：--", detailPanel);
     pollIntervalLabel->setObjectName("DetailValue");
@@ -366,6 +407,7 @@ void PageStatus::initUI()
     footerRow->setContentsMargins(0, 0, 0, 0);
     footerRow->addWidget(pollIntervalLabel);
     footerRow->addStretch();
+    footerRow->addWidget(removeSlaveButton);
     footerRow->addWidget(lastUpdateLabel);
 
     QVBoxLayout *detailLayout = new QVBoxLayout(detailPanel);
@@ -397,6 +439,12 @@ void PageStatus::initUI()
 
     connect(addSlaveButton, &QPushButton::clicked, this, [this]() {
         emit addSlaveRequested(currentMasterSlot);
+    });
+    connect(removeSlaveButton, &QPushButton::clicked, this, [this]() {
+        if (currentSlaveIndex < 0 || currentSlaveIndex >= slaves.size())
+            return;
+        const SlaveDeviceInfo &slave = slaves.at(currentSlaveIndex);
+        emit removeSlaveRequested(slave.masterSlot, slave.slaveAddr, slave.deviceType);
     });
 
     refreshMasterLabels();
@@ -462,6 +510,8 @@ void PageStatus::clearCurrentDetail()
     relayControlPanel->setVisible(false);
     pollIntervalLabel->setText("轮询间隔：1000 ms");
     lastUpdateLabel->setText("最后更新：--");
+    if (removeSlaveButton)
+        removeSlaveButton->setEnabled(false);
     detailStateLabel->style()->unpolish(detailStateLabel);
     detailStateLabel->style()->polish(detailStateLabel);
 }
@@ -590,6 +640,8 @@ void PageStatus::setDetailMeta(const SlaveDeviceInfo &slave)
     detailAddrLabel->setText(QString::number(slave.slaveAddr));
     detailTypeLabel->setText(displayTypeName(slave.deviceType));
     pollIntervalLabel->setText("轮询间隔：1000 ms");
+    if (removeSlaveButton)
+        removeSlaveButton->setEnabled(true);
     detailStateLabel->style()->unpolish(detailStateLabel);
     detailStateLabel->style()->polish(detailStateLabel);
 }

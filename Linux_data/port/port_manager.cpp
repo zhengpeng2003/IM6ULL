@@ -21,8 +21,10 @@
 #include <set>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <thread>
 
 namespace {
@@ -68,6 +70,35 @@ struct PortChannel {
 bool startsWith(const char *text, const char *prefix)
 {
     return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+bool ensureDeviceConfigDir()
+{
+    struct stat st;
+    if (stat(kDeviceConfigDir, &st) == 0)
+        return S_ISDIR(st.st_mode);
+
+    if (errno != ENOENT)
+        return false;
+
+    return mkdir(kDeviceConfigDir, 0755) == 0 || errno == EEXIST;
+}
+
+json_object *loadDeviceConfigRoot()
+{
+    if (access(kDeviceConfigPath, F_OK) != 0) {
+        if (errno != ENOENT)
+            printf("[PortManager] config access failed path=%s errno=%d\n",
+                   kDeviceConfigPath,
+                   errno);
+        return nullptr;
+    }
+
+    json_object *root = json_object_from_file(kDeviceConfigPath);
+    if (!root) {
+        printf("[PortManager] config parse failed path=%s\n", kDeviceConfigPath);
+    }
+    return root;
 }
 
 ManagedType parseType(const char *deviceType)
@@ -536,7 +567,15 @@ struct PortManager::Impl {
         }
 
         json_object_object_add(root, "devices", devices);
-        (void)json_object_to_file_ext(kDeviceConfigPath, root, JSON_C_TO_STRING_PRETTY);
+        if (!ensureDeviceConfigDir()) {
+            printf("[PortManager] create config dir failed dir=%s errno=%d\n",
+                   kDeviceConfigDir,
+                   errno);
+        } else if (json_object_to_file_ext(kDeviceConfigPath,
+                                           root,
+                                           JSON_C_TO_STRING_PRETTY) != 0) {
+            printf("[PortManager] write config failed path=%s\n", kDeviceConfigPath);
+        }
         json_object_put(root);
     }
 
@@ -546,7 +585,7 @@ struct PortManager::Impl {
             return;
 
         PortChannel &channel = channels[slot];
-        json_object *root = json_object_from_file(kDeviceConfigPath);
+        json_object *root = loadDeviceConfigRoot();
         if (!root)
             return;
 
@@ -750,6 +789,24 @@ struct PortManager::Impl {
             }
 
             return false;
+        }
+
+        return false;
+    }
+
+    bool verifyDeviceOnlineLocked(PortChannel &channel, const std::shared_ptr<SensorDevice> &sensor)
+    {
+        if (!sensor || !channel.bus)
+            return false;
+
+        std::lock_guard<std::mutex> io_guard(channel.io_lock);
+        for (int i = 0; i < 3; ++i) {
+            device_data_t dev = {};
+            int ret = sensor->read(*channel.bus, &dev);
+            if (ret == 0 && dev.valid)
+                return true;
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         return false;
@@ -986,6 +1043,10 @@ int PortManager::addDevice(int slot,
         setReason(reason, reason_size, "unsupported_device_type");
         return -1;
     }
+    if (!impl_->verifyDeviceOnlineLocked(channel, device.sensor)) {
+        setReason(reason, reason_size, "device_no_response");
+        return -1;
+    }
     device.next_poll_time = std::chrono::steady_clock::now();
     channel.devices.push_back(device);
     impl_->writeConfigLocked();
@@ -1201,7 +1262,7 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
         }
     }
 
-    json_object *saved_root = json_object_from_file(kDeviceConfigPath);
+    json_object *saved_root = loadDeviceConfigRoot();
     if (saved_root) {
         json_object *saved_devices = nullptr;
         if (json_object_object_get_ex(saved_root, "devices", &saved_devices) &&

@@ -1106,6 +1106,41 @@ bool PcDatabase::updateCommandLogBySeq(std::int64_t seq,
     return rc == SQLITE_DONE;
 }
 
+bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& target)
+{
+    if (!m_db || seq <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT command_type,gateway_id,port_id,device_id "
+        "FROM command_log WHERE seq=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query command_log target failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, seq);
+
+    bool found = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* commandType = sqlite3_column_text(stmt, 0);
+        const unsigned char* gatewayId = sqlite3_column_text(stmt, 1);
+        const unsigned char* portId = sqlite3_column_text(stmt, 2);
+        target.commandType = commandType ? reinterpret_cast<const char*>(commandType) : "";
+        target.gatewayId = gatewayId ? reinterpret_cast<const char*>(gatewayId) : "";
+        target.portId = portId ? reinterpret_cast<const char*>(portId) : "";
+        target.deviceId = sqlite3_column_int(stmt, 3);
+        found = true;
+    }
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
 void PcDatabase::close()
 {
     if (m_db) {

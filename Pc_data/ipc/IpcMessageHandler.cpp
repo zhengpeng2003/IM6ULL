@@ -314,7 +314,10 @@ void IpcMessageHandler::handle(const std::string& msg)
         rapidjson::Document root;
         root.Parse(msg.c_str());
         const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
-        const std::string commandType = root.IsObject() ? getJsonString(root, "commandType") : "";
+        std::string commandType = root.IsObject() ? getJsonString(root, "commandType") : "";
+        if (commandType.empty() && root.IsObject()) {
+            commandType = getJsonString(root, "cmd");
+        }
         std::string gatewayId;
         std::string portId;
         if (root.IsObject() && root.HasMember("target") && root["target"].IsObject()) {
@@ -328,7 +331,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             portId = getJsonString(root, "portId");
         }
 
-        if (commandType == "add_device") {
+        if (commandType == "add_device" || commandType == "remove_device") {
             const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
             int deviceId = 0;
             if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
@@ -337,10 +340,13 @@ void IpcMessageHandler::handle(const std::string& msg)
             if (deviceId <= 0 && root.IsObject()) {
                 deviceId = getJsonInt(root, "deviceId", 0);
             }
+            if (deviceId <= 0 && root.IsObject()) {
+                deviceId = getJsonInt(root, "slave_id", 0);
+            }
 
             if (seq <= 0) {
                 m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_argument"));
-                std::cout << "add_device rejected, missing seq" << std::endl;
+                std::cout << commandType << " rejected, missing seq" << std::endl;
                 return;
             }
 
@@ -366,7 +372,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                                                      currentTimeMs());
                 }
                 m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "port_not_found"));
-                std::cout << "add_device rejected, port not connected, gateway: "
+                std::cout << commandType << " rejected, port not connected, gateway: "
                           << gatewayId << ", port: " << portId << std::endl;
                 return;
             }
@@ -381,7 +387,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                                                  currentTimeMs());
             }
             m_ipc.sendMessage(buildCommandAckJson(cmdId, publishOk, publishOk ? "sent" : "mqtt_publish_failed"));
-            std::cout << "add_device publish "
+            std::cout << commandType << " publish "
                       << (publishOk ? "ok" : "failed")
                       << ", topic: " << topic
                       << ", cmd_id: " << cmdId << std::endl;

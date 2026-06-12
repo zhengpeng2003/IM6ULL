@@ -106,6 +106,44 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
+void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    CommandRecord rec;
+    rec.cmdId = createCmdId();
+    rec.timestamp = QDateTime::currentMSecsSinceEpoch();
+    rec.gatewayId = gatewayId;
+    rec.slaveAddr = deviceId;
+    rec.command = QStringLiteral("remove_device");
+    rec.state = QStringLiteral("pending");
+
+    QJsonObject target;
+    target.insert(QStringLiteral("gatewayId"), gatewayId);
+    target.insert(QStringLiteral("portId"), portId);
+
+    QJsonObject obj;
+    obj.insert(QStringLiteral("type"), QStringLiteral("command"));
+    obj.insert(QStringLiteral("msg_type"), QStringLiteral("command"));
+    obj.insert(QStringLiteral("version"), 1);
+    obj.insert(QStringLiteral("cmd_id"), rec.cmdId);
+    obj.insert(QStringLiteral("seq"), rec.timestamp);
+    obj.insert(QStringLiteral("timestamp"), rec.timestamp);
+    obj.insert(QStringLiteral("commandType"), rec.command);
+    obj.insert(QStringLiteral("cmd"), rec.command);
+    obj.insert(QStringLiteral("gatewayId"), gatewayId);
+    obj.insert(QStringLiteral("portId"), portId);
+    obj.insert(QStringLiteral("deviceId"), deviceId);
+    obj.insert(QStringLiteral("slave_id"), deviceId);
+    obj.insert(QStringLiteral("target"), target);
+
+    m_pending.insert(rec.cmdId, rec);
+    emit commandStateChanged(rec.cmdId, rec.state);
+    emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
 void CommandManager::onCommandAck(const QJsonObject &obj)
 {
     const QString cmdId = obj.value("cmd_id").toString();

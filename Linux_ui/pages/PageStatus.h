@@ -61,8 +61,9 @@ public:
                           int alarmCount,
                           const QString &mqttState);
 
-    void setCurrentMaster(const QString &masterName, int slaveCount);
+    void setCurrentMaster(int masterSlot, const QString &masterName, int slaveCount);
     void setSlaveList(const QList<SlaveDeviceInfo> &slaveList);
+    void removeSlave(int masterSlot, int slaveAddr, const QString &deviceType);
     int currentMasterSlotValue() const;
     void updateSlaveOnline(int masterSlot,
                            int slaveAddr,
@@ -91,6 +92,7 @@ public:
 
 signals:
     void addSlaveRequested(int masterSlot);
+    void removeSlaveRequested(int masterSlot, int slaveAddr, const QString &deviceType);
     void masterChanged(int masterSlot);
     void slaveSelected(int masterSlot, int slaveAddr, const QString &deviceType);
     void relayCommandRequested(int masterSlot,
@@ -149,6 +151,7 @@ private:
     QLabel *currentPortLabel = nullptr;
 
     QPushButton *addSlaveButton = nullptr;
+    QPushButton *removeSlaveButton = nullptr;
     QLabel *alarmLabel = nullptr;
     QFrame *slaveListPanel = nullptr;
     QScrollArea *slaveScrollArea = nullptr;

@@ -350,6 +350,23 @@ void MainWindow::sendDeleteMasterData(const QString &gatewayId, const QString &p
         return;
     }
 
+    bool sentDeviceRemove = false;
+    if (m_device && m_command) {
+        const QList<DeviceNode> devices = m_device->allDevices();
+        for (const DeviceNode &device : devices) {
+            if (device.gatewayId != gatewayId || device.port != portId || device.deviceId <= 0) {
+                continue;
+            }
+
+            m_command->sendRemoveDeviceCommand(gatewayId, portId, device.deviceId);
+            sentDeviceRemove = true;
+        }
+    }
+
+    if (sentDeviceRemove) {
+        return;
+    }
+
     QJsonObject payload;
     payload.insert(QStringLiteral("type"), QStringLiteral("delete_master_data"));
     payload.insert(QStringLiteral("gatewayId"), gatewayId);
@@ -520,7 +537,7 @@ void MainWindow::initConnections()
             this, &MainWindow::sendDeleteMasterData);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::deleteDeviceDataRequested,
-            this, &MainWindow::sendDeleteDeviceData);
+            m_command, &CommandManager::sendRemoveDeviceCommand);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::addSlaveRequested,
             m_command, &CommandManager::sendAddDeviceCommand);

@@ -269,6 +269,43 @@ void Widget::initUI()
     });
 
     connect(pageStatus,
+            &PageStatus::removeSlaveRequested,
+            this,
+            [this](int masterSlot, int slaveAddr, const QString &deviceType) {
+                if (masterSlot < 0 || slaveAddr <= 0) {
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("从站信息无效");
+                    return;
+                }
+
+                if (!m_connectedMasterSlots.contains(masterSlot)) {
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("端口未连接");
+                    return;
+                }
+
+                QJsonObject payload;
+                payload.insert("slot", masterSlot);
+                payload.insert("slave_id", slaveAddr);
+
+                quint32 seq = 0;
+                if (m_operationOverlay)
+                    m_operationOverlay->showLoading("正在删除从站...");
+
+                if (!sendCommand("remove_device", payload, &seq)) {
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("删除命令发送失败");
+                    return;
+                }
+
+                m_pendingRemoveSlave.active = true;
+                m_pendingRemoveSlave.seq = seq;
+                m_pendingRemoveSlave.masterSlot = masterSlot;
+                m_pendingRemoveSlave.slaveAddr = slaveAddr;
+                m_pendingRemoveSlave.deviceType = deviceType;
+            });
+
+    connect(pageStatus,
             &PageStatus::relayCommandRequested,
             this,
             [this](int masterSlot,
@@ -357,6 +394,29 @@ void Widget::initUI()
                     return;
                 }
 
+                if (cmd == "remove_device" &&
+                    m_pendingRemoveSlave.active &&
+                    m_pendingRemoveSlave.seq == seq) {
+                    const bool ok = (status == "ok");
+                    const QString text = !message.isEmpty()
+                        ? message
+                        : (!reason.isEmpty() ? reason : (ok ? "Remove success" : "Remove failed"));
+
+                    if (ok) {
+                        removeRegisteredSlave(m_pendingRemoveSlave.masterSlot,
+                                              m_pendingRemoveSlave.slaveAddr,
+                                              m_pendingRemoveSlave.deviceType);
+                        refreshHomeMasterAndSlaveList(m_pendingRemoveSlave.masterSlot);
+                        if (m_operationOverlay)
+                            m_operationOverlay->showSuccess("从站已删除");
+                    } else if (m_operationOverlay) {
+                        m_operationOverlay->showFailure(text);
+                    }
+
+                    m_pendingRemoveSlave = PendingRemoveSlave();
+                    return;
+                }
+
                 if (!m_operationOverlay)
                     return;
 
@@ -372,6 +432,8 @@ void Widget::initUI()
                     m_operationOverlay->showSuccess("断开完成");
                 else if (cmd == "add_device")
                     m_operationOverlay->showSuccess("添加从站完成");
+                else if (cmd == "remove_device")
+                    m_operationOverlay->showSuccess("删除从站完成");
                 else if (cmd == "set_relay")
                     m_operationOverlay->showSuccess("继电器命令完成");
             });
@@ -475,6 +537,7 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
     m_slaveDevices.clear();
     m_relayStates.clear();
     m_pendingAddSlave = PendingAddSlave();
+    m_pendingRemoveSlave = PendingRemoveSlave();
     m_activeAlarmCount = 0;
 
     refreshHomeMasterAndSlaveList();
@@ -595,6 +658,26 @@ void Widget::upsertRegisteredSlave(int masterSlot,
     m_slaveDevices.append(info);
 }
 
+void Widget::removeRegisteredSlave(int masterSlot,
+                                   int slaveAddr,
+                                   const QString &deviceType)
+{
+    for (int i = m_slaveDevices.size() - 1; i >= 0; --i) {
+        const SlaveDeviceInfo &slave = m_slaveDevices.at(i);
+        if (slave.masterSlot != masterSlot ||
+            slave.slaveAddr != slaveAddr ||
+            slave.deviceType != deviceType) {
+            continue;
+        }
+
+        m_slaveDevices.removeAt(i);
+    }
+
+    m_relayStates.remove(relayStateKey(masterSlot, slaveAddr));
+    if (m_pageStatus)
+        m_pageStatus->removeSlave(masterSlot, slaveAddr, deviceType);
+}
+
 void Widget::updateSlaveOnline(int masterSlot,
                                int slaveAddr,
                                const QString &deviceType,
@@ -639,17 +722,21 @@ void Widget::refreshHomeMasterAndSlaveList(int preferredMasterSlot)
         : m_pageStatus->currentMasterSlotValue();
     if (targetSlot >= 0 && !m_connectedMasterSlots.contains(targetSlot))
         targetSlot = -1;
+    if (targetSlot < 0 && !connectedSlots.isEmpty())
+        targetSlot = connectedSlots.first();
 
 
-    const int currentSlot = m_pageStatus->currentMasterSlotValue();
     QList<SlaveDeviceInfo> visibleSlaves;
-    if (currentSlot >= 0) {
+    if (targetSlot >= 0) {
         for (const SlaveDeviceInfo &slave : m_slaveDevices) {
-            if (slave.masterSlot == currentSlot)
+            if (slave.masterSlot == targetSlot)
                 visibleSlaves.append(slave);
         }
     }
 
+    m_pageStatus->setCurrentMaster(targetSlot,
+                                   targetSlot >= 0 ? masterNameForSlot(targetSlot) : QString(),
+                                   visibleSlaves.size());
     m_pageStatus->setSlaveList(visibleSlaves);
     refreshStatusSummary();
 }
@@ -670,6 +757,8 @@ void Widget::clearMasterRuntimeState(int masterSlot)
 
     if (m_pendingAddSlave.active && m_pendingAddSlave.masterSlot == masterSlot)
         m_pendingAddSlave = PendingAddSlave();
+    if (m_pendingRemoveSlave.active && m_pendingRemoveSlave.masterSlot == masterSlot)
+        m_pendingRemoveSlave = PendingRemoveSlave();
 }
 
 void Widget::refreshStatusSummary()
