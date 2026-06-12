@@ -270,7 +270,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
             } else if (action == "clear_recovered_alarms" && m_alarm) {
                 m_alarm->clearRecoveredAlarms();
             } else if (action == "clear_all_data") {
-                m_data->clearAllData();
+                m_data->clearRuntimeData();
             }
         }
         m_pendingDeleteAction.clear();

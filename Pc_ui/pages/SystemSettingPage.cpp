@@ -124,9 +124,9 @@ void SystemSettingPage::onClearAllDataResult(const QJsonObject &obj)
     const QString reason = obj.value(QStringLiteral("reason")).toString();
 
     if (ok) {
-        setStatusText(QStringLiteral("数据库已清空"), true);
+        setStatusText(QStringLiteral("运行数据已清空"), true);
     } else {
-        setStatusText(reason.isEmpty() ? QStringLiteral("清空数据库失败") : reason, false);
+        setStatusText(reason.isEmpty() ? QStringLiteral("清空运行数据失败") : reason, false);
     }
 }
 
@@ -237,7 +237,7 @@ QWidget *SystemSettingPage::createDatabaseCard()
     auto *backupButton = new QPushButton(QStringLiteral("备份历史数据"), this);
     backupButton->setObjectName(QStringLiteral("SystemSettingOutlineButton"));
     backupButton->setEnabled(false);
-    m_clearDataButton = new QPushButton(QStringLiteral("清空数据库"), this);
+    m_clearDataButton = new QPushButton(QStringLiteral("清空运行数据"), this);
     m_clearDataButton->setObjectName(QStringLiteral("SystemSettingOutlineButton"));
     m_clearDataButton->setProperty("danger", true);
 
@@ -263,13 +263,13 @@ QWidget *SystemSettingPage::createDatabaseCard()
 
         const int ret = QMessageBox::question(
             this,
-            QStringLiteral("确认清空数据库"),
-            QStringLiteral("确定要清空所有数据库业务数据吗？该操作会删除设备、端口、网关、历史、最新点、报警和命令记录。"));
+            QStringLiteral("确认清空运行数据"),
+            QStringLiteral("确定要清空 PC 本地运行/消息数据吗？该操作只清空最新点、历史、报警和命令记录，不会删除设备、端口、网关注册信息，也不会删除板端设备。"));
         if (ret != QMessageBox::Yes) {
             return;
         }
 
-        setStatusText(QStringLiteral("正在清空数据库"), true);
+        setStatusText(QStringLiteral("正在清空运行数据"), true);
         emit clearAllDataRequested();
     });
 

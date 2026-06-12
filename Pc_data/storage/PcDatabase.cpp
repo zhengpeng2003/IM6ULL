@@ -787,7 +787,7 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
     return ok;
 }
 
-bool PcDatabase::clearAllData()
+bool PcDatabase::clearRuntimeData()
 {
     if (!m_db) {
         return false;
@@ -808,8 +808,13 @@ bool PcDatabase::clearAllData()
         execSql("ROLLBACK;");
     }
 
-    std::cout << "Clear test data " << (ok ? "ok" : "failed") << std::endl;
+    std::cout << "Clear runtime data " << (ok ? "ok" : "failed") << std::endl;
     return ok;
+}
+
+bool PcDatabase::clearAllData()
+{
+    return clearRuntimeData();
 }
 
 bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,

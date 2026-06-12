@@ -261,7 +261,7 @@ void IpcMessageHandler::handle(const std::string& msg)
     if (parseClearAllDataRequest(msg)) {
         bool dbOk = false;
         if (m_database.isOpen()) {
-            dbOk = m_database.clearAllData();
+            dbOk = m_database.clearRuntimeData();
         } else {
             std::cout << "clear_all_data skipped: database is not open" << std::endl;
         }
@@ -270,7 +270,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             m_dataService.clear();
         }
 
-        const std::string reason = dbOk ? "" : "clear_all_data_failed";
+        const std::string reason = dbOk ? "" : "clear_runtime_data_failed";
         m_ipc.sendMessage(buildDeleteDataAckJson("clear_all_data", dbOk, reason));
         sendLatestPoints(m_ipc, m_dataService, m_database);
         sendDevicesSnapshot(m_ipc, m_database);

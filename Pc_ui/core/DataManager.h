@@ -24,6 +24,7 @@ public:
     void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void removeMasterData(const QString &gatewayId, const QString &portId);
     void forgetRemovedDevice(const QString &gatewayId, const QString &portId, int deviceId);
+    void clearRuntimeData();
     void clearAllData();
     void markAllDevicesOffline();
 
