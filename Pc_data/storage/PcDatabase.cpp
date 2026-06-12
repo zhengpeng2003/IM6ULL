@@ -800,12 +800,7 @@ bool PcDatabase::clearAllData()
     bool ok = execSql("DELETE FROM alarm_event;") &&
               execSql("DELETE FROM telemetry_history;") &&
               execSql("DELETE FROM latest_point;") &&
-              execSql("DELETE FROM point_config;") &&
-              execSql("DELETE FROM device_status;") &&
-              execSql("DELETE FROM device;") &&
-              execSql("DELETE FROM command_log;") &&
-              execSql("DELETE FROM gateway_port;") &&
-              execSql("DELETE FROM gateway_status;");
+              execSql("DELETE FROM command_log;");
 
     if (ok) {
         ok = execSql("COMMIT;");
@@ -813,7 +808,7 @@ bool PcDatabase::clearAllData()
         execSql("ROLLBACK;");
     }
 
-    std::cout << "Clear all database data " << (ok ? "ok" : "failed") << std::endl;
+    std::cout << "Clear test data " << (ok ? "ok" : "failed") << std::endl;
     return ok;
 }
 
