@@ -61,7 +61,7 @@ private:
                            const QString &deviceType,
                            bool online);
     void refreshHomeMasterAndSlaveList(int preferredMasterSlot = -1);
-    void clearMasterRuntimeState(int masterSlot);
+    void markMasterRuntimeOffline(int masterSlot);
     void refreshStatusSummary();
     QString masterNameForSlot(int masterSlot) const;
     QString relayStateKey(int masterSlot, int slaveAddr) const;

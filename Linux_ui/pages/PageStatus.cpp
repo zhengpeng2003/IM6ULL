@@ -33,10 +33,40 @@ void PageStatus::setMasterSummary(int masterCount,
     //                           .arg(alarmCount));
 }
 
+void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters)
+{
+    if (!masterCombo)
+        return;
+
+    const int oldSlot = currentMasterSlot;
+    masterCombo->blockSignals(true);
+    masterCombo->clear();
+    for (const MasterStatusInfo &master : masters)
+        masterCombo->addItem(master.masterName, master.masterSlot);
+
+    int targetIndex = masterCombo->findData(oldSlot);
+    if (targetIndex < 0 && masterCombo->count() > 0)
+        targetIndex = 0;
+    if (targetIndex >= 0)
+        masterCombo->setCurrentIndex(targetIndex);
+    masterCombo->blockSignals(false);
+    masterCombo->setEnabled(masterCombo->count() > 0);
+}
+
 void PageStatus::setCurrentMaster(int masterSlot, const QString &masterName, int slaveCount)
 {
     currentMasterSlot = masterSlot;
     currentMasterName = masterName;
+    if (masterCombo) {
+        const int targetIndex = masterCombo->findData(masterSlot);
+        masterCombo->blockSignals(true);
+        if (targetIndex >= 0)
+            masterCombo->setCurrentIndex(targetIndex);
+        else if (masterCombo->count() > 0)
+            masterCombo->setCurrentIndex(0);
+        masterCombo->blockSignals(false);
+        masterCombo->setEnabled(masterCombo->count() > 0);
+    }
     refreshMasterLabels();
 
     if (listTitleLabel)
@@ -250,13 +280,16 @@ void PageStatus::initUI()
     addSlaveButton->setFixedWidth(58);
     addSlaveButton->setEnabled(false);
 
+    masterCombo = new QComboBox(this);
+    masterCombo->setObjectName("CompactCombo");
+    masterCombo->setFixedWidth(86);
+    masterCombo->setEnabled(false);
+
     QHBoxLayout *masterRow = new QHBoxLayout;
     masterRow->setContentsMargins(0, 0, 0, 0);
     masterRow->setSpacing(4);
 
-
-
-    masterRow->addStretch();
+    masterRow->addWidget(masterCombo);
     masterRow->addWidget(addSlaveButton);
 
     slaveListPanel = new QFrame(this);
@@ -439,6 +472,16 @@ void PageStatus::initUI()
 
     connect(addSlaveButton, &QPushButton::clicked, this, [this]() {
         emit addSlaveRequested(currentMasterSlot);
+    });
+    connect(masterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        if (!masterCombo || masterCombo->currentIndex() < 0)
+            return;
+
+        const int masterSlot = masterCombo->currentData().toInt(-1);
+        if (masterSlot == currentMasterSlot)
+            return;
+
+        emit masterChanged(masterSlot);
     });
     connect(removeSlaveButton, &QPushButton::clicked, this, [this]() {
         if (currentSlaveIndex < 0 || currentSlaveIndex >= slaves.size())
@@ -785,7 +828,7 @@ QString PageStatus::runtimeKey(int masterSlot, int slaveAddr, const QString &dev
 SlaveRuntimeInfo PageStatus::runtimeForSlave(const SlaveDeviceInfo &slave) const
 {
     SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
-    runtime.online = slave.online || runtime.online;
+    runtime.online = slave.online;
     return runtime;
 }
 

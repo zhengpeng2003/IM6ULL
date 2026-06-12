@@ -61,6 +61,7 @@ public:
                           int alarmCount,
                           const QString &mqttState);
 
+    void setMasterList(const QList<MasterStatusInfo> &masters);
     void setCurrentMaster(int masterSlot, const QString &masterName, int slaveCount);
     void setSlaveList(const QList<SlaveDeviceInfo> &slaveList);
     void removeSlave(int masterSlot, int slaveAddr, const QString &deviceType);
@@ -150,6 +151,7 @@ private:
     QLabel *listTitleLabel = nullptr;
     QLabel *currentPortLabel = nullptr;
 
+    QComboBox *masterCombo = nullptr;
     QPushButton *addSlaveButton = nullptr;
     QPushButton *removeSlaveButton = nullptr;
     QLabel *alarmLabel = nullptr;

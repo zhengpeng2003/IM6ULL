@@ -111,12 +111,8 @@ void Widget::initUI()
                 if (slot < 0 || deviceId <= 0 || deviceType.isEmpty())
                     return;
 
-                m_connectedMasterSlots.insert(slot);
                 upsertRegisteredSlave(slot, deviceId, deviceName, deviceType);
                 refreshHomeMasterAndSlaveList(slot);
-
-                if (m_operationOverlay)
-                    m_operationOverlay->showSuccess("从站已添加");
             });
     connect(pageStatus, &PageStatus::masterChanged, this, [this](int masterSlot) {
         refreshHomeMasterAndSlaveList(masterSlot);
@@ -238,6 +234,8 @@ void Widget::initUI()
                     info.connected = true;
                     m_runtimePorts.insert(slot, info);
                     refreshHomeMasterAndSlaveList(slot);
+                    if (message != "restored")
+                        (void)sendCommand("get_runtime_state");
                 } else {
                     m_connectedMasterSlots.remove(slot);
                     MasterPortInfo info = m_runtimePorts.value(slot);
@@ -249,7 +247,7 @@ void Widget::initUI()
                         info.baudRate = baud;
                     info.connected = false;
                     m_runtimePorts.insert(slot, info);
-                    clearMasterRuntimeState(slot);
+                    markMasterRuntimeOffline(slot);
                     refreshHomeMasterAndSlaveList();
                 }
 
@@ -798,6 +796,7 @@ void Widget::refreshHomeMasterAndSlaveList(int preferredMasterSlot)
         m_pageTrend->setMasterList(masters);
         m_pageTrend->setSlaveList(m_slaveDevices);
     }
+    m_pageStatus->setMasterList(masters);
 
     int targetSlot = preferredMasterSlot >= 0
         ? preferredMasterSlot
@@ -823,11 +822,11 @@ void Widget::refreshHomeMasterAndSlaveList(int preferredMasterSlot)
     refreshStatusSummary();
 }
 
-void Widget::clearMasterRuntimeState(int masterSlot)
+void Widget::markMasterRuntimeOffline(int masterSlot)
 {
-    for (int i = m_slaveDevices.size() - 1; i >= 0; --i) {
-        if (m_slaveDevices.at(i).masterSlot == masterSlot)
-            m_slaveDevices.removeAt(i);
+    for (SlaveDeviceInfo &slave : m_slaveDevices) {
+        if (slave.masterSlot == masterSlot)
+            slave.online = false;
     }
 
     const QString keyPrefix = QString("%1:").arg(masterSlot);
