@@ -15,7 +15,7 @@ public:
     explicit IpcClient(QObject *parent = nullptr);
     ~IpcClient();
 
-    bool connectToServer(const QString &path);
+    bool connectToServer(const QString &path, int timeoutMs = 3000);
     bool isConnected() const;
     bool sendMessage(const QByteArray &msg);
 

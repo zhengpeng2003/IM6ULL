@@ -112,6 +112,15 @@ static int handle_scan_ports(uint32_t seq, struct json_object *root, const char 
     return CMD_PROCESS_HANDLED;
 }
 
+static int handle_get_runtime_state(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
+
+    return port_manager_send_runtime_state(seq, cmd) == 0
+        ? CMD_PROCESS_HANDLED
+        : CMD_PROCESS_ERROR;
+}
+
 static int handle_connect_port(uint32_t seq, struct json_object *root, const char *cmd)
 {
     int slot = 0;
@@ -449,6 +458,7 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
 
 static const command_entry_t command_table[] = {
     {"scan_ports", handle_scan_ports},
+    {"get_runtime_state", handle_get_runtime_state},
     {"connect_port", handle_connect_port},
     {"disconnect_port", handle_disconnect_port},
     {"add_device", handle_add_device},

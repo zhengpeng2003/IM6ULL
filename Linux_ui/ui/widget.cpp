@@ -27,6 +27,18 @@ void Widget::initUI()
 {
     _Myclient = new IpcClient(this);
     _Myclient->connectToServer("/tmp/device_ipc.sock");
+    m_ipcReconnectTimer = new QTimer(this);
+    m_ipcReconnectTimer->setInterval(2000);
+    connect(m_ipcReconnectTimer, &QTimer::timeout, this, [this]() {
+        if (!_Myclient || _Myclient->isConnected()) {
+            stopIpcAutoReconnect();
+            return;
+        }
+
+        if (_Myclient->connectToServer("/tmp/device_ipc.sock", 300)) {
+            stopIpcAutoReconnect();
+        }
+    });
 
     TopStatusBar *top = new TopStatusBar(this);
     BottomNavBar *bottom = new BottomNavBar(this);
@@ -159,15 +171,37 @@ void Widget::initUI()
         qDebug() << "[IPC][portsUpdated] count:" << ports.size() << "ports:" << ports;
 
         QList<MasterPortInfo> portInfos;
+        QSet<int> addedSlots;
         for (int i = 0; i < ports.size(); ++i) {
             MasterPortInfo info;
-            info.masterSlot = i;
-            info.masterName = QString("RS485-%1").arg(i + 1);
             info.deviceNode = ports.at(i);
+            info.masterSlot = i;
+            for (auto it = m_runtimePorts.constBegin(); it != m_runtimePorts.constEnd(); ++it) {
+                if (it.value().deviceNode == info.deviceNode) {
+                    info.masterSlot = it.key();
+                    break;
+                }
+            }
+            info.masterName = masterNameForSlot(info.masterSlot);
             info.areaName = QString();
             info.baudRate = 9600;
             info.connected = false;
+            if (m_runtimePorts.contains(info.masterSlot)) {
+                const MasterPortInfo cached = m_runtimePorts.value(info.masterSlot);
+                info.baudRate = cached.baudRate > 0 ? cached.baudRate : info.baudRate;
+                info.connected = cached.connected && cached.deviceNode == info.deviceNode;
+            }
             portInfos.append(info);
+            addedSlots.insert(info.masterSlot);
+        }
+
+        for (auto it = m_runtimePorts.constBegin(); it != m_runtimePorts.constEnd(); ++it) {
+            const MasterPortInfo cached = it.value();
+            if (addedSlots.contains(it.key()) || cached.deviceNode.isEmpty())
+                continue;
+
+            portInfos.append(cached);
+            addedSlots.insert(it.key());
         }
 
         pageSetting->setPortList(portInfos);
@@ -196,9 +230,25 @@ void Widget::initUI()
 
                 if (connected) {
                     m_connectedMasterSlots.insert(slot);
+                    MasterPortInfo info = m_runtimePorts.value(slot);
+                    info.masterSlot = slot;
+                    info.masterName = masterNameForSlot(slot);
+                    info.deviceNode = port;
+                    info.baudRate = baud > 0 ? baud : 9600;
+                    info.connected = true;
+                    m_runtimePorts.insert(slot, info);
                     refreshHomeMasterAndSlaveList(slot);
                 } else {
                     m_connectedMasterSlots.remove(slot);
+                    MasterPortInfo info = m_runtimePorts.value(slot);
+                    info.masterSlot = slot;
+                    info.masterName = masterNameForSlot(slot);
+                    if (!port.isEmpty())
+                        info.deviceNode = port;
+                    if (baud > 0)
+                        info.baudRate = baud;
+                    info.connected = false;
+                    m_runtimePorts.insert(slot, info);
                     clearMasterRuntimeState(slot);
                     refreshHomeMasterAndSlaveList();
                 }
@@ -475,6 +525,8 @@ void Widget::initUI()
 
     connect(_Myclient, &IpcClient::errorOccured, this, [this](const QString &err) {
         qDebug() << "[IPC][error]" << err;
+        if (!_Myclient || !_Myclient->isConnected())
+            startIpcAutoReconnect();
     });
 
     stack->setCurrentIndex(0);
@@ -514,12 +566,15 @@ void Widget::resizeEvent(QResizeEvent *event)
 
 void Widget::handleIpcConnected(TopStatusBar *topBar, Pageinfo *pageInfo)
 {
+    stopIpcAutoReconnect();
     if (topBar)
         topBar->setBackendConnected(true);
     if (pageInfo)
         pageInfo->setIpcConnected(true);
     if (m_pageStatus)
         m_pageStatus->setAlarmText("告警：--");
+
+    requestRuntimeRefresh();
 }
 
 void Widget::handleIpcDisconnected(TopStatusBar *topBar,
@@ -536,6 +591,7 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
     m_connectedMasterSlots.clear();
     m_slaveDevices.clear();
     m_relayStates.clear();
+    m_runtimePorts.clear();
     m_pendingAddSlave = PendingAddSlave();
     m_pendingRemoveSlave = PendingRemoveSlave();
     m_activeAlarmCount = 0;
@@ -551,6 +607,32 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
 
     if (m_operationOverlay)
         m_operationOverlay->showFailure("IPC 未连接，请重新连接后端");
+
+    startIpcAutoReconnect();
+}
+
+void Widget::startIpcAutoReconnect()
+{
+    if (!m_ipcReconnectTimer || (_Myclient && _Myclient->isConnected()))
+        return;
+
+    if (!m_ipcReconnectTimer->isActive())
+        m_ipcReconnectTimer->start();
+}
+
+void Widget::stopIpcAutoReconnect()
+{
+    if (m_ipcReconnectTimer && m_ipcReconnectTimer->isActive())
+        m_ipcReconnectTimer->stop();
+}
+
+void Widget::requestRuntimeRefresh()
+{
+    if (!_Myclient || !_Myclient->isConnected())
+        return;
+
+    (void)sendCommand("get_runtime_state");
+    (void)sendCommand("scan_ports");
 }
 
 void Widget::handleDeviceStatus(const DataPack &pack)

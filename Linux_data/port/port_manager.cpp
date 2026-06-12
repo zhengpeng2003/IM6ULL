@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <thread>
+#include <map>
 
 namespace {
 
@@ -53,6 +54,11 @@ struct ManagedDevice {
 struct LatestDeviceStatus {
     int slot = 0;
     device_data_t data = {};
+};
+
+struct SavedPortConfig {
+    std::string port;
+    int baud = 9600;
 };
 
 struct PortChannel {
@@ -476,6 +482,215 @@ struct PortManager::Impl {
         }
 
         json_object_put(root);
+    }
+
+    json_object *createRuntimeStateLocked(uint32_t seq,
+                                          const char *cmd,
+                                          const std::map<int, SavedPortConfig> &saved_configs)
+    {
+        json_object *root = json_object_new_object();
+        json_object *ports = json_object_new_array();
+        if (!root || !ports) {
+            if (root)
+                json_object_put(root);
+            if (ports)
+                json_object_put(ports);
+            return nullptr;
+        }
+
+        addString(root, "type", "runtime_state");
+        json_object_object_add(root, "seq", json_object_new_int64(seq));
+        addString(root, "cmd", cmd ? cmd : "get_runtime_state");
+        json_object_object_add(root, "timestampMs", json_object_new_int64(currentTimeMs()));
+
+        for (int slot = 0; slot < kSlotCount; ++slot) {
+            const PortChannel &channel = channels[slot];
+            auto saved = saved_configs.find(slot);
+            const std::string display_port = !channel.port.empty()
+                ? channel.port
+                : (saved != saved_configs.end() ? saved->second.port : std::string());
+            const int display_baud = channel.baud > 0
+                ? channel.baud
+                : (saved != saved_configs.end() ? saved->second.baud : 0);
+
+            json_object *port = json_object_new_object();
+            json_object *devices = json_object_new_array();
+            if (!port || !devices) {
+                if (port)
+                    json_object_put(port);
+                if (devices)
+                    json_object_put(devices);
+                continue;
+            }
+
+            json_object_object_add(port, "slot", json_object_new_int(slot));
+            addString(port, "portId", portIdForSlot(slot));
+            addString(port, "portName", portNameForSlot(slot));
+            addString(port, "port", display_port.c_str());
+            json_object_object_add(port, "baud", json_object_new_int(display_baud));
+            json_object_object_add(port, "connected", json_object_new_boolean(channel.connected));
+
+            for (const ManagedDevice &device : channel.devices) {
+                if (!device.sensor)
+                    continue;
+
+                json_object *dev = json_object_new_object();
+                if (!dev)
+                    continue;
+
+                json_object_object_add(dev, "deviceId", json_object_new_int(device.sensor->slaveId()));
+                char device_name[MAX_DEVICE_NAME_LEN];
+                snprintf(device_name, sizeof(device_name), "Device %d", device.sensor->slaveId());
+                addString(dev, "deviceName", device_name);
+                addString(dev, "deviceType", device.sensor->deviceTypeName());
+                json_object_object_add(dev,
+                                       "pollIntervalMs",
+                                       json_object_new_int(device.sensor->pollIntervalMs()));
+                json_object_array_add(devices, dev);
+            }
+
+            json_object_object_add(port, "devices", devices);
+            json_object_array_add(ports, port);
+        }
+
+        json_object_object_add(root, "ports", ports);
+        return root;
+    }
+
+    void sendRuntimeState(uint32_t seq, const char *cmd)
+    {
+        const std::map<int, SavedPortConfig> saved_configs = loadSavedPortConfigs();
+        json_object *root = nullptr;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            root = createRuntimeStateLocked(seq, cmd, saved_configs);
+        }
+
+        if (!root)
+            return;
+
+        const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (payload)
+            (void)ipc_server_send(payload);
+        json_object_put(root);
+    }
+
+    void sendPortStatus(int slot, bool connected, const char *message, const char *port_override = nullptr, int baud_override = 0)
+    {
+        json_object *root = json_object_new_object();
+        if (!root)
+            return;
+
+        std::string port;
+        int baud = 0;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            if (!validSlot(slot)) {
+                json_object_put(root);
+                return;
+            }
+            port = port_override ? port_override : channels[slot].port;
+            baud = baud_override > 0 ? baud_override : channels[slot].baud;
+        }
+
+        addString(root, "type", "port_status");
+        json_object_object_add(root, "slot", json_object_new_int(slot));
+        addString(root, "port", port.c_str());
+        addString(root, "device_type", "unknown");
+        json_object_object_add(root, "baud", json_object_new_int(baud));
+        json_object_object_add(root, "connected", json_object_new_boolean(connected));
+        addString(root, "message", message ? message : "");
+
+        const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (payload)
+            (void)ipc_server_send(payload);
+        json_object_put(root);
+    }
+
+    void publishDeviceRegistersForSlot(uint32_t seq, int slot)
+    {
+        struct DeviceRegisterInfo {
+            int slave_id = 0;
+            std::string device_type;
+            int poll_interval_ms = 1000;
+        };
+
+        std::vector<DeviceRegisterInfo> devices;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            if (!validSlot(slot))
+                return;
+
+            for (const ManagedDevice &device : channels[slot].devices) {
+                if (!device.sensor)
+                    continue;
+
+                DeviceRegisterInfo info;
+                info.slave_id = device.sensor->slaveId();
+                info.device_type = device.sensor->deviceTypeName();
+                info.poll_interval_ms = device.sensor->pollIntervalMs();
+                devices.push_back(info);
+            }
+        }
+
+        for (const DeviceRegisterInfo &device : devices) {
+            (void)data_publish_device_register(seq,
+                                               slot,
+                                               device.slave_id,
+                                               device.device_type.c_str(),
+                                               device.poll_interval_ms);
+        }
+    }
+
+    std::map<int, SavedPortConfig> loadSavedPortConfigs()
+    {
+        std::map<int, SavedPortConfig> configs;
+        json_object *root = loadDeviceConfigRoot();
+        if (!root)
+            return configs;
+
+        json_object *devices = nullptr;
+        if (!json_object_object_get_ex(root, "devices", &devices) ||
+            !json_object_is_type(devices, json_type_array)) {
+            json_object_put(root);
+            return configs;
+        }
+
+        const int count = json_object_array_length(devices);
+        for (int i = 0; i < count; ++i) {
+            json_object *item = json_object_array_get_idx(devices, i);
+            if (!item)
+                continue;
+
+            json_object *v = nullptr;
+            int slot = -1;
+            if (json_object_object_get_ex(item, "slot", &v))
+                slot = json_object_get_int(v);
+            if (!validSlot(slot))
+                continue;
+
+            const char *port = "";
+            if (json_object_object_get_ex(item, "port", &v))
+                port = json_object_get_string(v);
+            if (!port || port[0] == '\0')
+                continue;
+
+            int baud = 9600;
+            if (json_object_object_get_ex(item, "baud", &v))
+                baud = json_object_get_int(v);
+            if (baud <= 0)
+                baud = 9600;
+
+            if (configs.find(slot) == configs.end()) {
+                SavedPortConfig config;
+                config.port = port;
+                config.baud = baud;
+                configs[slot] = config;
+            }
+        }
+
+        json_object_put(root);
+        return configs;
     }
 
     void publishThresholdAlarm(int slot,
@@ -997,6 +1212,69 @@ void PortManager::publishLatestStatus()
     impl_->publishLatestStatus();
 }
 
+void PortManager::restoreSavedConnections()
+{
+    const std::map<int, SavedPortConfig> configs = impl_->loadSavedPortConfigs();
+    if (configs.empty())
+        return;
+
+    const std::vector<std::string> available_ports = scanAvailablePorts();
+    for (const auto &entry : configs) {
+        const int slot = entry.first;
+        const SavedPortConfig &config = entry.second;
+        if (std::find(available_ports.begin(), available_ports.end(), config.port) ==
+            available_ports.end()) {
+            printf("[PortManager] restore skip slot=%d port=%s reason=port_not_found\n",
+                   slot,
+                   config.port.c_str());
+            impl_->sendPortStatus(slot,
+                                  false,
+                                  "port_not_found",
+                                  config.port.c_str(),
+                                  config.baud);
+            continue;
+        }
+
+        char reason[MAX_ACK_MSG_LEN] = "";
+        const int ret = connectPort(slot,
+                                    config.port.c_str(),
+                                    config.baud,
+                                    reason,
+                                    sizeof(reason));
+        if (ret == 0) {
+            printf("[PortManager] restore connected slot=%d port=%s baud=%d\n",
+                   slot,
+                   config.port.c_str(),
+                   config.baud);
+            impl_->sendPortStatus(slot, true, "restored");
+            (void)data_publish_port_register(0,
+                                             slot,
+                                             config.port.c_str(),
+                                             config.baud,
+                                             "connected");
+            impl_->publishDeviceRegistersForSlot(0, slot);
+        } else {
+            printf("[PortManager] restore failed slot=%d port=%s reason=%s\n",
+                   slot,
+                   config.port.c_str(),
+                   reason);
+            impl_->sendPortStatus(slot,
+                                  false,
+                                  reason[0] ? reason : "restore_failed",
+                                  config.port.c_str(),
+                                  config.baud);
+        }
+    }
+
+    impl_->sendRuntimeState(0, "restore_saved_connections");
+}
+
+int PortManager::sendRuntimeState(uint32_t seq, const char *cmd)
+{
+    impl_->sendRuntimeState(seq, cmd);
+    return 0;
+}
+
 int PortManager::addDevice(int slot,
                            int slave_id,
                            const char *device_type,
@@ -1478,4 +1756,14 @@ extern "C" int port_manager_export_config_snapshot(uint32_t seq,
 extern "C" void port_manager_publish_latest_status(void)
 {
     g_manager.publishLatestStatus();
+}
+
+extern "C" void port_manager_restore_saved_connections(void)
+{
+    g_manager.restoreSavedConnections();
+}
+
+extern "C" int port_manager_send_runtime_state(uint32_t seq, const char *cmd)
+{
+    return g_manager.sendRuntimeState(seq, cmd);
 }

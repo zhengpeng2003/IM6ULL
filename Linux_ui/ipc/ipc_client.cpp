@@ -37,7 +37,7 @@ IpcClient::~IpcClient()
     m_socket->disconnectFromServer();
 }
 
-bool IpcClient::connectToServer(const QString &path)
+bool IpcClient::connectToServer(const QString &path, int timeoutMs)
 {
     if (m_socket->state() == QLocalSocket::ConnectedState)
         return true;
@@ -46,7 +46,7 @@ bool IpcClient::connectToServer(const QString &path)
     m_socket->abort();
     m_socket->connectToServer(serverName);
 
-    if (!m_socket->waitForConnected(3000)) {
+    if (!m_socket->waitForConnected(timeoutMs)) {
         emit errorOccured(m_socket->errorString());
         return false;
     }
@@ -144,6 +144,44 @@ void IpcClient::onReadyRead()
             QStringList ports;
             for (const auto &v : root.value("ports").toArray())
                 ports.append(v.toString());
+            emit portsUpdated(ports);
+            continue;
+        }
+
+        if (msgType == "runtime_state") {
+            QStringList ports;
+            const QJsonArray portArray = root.value("ports").toArray();
+            for (const auto &portValue : portArray) {
+                const QJsonObject portObj = portValue.toObject();
+                const int slot = portObj.value("slot").toInt();
+                const QString port = portObj.value("port").toString();
+                const int baud = portObj.value("baud").toInt();
+                const bool connected = portObj.value("connected").toBool();
+                if (port.isEmpty() && !connected)
+                    continue;
+                if (!port.isEmpty())
+                    ports.append(port);
+
+                emit portStatusUpdated(slot,
+                                       port,
+                                       QStringLiteral("unknown"),
+                                       baud,
+                                       connected,
+                                       connected ? QStringLiteral("restored") : QStringLiteral("disconnected"));
+
+                const QJsonArray devices = portObj.value("devices").toArray();
+                for (const auto &deviceValue : devices) {
+                    const QJsonObject deviceObj = deviceValue.toObject();
+                    emit deviceRegistered(
+                        static_cast<quint32>(root.value("seq").toVariant().toULongLong()),
+                        slot,
+                        deviceObj.value("deviceId").toInt(),
+                        deviceObj.value("deviceName").toString(),
+                        deviceObj.value("deviceType").toString(),
+                        deviceObj.value("pollIntervalMs").toInt(1000));
+                }
+            }
+
             emit portsUpdated(ports);
             continue;
         }

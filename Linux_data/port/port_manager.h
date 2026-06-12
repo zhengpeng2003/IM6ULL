@@ -52,6 +52,8 @@ public:
                                  char *buffer,
                                  size_t buffer_size);
     void publishLatestStatus();
+    void restoreSavedConnections();
+    int sendRuntimeState(uint32_t seq, const char *cmd);
 
 private:
     struct Impl;
@@ -105,6 +107,8 @@ int port_manager_export_config_snapshot(uint32_t seq,
                                         char *buffer,
                                         size_t buffer_size);
 void port_manager_publish_latest_status(void);
+void port_manager_restore_saved_connections(void);
+int port_manager_send_runtime_state(uint32_t seq, const char *cmd);
 
 #ifdef __cplusplus
 }

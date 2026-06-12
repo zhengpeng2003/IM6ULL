@@ -7,6 +7,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QHash>
+#include <QTimer>
 #include "ui/TopStatusBar.h"
 #include "ui/BottomNavBar.h"
 #include "ui/operationoverlaywidget.h"
@@ -45,6 +46,9 @@ private:
                                Pageinfo *pageInfo,
                                PageSetting *pageSetting);
     void handleDeviceStatus(const DataPack &pack);
+    void startIpcAutoReconnect();
+    void stopIpcAutoReconnect();
+    void requestRuntimeRefresh();
     void upsertRegisteredSlave(int masterSlot,
                                int slaveAddr,
                                const QString &deviceName,
@@ -89,6 +93,8 @@ private:
     QSet<int> m_connectedMasterSlots;
     QList<SlaveDeviceInfo> m_slaveDevices;
     QHash<QString, int> m_relayStates;
+    QHash<int, MasterPortInfo> m_runtimePorts;
+    QTimer *m_ipcReconnectTimer = nullptr;
     PendingAddSlave m_pendingAddSlave;
     PendingRemoveSlave m_pendingRemoveSlave;
     int m_activeAlarmCount = 0;
