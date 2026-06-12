@@ -202,11 +202,8 @@ void DataManager::removeMasterData(const QString &gatewayId, const QString &port
     emit realtimeDataUpdated();
 }
 
-void DataManager::clearAllData()
+void DataManager::clearRuntimeData()
 {
-    if (m_deviceManager) {
-        m_deviceManager->clearAll();
-    }
     if (m_alarmManager) {
         m_alarmManager->clearAllAlarms();
     }
@@ -214,11 +211,14 @@ void DataManager::clearAllData()
     {
         QMutexLocker locker(&m_mutex);
         m_realtimeMap.clear();
-        m_deletedDevices.clear();
     }
 
-    emit deviceTreeChanged();
     emit realtimeDataUpdated();
+}
+
+void DataManager::clearAllData()
+{
+    clearRuntimeData();
 }
 
 void DataManager::markAllDevicesOffline()
