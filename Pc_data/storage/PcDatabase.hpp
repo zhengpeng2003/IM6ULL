@@ -36,6 +36,19 @@ struct GatewayPort
     std::int64_t updateTimeMs = 0;
 };
 
+struct ConfigSnapshotDevice
+{
+    DeviceRecord device;
+    std::string thresholdConfigJson;
+    bool thresholdEnabled = false;
+};
+
+struct DbSelectedDevice
+{
+    std::string portId;
+    int deviceId = 0;
+};
+
 class PcDatabase
 {
 public:
@@ -83,6 +96,11 @@ public:
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);
     bool clearRecoveredAlarms();
+    bool replaceSelectedDeviceConfig(const std::string& gatewayId,
+                                     const std::vector<DbSelectedDevice>& selectedDevices,
+                                     const std::vector<GatewayPort>& ports,
+                                     const std::vector<ConfigSnapshotDevice>& devices,
+                                     const std::vector<PointConfig>& pointConfigs);
 
     bool isOpen() const;
     void close();

@@ -11,6 +11,7 @@
 #include "mqtt/MqttClient.hpp"
 #include "mqtt/MqttConfig.hpp"
 #include "mqtt/MqttMessageHandler.hpp"
+#include "protocol/PcDataMessages.hpp"
 #include "service/PcDataService.hpp"
 #include "storage/PcDatabase.hpp"
 
@@ -102,6 +103,16 @@ int main()
                 const int staleGatewayChanged = database.markStaleGateways(nowMs, 30000);
                 if (staleGatewayChanged > 0 && ipc.hasClient()) {
                     sendGatewayStatusSnapshot(ipc, database);
+                }
+                const std::vector<SyncConfigResult> syncTimeouts =
+                    dataService.collectSyncConfigTimeouts(nowMs, 5000);
+                for (const SyncConfigResult& result : syncTimeouts) {
+                    if (ipc.hasClient()) {
+                        ipc.sendMessage(buildSyncConfigResultJson(result.success,
+                                                                  result.message,
+                                                                  result.portCount,
+                                                                  result.deviceCount));
+                    }
                 }
             }
             this_thread::sleep_for(chrono::seconds(1));

@@ -1,6 +1,7 @@
 #ifndef PC_DATA_SERVICE_HPP
 #define PC_DATA_SERVICE_HPP
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -8,6 +9,36 @@
 
 #include "model/TelemetryPack.hpp"
 #include "model/TelemetryPoint.hpp"
+
+struct SyncSelectedDevice
+{
+    std::string portId;
+    int deviceId = 0;
+};
+
+struct SyncGatewaySelection
+{
+    std::string gatewayId;
+    std::vector<SyncSelectedDevice> devices;
+};
+
+struct SyncGatewayPending
+{
+    int requestId = 0;
+    std::int64_t seq = 0;
+    std::string gatewayId;
+    std::vector<SyncSelectedDevice> devices;
+    std::int64_t requestTimeMs = 0;
+};
+
+struct SyncConfigResult
+{
+    bool ready = false;
+    bool success = false;
+    std::string message;
+    int portCount = 0;
+    int deviceCount = 0;
+};
 
 /*
  * PcDataService
@@ -47,6 +78,17 @@ public:
     bool removeMasterData(const std::string& gatewayId,
                           const std::string& portId);
 
+    std::vector<SyncGatewayPending> beginSyncConfigRequest(const std::vector<SyncGatewaySelection>& targets);
+    bool findSyncPending(std::int64_t seq, SyncGatewayPending& pending) const;
+    bool completeSyncConfig(std::int64_t seq,
+                            bool success,
+                            const std::string& message,
+                            int portCount,
+                            int deviceCount,
+                            SyncConfigResult& result);
+    std::vector<SyncConfigResult> collectSyncConfigTimeouts(std::int64_t nowMs,
+                                                            std::int64_t timeoutMs);
+
     // 清空当前快照
     void clear();
 
@@ -73,6 +115,11 @@ private:
      *     = 从站1湿度最新值
      */
     std::unordered_map<std::string, TelemetryPoint> m_snapshot;
+    std::unordered_map<std::int64_t, SyncGatewayPending> m_syncPendingBySeq;
+    std::unordered_map<int, std::vector<SyncGatewayPending> > m_syncRequests;
+    std::unordered_map<int, SyncConfigResult> m_syncRequestResults;
+    int m_nextSyncRequestId = 1;
+    std::int64_t m_nextSyncSeq = 1;
 };
 
 #endif // PC_DATA_SERVICE_HPP

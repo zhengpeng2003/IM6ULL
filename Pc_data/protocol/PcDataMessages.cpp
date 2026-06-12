@@ -458,6 +458,24 @@ std::string buildMqttConfigAckJson(bool ok,
     return oss.str();
 }
 
+std::string buildSyncConfigResultJson(bool success,
+                                      const std::string& message,
+                                      int portCount,
+                                      int deviceCount)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"sync_config_result\",";
+    oss << "\"success\":" << (success ? "true" : "false") << ",";
+    oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    oss << "\"portCount\":" << portCount << ",";
+    oss << "\"deviceCount\":" << deviceCount;
+    oss << "}";
+
+    return oss.str();
+}
+
 bool parseSaveMqttConfigRequest(const std::string& msg,
                                 MqttConfig& config,
                                 std::string& reason)

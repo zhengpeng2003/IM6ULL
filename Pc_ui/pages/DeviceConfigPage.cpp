@@ -12,6 +12,8 @@
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMap>
 #include <QMessageBox>
@@ -20,6 +22,8 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
 namespace {
@@ -65,9 +69,11 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     auto *masterHeader = new QHBoxLayout;
     auto *masterTitle = new QLabel(QStringLiteral("主站配置"), this);
     masterTitle->setObjectName("PageTitle");
+    m_syncButton = new QPushButton(QStringLiteral("配置同步"), this);
     auto *scanMaster = new QPushButton(QStringLiteral("扫描主站"), this);
     masterHeader->addWidget(masterTitle);
     masterHeader->addStretch();
+    masterHeader->addWidget(m_syncButton);
     masterHeader->addWidget(scanMaster);
     layout->addLayout(masterHeader);
 
@@ -117,6 +123,7 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     layout->addWidget(m_slaveTable, 1);
 
     connect(scanMaster, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
+    connect(m_syncButton, &QPushButton::clicked, this, &DeviceConfigPage::showSyncConfigDialog);
     connect(addSlave, &QPushButton::clicked, this, &DeviceConfigPage::showAddSlaveDialog);
     connect(scanSlave, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
 
@@ -401,6 +408,213 @@ void DeviceConfigPage::showAddSlaveDialog()
                            slaveAddr->value(),
                            deviceType->currentData().toString(),
                            pollInterval->value());
+}
+
+void DeviceConfigPage::showSyncConfigDialog()
+{
+    const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
+    if (devices.isEmpty()) {
+        QMessageBox::information(this,
+                                 QStringLiteral("配置同步"),
+                                 QStringLiteral("当前没有可选择的设备。"));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("选择同步设备"));
+    dialog.resize(520, 420);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *tip = new QLabel(QStringLiteral("请选择需要从板端同步配置的网关/端口/设备："), &dialog);
+    layout->addWidget(tip);
+
+    auto *tree = new QTreeWidget(&dialog);
+    tree->setColumnCount(1);
+    tree->setHeaderLabel(QStringLiteral("设备"));
+    layout->addWidget(tree, 1);
+
+    QMap<QString, QTreeWidgetItem *> gatewayItems;
+    QMap<QString, QTreeWidgetItem *> portItems;
+    bool updating = false;
+
+    for (const DeviceNode &device : devices) {
+        if (device.gatewayId.isEmpty() || device.port.isEmpty() || device.deviceId <= 0) {
+            continue;
+        }
+
+        QTreeWidgetItem *gatewayItem = gatewayItems.value(device.gatewayId, nullptr);
+        if (!gatewayItem) {
+            const QString gatewayText = device.gatewayName.isEmpty()
+                ? device.gatewayId
+                : QStringLiteral("%1 (%2)").arg(device.gatewayName, device.gatewayId);
+            gatewayItem = new QTreeWidgetItem(tree, QStringList{gatewayText});
+            gatewayItem->setFlags(gatewayItem->flags() | Qt::ItemIsUserCheckable);
+            gatewayItem->setCheckState(0, Qt::Unchecked);
+            gatewayItem->setData(0, Qt::UserRole, QStringLiteral("gateway"));
+            gatewayItems.insert(device.gatewayId, gatewayItem);
+        }
+
+        const QString portKey = masterKey(device.gatewayId, device.port);
+        QTreeWidgetItem *portItem = portItems.value(portKey, nullptr);
+        if (!portItem) {
+            const QString portText = QStringLiteral("%1 (%2)").arg(defaultPortName(device), device.port);
+            portItem = new QTreeWidgetItem(gatewayItem, QStringList{portText});
+            portItem->setFlags(portItem->flags() | Qt::ItemIsUserCheckable);
+            portItem->setCheckState(0, Qt::Unchecked);
+            portItem->setData(0, Qt::UserRole, QStringLiteral("port"));
+            portItem->setData(0, Qt::UserRole + 1, device.gatewayId);
+            portItem->setData(0, Qt::UserRole + 2, device.port);
+            portItems.insert(portKey, portItem);
+        }
+
+        const QString deviceText = QStringLiteral("%1  地址:%2  类型:%3")
+            .arg(device.deviceName.isEmpty() ? QStringLiteral("Device %1").arg(device.deviceId) : device.deviceName)
+            .arg(device.deviceId)
+            .arg(device.deviceType);
+        auto *deviceItem = new QTreeWidgetItem(portItem, QStringList{deviceText});
+        deviceItem->setFlags(deviceItem->flags() | Qt::ItemIsUserCheckable);
+        deviceItem->setCheckState(0, Qt::Unchecked);
+        deviceItem->setData(0, Qt::UserRole, QStringLiteral("device"));
+        deviceItem->setData(0, Qt::UserRole + 1, device.gatewayId);
+        deviceItem->setData(0, Qt::UserRole + 2, device.port);
+        deviceItem->setData(0, Qt::UserRole + 3, device.deviceId);
+    }
+
+    connect(tree, &QTreeWidget::itemChanged, &dialog, [&](QTreeWidgetItem *item, int column) {
+        if (updating || column != 0) {
+            return;
+        }
+
+        updating = true;
+        const Qt::CheckState state = item->checkState(0);
+        for (int i = 0; i < item->childCount(); ++i) {
+            item->child(i)->setCheckState(0, state);
+            for (int j = 0; j < item->child(i)->childCount(); ++j) {
+                item->child(i)->child(j)->setCheckState(0, state);
+            }
+        }
+
+        QTreeWidgetItem *parent = item->parent();
+        while (parent) {
+            int checked = 0;
+            int partial = 0;
+            for (int i = 0; i < parent->childCount(); ++i) {
+                const Qt::CheckState childState = parent->child(i)->checkState(0);
+                if (childState == Qt::Checked) ++checked;
+                if (childState == Qt::PartiallyChecked) ++partial;
+            }
+            if (checked == parent->childCount()) {
+                parent->setCheckState(0, Qt::Checked);
+            } else if (checked > 0 || partial > 0) {
+                parent->setCheckState(0, Qt::PartiallyChecked);
+            } else {
+                parent->setCheckState(0, Qt::Unchecked);
+            }
+            parent = parent->parent();
+        }
+        updating = false;
+    });
+
+    auto *buttonRow = new QHBoxLayout;
+    auto *selectAll = new QPushButton(QStringLiteral("全部选中"), &dialog);
+    auto *clearAll = new QPushButton(QStringLiteral("清空选择"), &dialog);
+    buttonRow->addWidget(selectAll);
+    buttonRow->addWidget(clearAll);
+    buttonRow->addStretch();
+    layout->addLayout(buttonRow);
+
+    connect(selectAll, &QPushButton::clicked, &dialog, [&]() {
+        for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+            tree->topLevelItem(i)->setCheckState(0, Qt::Checked);
+        }
+    });
+    connect(clearAll, &QPushButton::clicked, &dialog, [&]() {
+        for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+            tree->topLevelItem(i)->setCheckState(0, Qt::Unchecked);
+        }
+    });
+
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(box);
+    connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    tree->expandAll();
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QMap<QString, QJsonArray> devicesByGateway;
+    for (int g = 0; g < tree->topLevelItemCount(); ++g) {
+        QTreeWidgetItem *gatewayItem = tree->topLevelItem(g);
+        for (int p = 0; p < gatewayItem->childCount(); ++p) {
+            QTreeWidgetItem *portItem = gatewayItem->child(p);
+            for (int d = 0; d < portItem->childCount(); ++d) {
+                QTreeWidgetItem *deviceItem = portItem->child(d);
+                if (deviceItem->checkState(0) != Qt::Checked) {
+                    continue;
+                }
+
+                const QString gatewayId = deviceItem->data(0, Qt::UserRole + 1).toString();
+                const QString portId = deviceItem->data(0, Qt::UserRole + 2).toString();
+                const int deviceId = deviceItem->data(0, Qt::UserRole + 3).toInt();
+                if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+                    continue;
+                }
+
+                QJsonObject deviceObj;
+                deviceObj.insert(QStringLiteral("portId"), portId);
+                deviceObj.insert(QStringLiteral("deviceId"), deviceId);
+                QJsonArray array = devicesByGateway.value(gatewayId);
+                array.append(deviceObj);
+                devicesByGateway.insert(gatewayId, array);
+            }
+        }
+    }
+
+    QJsonArray targets;
+    for (auto it = devicesByGateway.cbegin(); it != devicesByGateway.cend(); ++it) {
+        QJsonObject target;
+        target.insert(QStringLiteral("gatewayId"), it.key());
+        target.insert(QStringLiteral("devices"), it.value());
+        targets.append(target);
+    }
+
+    if (targets.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("配置同步"), QStringLiteral("请至少选择一个设备。"));
+        return;
+    }
+
+    if (m_syncButton) {
+        m_syncButton->setEnabled(false);
+        m_syncButton->setText(QStringLiteral("同步中..."));
+    }
+    emit syncConfigRequested(targets);
+}
+
+void DeviceConfigPage::onSyncConfigResult(const QJsonObject &root)
+{
+    if (m_syncButton) {
+        m_syncButton->setEnabled(true);
+        m_syncButton->setText(QStringLiteral("配置同步"));
+    }
+
+    const bool success = root.value(QStringLiteral("success")).toBool(false);
+    const int portCount = root.value(QStringLiteral("portCount")).toInt();
+    const int deviceCount = root.value(QStringLiteral("deviceCount")).toInt();
+    const QString message = root.value(QStringLiteral("message")).toString();
+
+    if (success) {
+        QMessageBox::information(this,
+                                 QStringLiteral("配置同步"),
+                                 QStringLiteral("同步成功：已同步 %1 个端口、%2 个设备")
+                                     .arg(portCount)
+                                     .arg(deviceCount));
+    } else {
+        QMessageBox::warning(this,
+                             QStringLiteral("配置同步"),
+                             message.isEmpty() ? QStringLiteral("同步失败") : message);
+    }
 }
 
 void DeviceConfigPage::showScanPlaceholder()

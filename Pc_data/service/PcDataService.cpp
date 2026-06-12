@@ -5,6 +5,8 @@
 
 #include "model/ModelConverter.hpp"
 
+static std::int64_t currentTimeMs();
+
 PcDataService::PcDataService()
 {
 }
@@ -101,6 +103,129 @@ bool PcDataService::removeMasterData(const std::string& gatewayId,
     }
 
     return removed;
+}
+
+std::vector<SyncGatewayPending> PcDataService::beginSyncConfigRequest(const std::vector<SyncGatewaySelection>& targets)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<SyncGatewayPending> result;
+    const int requestId = m_nextSyncRequestId++;
+    const std::int64_t nowMs = currentTimeMs();
+
+    for (const SyncGatewaySelection& target : targets) {
+        if (target.gatewayId.empty() || target.devices.empty()) {
+            continue;
+        }
+
+        SyncGatewayPending pending;
+        pending.requestId = requestId;
+        pending.seq = m_nextSyncSeq++;
+        pending.gatewayId = target.gatewayId;
+        pending.devices = target.devices;
+        pending.requestTimeMs = nowMs;
+
+        m_syncPendingBySeq[pending.seq] = pending;
+        m_syncRequests[requestId].push_back(pending);
+        result.push_back(pending);
+    }
+
+    if (!result.empty()) {
+        SyncConfigResult aggregate;
+        aggregate.ready = false;
+        aggregate.success = true;
+        aggregate.message = "config sync success";
+        m_syncRequestResults[requestId] = aggregate;
+    }
+
+    return result;
+}
+
+bool PcDataService::findSyncPending(std::int64_t seq, SyncGatewayPending& pending) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_syncPendingBySeq.find(seq);
+    if (it == m_syncPendingBySeq.end()) {
+        return false;
+    }
+
+    pending = it->second;
+    return true;
+}
+
+bool PcDataService::completeSyncConfig(std::int64_t seq,
+                                       bool success,
+                                       const std::string& message,
+                                       int portCount,
+                                       int deviceCount,
+                                       SyncConfigResult& result)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_syncPendingBySeq.find(seq);
+    if (it == m_syncPendingBySeq.end()) {
+        return false;
+    }
+
+    const int requestId = it->second.requestId;
+    m_syncPendingBySeq.erase(it);
+
+    SyncConfigResult& aggregate = m_syncRequestResults[requestId];
+    aggregate.success = aggregate.success && success;
+    aggregate.portCount += portCount;
+    aggregate.deviceCount += deviceCount;
+    if (!success) {
+        aggregate.message = message.empty() ? "gateway offline or sync timeout" : message;
+    }
+
+    auto requestIt = m_syncRequests.find(requestId);
+    if (requestIt != m_syncRequests.end()) {
+        std::vector<SyncGatewayPending>& pendingList = requestIt->second;
+        for (auto pendingIt = pendingList.begin(); pendingIt != pendingList.end(); ++pendingIt) {
+            if (pendingIt->seq == seq) {
+                pendingList.erase(pendingIt);
+                break;
+            }
+        }
+
+        if (!pendingList.empty()) {
+            return false;
+        }
+        m_syncRequests.erase(requestIt);
+    }
+
+    aggregate.ready = true;
+    if (aggregate.success && aggregate.message.empty()) {
+        aggregate.message = "config sync success";
+    }
+    result = aggregate;
+    m_syncRequestResults.erase(requestId);
+    return true;
+}
+
+std::vector<SyncConfigResult> PcDataService::collectSyncConfigTimeouts(std::int64_t nowMs,
+                                                                       std::int64_t timeoutMs)
+{
+    std::vector<std::int64_t> timedOutSeqs;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_syncPendingBySeq) {
+            if (nowMs - item.second.requestTimeMs >= timeoutMs) {
+                timedOutSeqs.push_back(item.first);
+            }
+        }
+    }
+
+    std::vector<SyncConfigResult> results;
+    for (std::int64_t seq : timedOutSeqs) {
+        SyncConfigResult result;
+        if (completeSyncConfig(seq, false, "gateway offline or sync timeout", 0, 0, result)) {
+            results.push_back(result);
+        }
+    }
+
+    return results;
 }
 
 void PcDataService::clear()

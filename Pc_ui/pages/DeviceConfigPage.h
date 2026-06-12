@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QList>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QWidget>
 
 #include "model/DeviceModel.h"
@@ -9,6 +11,7 @@ class ConfigManager;
 class DeviceManager;
 class QTableWidget;
 class QTimer;
+class QPushButton;
 
 class DeviceConfigPage : public QWidget
 {
@@ -19,11 +22,13 @@ public:
 signals:
     void addSlaveRequested(const QString &gatewayId, const QString &portId, int deviceId,
                            const QString &deviceType, int pollIntervalMs);
+    void syncConfigRequested(const QJsonArray &targets);
     void deleteMasterDataRequested(const QString &gatewayId, const QString &portId);
     void deleteDeviceDataRequested(const QString &gatewayId, const QString &portId, int deviceId);
 
 public slots:
     void refreshTables();
+    void onSyncConfigResult(const QJsonObject &root);
 
 private:
     struct MasterRow
@@ -49,6 +54,7 @@ private:
     void addDeleteButton(QTableWidget *table, int row, bool master, const QString &gatewayId,
                          const QString &portId, int deviceId = 0);
     void showAddSlaveDialog();
+    void showSyncConfigDialog();
     void showScanPlaceholder();
 
 private:
@@ -56,5 +62,6 @@ private:
     ConfigManager *m_config = nullptr;
     QTableWidget *m_masterTable = nullptr;
     QTableWidget *m_slaveTable = nullptr;
+    QPushButton *m_syncButton = nullptr;
     QTimer *m_refreshTimer = nullptr;
 };

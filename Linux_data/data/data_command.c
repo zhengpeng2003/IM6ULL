@@ -6,6 +6,7 @@
 #include "data_protocol.h"
 #include "data_publish.h"
 #include "data_telemetry.h"
+#include "mqtt_wrapper.h"
 #include "port_manager.h"
 
 #include <json-c/json.h>
@@ -382,6 +383,47 @@ static int handle_set_relay(uint32_t seq, struct json_object *root, const char *
     return ret == 0 ? CMD_PROCESS_FORWARD_MQTT : CMD_PROCESS_ERROR;
 }
 
+static int handle_get_config(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    char snapshot[65536];
+    char reason[MAX_ACK_MSG_LEN] = "";
+    const char *gateway_id = DEFAULT_GATEWAY_ID;
+    const char *target_json = "";
+    struct json_object *target = NULL;
+    struct json_object *v = NULL;
+
+    if (json_object_object_get_ex(root, "target", &target) && target) {
+        if (json_object_object_get_ex(target, "gatewayId", &v))
+            gateway_id = json_object_get_string(v);
+        target_json = json_object_to_json_string_ext(target, JSON_C_TO_STRING_PLAIN);
+    }
+
+    if (gateway_id && gateway_id[0] != '\0' && strcmp(gateway_id, DEFAULT_GATEWAY_ID) != 0) {
+        snprintf(reason, sizeof(reason), "invalid_argument");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+
+    if (port_manager_export_config_snapshot(seq,
+                                            DEFAULT_GATEWAY_ID,
+                                            target_json,
+                                            snapshot,
+                                            sizeof(snapshot)) != 0) {
+        snprintf(reason, sizeof(reason), "config_snapshot_failed");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+
+    int ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, snapshot);
+    if (ret != DATA_SEND_OK) {
+        snprintf(reason, sizeof(reason), "mqtt_publish_failed");
+        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        return CMD_PROCESS_ERROR;
+    }
+
+    return CMD_PROCESS_HANDLED;
+}
+
 static const command_entry_t command_table[] = {
     {"scan_ports", handle_scan_ports},
     {"connect_port", handle_connect_port},
@@ -390,6 +432,7 @@ static const command_entry_t command_table[] = {
     {"set_device_threshold", handle_set_device_threshold},
     {"remove_device", handle_remove_device},
     {"set_relay", handle_set_relay},
+    {"get_config", handle_get_config},
     {"get_alarm_config", handle_get_alarm_config},
     {"set_alarm_config", handle_set_alarm_config},
 };

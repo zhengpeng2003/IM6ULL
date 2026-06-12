@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,88 @@ IpcMessageHandler::IpcMessageHandler(PcDatabase& database,
 {
 }
 
+namespace {
+
+std::vector<SyncGatewaySelection> parseSyncConfigRequest(const std::string& msg)
+{
+    std::vector<SyncGatewaySelection> targets;
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+    if (root.HasParseError() || !root.IsObject() ||
+        getJsonString(root, "type") != "sync_config_request" ||
+        !root.HasMember("targets") || !root["targets"].IsArray()) {
+        return targets;
+    }
+
+    for (const rapidjson::Value& targetValue : root["targets"].GetArray()) {
+        if (!targetValue.IsObject()) {
+            continue;
+        }
+
+        SyncGatewaySelection target;
+        target.gatewayId = getJsonString(targetValue, "gatewayId");
+        if (target.gatewayId.empty() || !targetValue.HasMember("devices") ||
+            !targetValue["devices"].IsArray()) {
+            continue;
+        }
+
+        for (const rapidjson::Value& deviceValue : targetValue["devices"].GetArray()) {
+            if (!deviceValue.IsObject()) {
+                continue;
+            }
+
+            SyncSelectedDevice device;
+            device.portId = getJsonString(deviceValue, "portId");
+            device.deviceId = getJsonInt(deviceValue, "deviceId", 0);
+            if (!device.portId.empty() && device.deviceId > 0) {
+                target.devices.push_back(device);
+            }
+        }
+
+        if (!target.devices.empty()) {
+            targets.push_back(target);
+        }
+    }
+
+    return targets;
+}
+
+bool isSyncConfigRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+    return !root.HasParseError() && root.IsObject() &&
+           getJsonString(root, "type") == "sync_config_request";
+}
+
+std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
+{
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"type\":\"command\",";
+    oss << "\"cmd\":\"get_config\",";
+    oss << "\"seq\":" << pending.seq << ",";
+    oss << "\"target\":{";
+    oss << "\"gatewayId\":\"" << jsonEscape(pending.gatewayId) << "\",";
+    oss << "\"devices\":[";
+    for (size_t i = 0; i < pending.devices.size(); ++i) {
+        const SyncSelectedDevice& device = pending.devices[i];
+        if (i > 0) {
+            oss << ",";
+        }
+        oss << "{";
+        oss << "\"portId\":\"" << jsonEscape(device.portId) << "\",";
+        oss << "\"deviceId\":" << device.deviceId;
+        oss << "}";
+    }
+    oss << "]";
+    oss << "}";
+    oss << "}";
+    return oss.str();
+}
+
+} // namespace
+
 void IpcMessageHandler::handle(const std::string& msg)
 {
     std::cout << "Pc_data recv: " << msg << std::endl;
@@ -37,6 +120,47 @@ void IpcMessageHandler::handle(const std::string& msg)
     std::int64_t startMs = 0;
     std::int64_t endMs = 0;
     int limit = 1000;
+
+    std::vector<SyncGatewaySelection> syncTargets = parseSyncConfigRequest(msg);
+    if (!syncTargets.empty()) {
+        const std::vector<SyncGatewayPending> pendingList =
+            m_dataService.beginSyncConfigRequest(syncTargets);
+        if (pendingList.empty()) {
+            m_ipc.sendMessage(buildSyncConfigResultJson(false, "invalid sync target", 0, 0));
+            return;
+        }
+
+        for (const SyncGatewayPending& pending : pendingList) {
+            const std::string topic = "cmd/" + pending.gatewayId;
+            const std::string command = buildGetConfigCommandJson(pending);
+            const bool publishOk = m_mqtt.publish(topic, command);
+            std::cout << "sync_config get_config publish "
+                      << (publishOk ? "ok" : "failed")
+                      << ", topic: " << topic
+                      << ", seq: " << pending.seq
+                      << std::endl;
+
+            if (!publishOk) {
+                SyncConfigResult result;
+                if (m_dataService.completeSyncConfig(pending.seq,
+                                                     false,
+                                                     "mqtt publish failed",
+                                                     0,
+                                                     0,
+                                                     result)) {
+                    m_ipc.sendMessage(buildSyncConfigResultJson(result.success,
+                                                                result.message,
+                                                                result.portCount,
+                                                                result.deviceCount));
+                }
+            }
+        }
+        return;
+    }
+    if (isSyncConfigRequest(msg)) {
+        m_ipc.sendMessage(buildSyncConfigResultJson(false, "invalid sync target", 0, 0));
+        return;
+    }
 
     if (parseHistoryQuery(msg, pointId, startMs, endMs, limit)) {
         const std::vector<TelemetryPoint> points =

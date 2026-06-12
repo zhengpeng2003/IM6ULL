@@ -18,6 +18,7 @@
 #include <json-c/json.h>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -214,6 +215,86 @@ void setReason(char *reason, size_t reason_size, const char *value)
 bool validSlot(int slot)
 {
     return slot >= 0 && slot < kSlotCount;
+}
+
+const char *portIdForSlot(int slot)
+{
+    return slot == 0 ? "port_001" : "port_002";
+}
+
+const char *portNameForSlot(int slot)
+{
+    return slot == 0 ? "RS485-1" : "RS485-2";
+}
+
+int slotFromPortId(const char *port_id)
+{
+    if (!port_id)
+        return -1;
+    if (strcmp(port_id, "port_001") == 0 || strcmp(port_id, "RS485-1") == 0)
+        return 0;
+    if (strcmp(port_id, "port_002") == 0 || strcmp(port_id, "RS485-2") == 0)
+        return 1;
+    return -1;
+}
+
+struct ConfigSnapshotFilter {
+    bool has_devices = false;
+    std::set<std::pair<int, int> > devices;
+    std::set<int> slots;
+
+    bool acceptsSlot(int slot) const
+    {
+        return !has_devices || slots.find(slot) != slots.end();
+    }
+
+    bool acceptsDevice(int slot, int device_id) const
+    {
+        return !has_devices || devices.find(std::make_pair(slot, device_id)) != devices.end();
+    }
+};
+
+ConfigSnapshotFilter parseConfigSnapshotFilter(const char *target_json)
+{
+    ConfigSnapshotFilter filter;
+    if (!target_json || target_json[0] == '\0')
+        return filter;
+
+    json_object *target = json_tokener_parse(target_json);
+    if (!target)
+        return filter;
+
+    json_object *devices = nullptr;
+    if (json_object_object_get_ex(target, "devices", &devices) &&
+        json_object_is_type(devices, json_type_array)) {
+        int count = json_object_array_length(devices);
+        for (int i = 0; i < count; ++i) {
+            json_object *item = json_object_array_get_idx(devices, i);
+            if (!item)
+                continue;
+
+            json_object *v = nullptr;
+            const char *port_id = "";
+            if (json_object_object_get_ex(item, "portId", &v))
+                port_id = json_object_get_string(v);
+
+            int slot = slotFromPortId(port_id);
+            int device_id = 0;
+            if (json_object_object_get_ex(item, "deviceId", &v))
+                device_id = json_object_get_int(v);
+            if (device_id <= 0 && json_object_object_get_ex(item, "slaveAddress", &v))
+                device_id = json_object_get_int(v);
+
+            if (validSlot(slot) && device_id > 0) {
+                filter.has_devices = true;
+                filter.slots.insert(slot);
+                filter.devices.insert(std::make_pair(slot, device_id));
+            }
+        }
+    }
+
+    json_object_put(target);
+    return filter;
 }
 
 std::vector<std::string> scanPorts()
@@ -1034,6 +1115,207 @@ int PortManager::handleRelay(int slot,
     return 0;
 }
 
+int PortManager::exportConfigSnapshotJson(uint32_t seq,
+                                           const char *gateway_id,
+                                           const char *target_json,
+                                           char *buffer,
+                                           size_t buffer_size)
+{
+    if (!buffer || buffer_size == 0)
+        return -1;
+
+    buffer[0] = '\0';
+    const char *effective_gateway_id =
+        (gateway_id && gateway_id[0] != '\0') ? gateway_id : DEFAULT_GATEWAY_ID;
+    ConfigSnapshotFilter filter = parseConfigSnapshotFilter(target_json);
+
+    json_object *root = json_object_new_object();
+    json_object *ports = json_object_new_array();
+    if (!root || !ports) {
+        if (root)
+            json_object_put(root);
+        if (ports)
+            json_object_put(ports);
+        return -1;
+    }
+
+    json_object_object_add(root, "type", json_object_new_string("config_snapshot"));
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "gatewayId", json_object_new_string(effective_gateway_id));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(currentTimeMs()));
+
+    std::set<std::pair<int, int> > exported_devices;
+
+    {
+        std::lock_guard<std::mutex> guard(impl_->lock);
+        for (int slot = 0; slot < kSlotCount; ++slot) {
+            if (!filter.acceptsSlot(slot))
+                continue;
+
+            const PortChannel &channel = impl_->channels[slot];
+            json_object *port_obj = json_object_new_object();
+            json_object *devices = json_object_new_array();
+            if (!port_obj || !devices) {
+                if (port_obj)
+                    json_object_put(port_obj);
+                if (devices)
+                    json_object_put(devices);
+                continue;
+            }
+
+            json_object_object_add(port_obj, "slot", json_object_new_int(slot));
+            addString(port_obj, "portId", portIdForSlot(slot));
+            addString(port_obj, "portName", portNameForSlot(slot));
+            addString(port_obj, "port", channel.port.c_str());
+            json_object_object_add(port_obj, "baud", json_object_new_int(channel.baud));
+            json_object_object_add(port_obj, "connected", json_object_new_boolean(channel.connected));
+
+            for (const ManagedDevice &device : channel.devices) {
+                if (!device.sensor || !filter.acceptsDevice(slot, device.sensor->slaveId()))
+                    continue;
+
+                json_object *dev = json_object_new_object();
+                if (!dev)
+                    continue;
+
+                json_object_object_add(dev, "deviceId", json_object_new_int(device.sensor->slaveId()));
+                addString(dev, "deviceType", device.sensor->deviceTypeName());
+                json_object_object_add(dev, "pollIntervalMs", json_object_new_int(device.sensor->pollIntervalMs()));
+
+                sensor_threshold_config_t config = {};
+                if (device.sensor->thresholdConfig(&config)) {
+                    json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
+                    json_object *threshold = thresholdConfigToJson(config);
+                    if (threshold)
+                        json_object_object_add(dev, "thresholdConfig", threshold);
+                } else {
+                    json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(false));
+                }
+
+                json_object_array_add(devices, dev);
+                exported_devices.insert(std::make_pair(slot, device.sensor->slaveId()));
+            }
+
+            json_object_object_add(port_obj, "devices", devices);
+            json_object_array_add(ports, port_obj);
+        }
+    }
+
+    json_object *saved_root = json_object_from_file(kDeviceConfigPath);
+    if (saved_root) {
+        json_object *saved_devices = nullptr;
+        if (json_object_object_get_ex(saved_root, "devices", &saved_devices) &&
+            json_object_is_type(saved_devices, json_type_array)) {
+            int saved_count = json_object_array_length(saved_devices);
+            for (int i = 0; i < saved_count; ++i) {
+                json_object *item = json_object_array_get_idx(saved_devices, i);
+                if (!item)
+                    continue;
+
+                json_object *v = nullptr;
+                int slot = -1;
+                if (json_object_object_get_ex(item, "slot", &v))
+                    slot = json_object_get_int(v);
+                if (!validSlot(slot) || !filter.acceptsSlot(slot))
+                    continue;
+
+                int slave_id = 0;
+                if (json_object_object_get_ex(item, "slave_id", &v))
+                    slave_id = json_object_get_int(v);
+                if (slave_id <= 0 || !filter.acceptsDevice(slot, slave_id))
+                    continue;
+                if (exported_devices.find(std::make_pair(slot, slave_id)) != exported_devices.end())
+                    continue;
+
+                json_object *port_obj = nullptr;
+                int port_count = json_object_array_length(ports);
+                for (int p = 0; p < port_count; ++p) {
+                    json_object *candidate = json_object_array_get_idx(ports, p);
+                    json_object *slot_obj = nullptr;
+                    if (candidate && json_object_object_get_ex(candidate, "slot", &slot_obj) &&
+                        json_object_get_int(slot_obj) == slot) {
+                        port_obj = candidate;
+                        break;
+                    }
+                }
+                if (!port_obj) {
+                    port_obj = json_object_new_object();
+                    json_object *devices = json_object_new_array();
+                    if (!port_obj || !devices) {
+                        if (port_obj)
+                            json_object_put(port_obj);
+                        if (devices)
+                            json_object_put(devices);
+                        continue;
+                    }
+
+                    const char *saved_port = "";
+                    if (json_object_object_get_ex(item, "port", &v))
+                        saved_port = json_object_get_string(v);
+                    int baud = 0;
+                    if (json_object_object_get_ex(item, "baud", &v))
+                        baud = json_object_get_int(v);
+
+                    json_object_object_add(port_obj, "slot", json_object_new_int(slot));
+                    addString(port_obj, "portId", portIdForSlot(slot));
+                    addString(port_obj, "portName", portNameForSlot(slot));
+                    addString(port_obj, "port", saved_port);
+                    json_object_object_add(port_obj, "baud", json_object_new_int(baud));
+                    json_object_object_add(port_obj, "connected", json_object_new_boolean(false));
+                    json_object_object_add(port_obj, "devices", devices);
+                    json_object_array_add(ports, port_obj);
+                }
+
+                json_object *devices = nullptr;
+                if (!json_object_object_get_ex(port_obj, "devices", &devices) ||
+                    !json_object_is_type(devices, json_type_array)) {
+                    continue;
+                }
+
+                const char *device_type = "unknown";
+                int poll_interval_ms = 1000;
+                if (json_object_object_get_ex(item, "device_type", &v))
+                    device_type = json_object_get_string(v);
+                if (json_object_object_get_ex(item, "poll_interval_ms", &v))
+                    poll_interval_ms = json_object_get_int(v);
+
+                json_object *dev = json_object_new_object();
+                if (!dev)
+                    continue;
+                json_object_object_add(dev, "deviceId", json_object_new_int(slave_id));
+                addString(dev, "deviceType", device_type);
+                json_object_object_add(dev, "pollIntervalMs", json_object_new_int(poll_interval_ms));
+
+                json_object *threshold = nullptr;
+                if (json_object_object_get_ex(item, "threshold_config", &threshold)) {
+                    sensor_threshold_config_t config = {};
+                    thresholdConfigFromJson(threshold, &config);
+                    json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
+                    json_object *threshold_copy = thresholdConfigToJson(config);
+                    if (threshold_copy)
+                        json_object_object_add(dev, "thresholdConfig", threshold_copy);
+                } else {
+                    json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(false));
+                }
+
+                json_object_array_add(devices, dev);
+            }
+        }
+        json_object_put(saved_root);
+    }
+
+    json_object_object_add(root, "ports", ports);
+    const char *json = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    if (!json || strlen(json) + 1 > buffer_size) {
+        json_object_put(root);
+        return -1;
+    }
+
+    snprintf(buffer, buffer_size, "%s", json);
+    json_object_put(root);
+    return 0;
+}
+
 namespace {
 
 PortManager g_manager;
@@ -1121,6 +1403,15 @@ extern "C" int port_manager_handle_relay(int slot,
                                           size_t reason_size)
 {
     return g_manager.handleRelay(slot, slave_id, dev, reason, reason_size);
+}
+
+extern "C" int port_manager_export_config_snapshot(uint32_t seq,
+                                                    const char *gateway_id,
+                                                    const char *target_json,
+                                                    char *buffer,
+                                                    size_t buffer_size)
+{
+    return g_manager.exportConfigSnapshotJson(seq, gateway_id, target_json, buffer, buffer_size);
 }
 
 extern "C" void port_manager_publish_latest_status(void)

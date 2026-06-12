@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <set>
 
 #include "DatabaseSchema.hpp"
 #include "sqlite3.h"
@@ -781,6 +782,69 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
               << (ok ? "ok" : "failed")
               << ", gateway: " << gatewayId
               << ", port: " << portId
+              << std::endl;
+
+    return ok;
+}
+
+bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
+                                             const std::vector<DbSelectedDevice>& selectedDevices,
+                                             const std::vector<GatewayPort>& ports,
+                                             const std::vector<ConfigSnapshotDevice>& devices,
+                                             const std::vector<PointConfig>& pointConfigs)
+{
+    if (!m_db || gatewayId.empty() || selectedDevices.empty()) {
+        return false;
+    }
+
+    if (!execSql("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    bool ok = true;
+    for (const DbSelectedDevice& selected : selectedDevices) {
+        if (selected.portId.empty() || selected.deviceId <= 0) {
+            continue;
+        }
+
+        ok = deleteRowsByDevice("device_status", gatewayId, selected.portId, selected.deviceId) &&
+             deleteRowsByDevice("device", gatewayId, selected.portId, selected.deviceId) &&
+             deleteRowsByDevice("point_config", gatewayId, selected.portId, selected.deviceId);
+        if (!ok) {
+            break;
+        }
+    }
+
+    if (ok) {
+        ok = execSql("COMMIT;");
+    } else {
+        execSql("ROLLBACK;");
+        return false;
+    }
+
+    for (const GatewayPort& port : ports) {
+        if (port.gatewayId == gatewayId && !port.portId.empty()) {
+            ok = upsertGatewayPort(port) && ok;
+        }
+    }
+
+    for (const ConfigSnapshotDevice& snapshotDevice : devices) {
+        const DeviceRecord& device = snapshotDevice.device;
+        if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
+            ok = upsertDevice(device) && ok;
+        }
+    }
+
+    if (!pointConfigs.empty()) {
+        ok = savePointConfigs(pointConfigs) && ok;
+    }
+
+    std::cout << "Replace selected config "
+              << (ok ? "ok" : "failed")
+              << ", gateway: " << gatewayId
+              << ", selected: " << selectedDevices.size()
+              << ", ports: " << ports.size()
+              << ", devices: " << devices.size()
               << std::endl;
 
     return ok;

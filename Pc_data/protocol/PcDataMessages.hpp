@@ -37,6 +37,10 @@ std::string buildMqttConfigAckJson(bool ok,
                                    const std::string& reason,
                                    const MqttConfig& config,
                                    const std::string& status);
+std::string buildSyncConfigResultJson(bool success,
+                                      const std::string& message,
+                                      int portCount,
+                                      int deviceCount);
 
 bool parseGatewayRegister(const std::string& payload, GatewayStatus& gateway);
 bool parseGatewayHeartbeat(const std::string& payload,

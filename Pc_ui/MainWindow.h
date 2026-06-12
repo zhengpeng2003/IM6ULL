@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QMainWindow>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QStackedWidget>
@@ -43,6 +44,7 @@ private:
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
+    void sendSyncConfigRequest(const QJsonArray &targets);
     void sendClearRecoveredAlarms();
     void requestMqttConfig();
     void saveMqttConfig(const QString &host, int port);

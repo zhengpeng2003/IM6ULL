@@ -46,6 +46,11 @@ public:
                     const device_data_t *dev,
                     char *reason,
                     size_t reason_size);
+    int exportConfigSnapshotJson(uint32_t seq,
+                                 const char *gateway_id,
+                                 const char *target_json,
+                                 char *buffer,
+                                 size_t buffer_size);
     void publishLatestStatus();
 
 private:
@@ -94,6 +99,11 @@ int port_manager_handle_relay(int slot,
                               const device_data_t *dev,
                               char *reason,
                               size_t reason_size);
+int port_manager_export_config_snapshot(uint32_t seq,
+                                        const char *gateway_id,
+                                        const char *target_json,
+                                        char *buffer,
+                                        size_t buffer_size);
 void port_manager_publish_latest_status(void);
 
 #ifdef __cplusplus

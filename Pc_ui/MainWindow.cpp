@@ -269,6 +269,15 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "sync_config_result") {
+        if (m_deviceConfigPage) {
+            m_deviceConfigPage->onSyncConfigResult(root);
+        }
+        requestDevices();
+        requestPortStatus();
+        return;
+    }
+
     if (type == "ack" || type == "command_ack") {
         m_command->onCommandAck(root);
         return;
@@ -372,6 +381,20 @@ void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &p
     m_pendingDeleteGatewayId = gatewayId;
     m_pendingDeletePortId = portId;
     m_pendingDeleteDeviceId = deviceId;
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::sendSyncConfigRequest(const QJsonArray &targets)
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected() || targets.isEmpty()) {
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("sync_config_request"));
+    payload.insert(QStringLiteral("targets"), targets);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
 
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
@@ -501,6 +524,9 @@ void MainWindow::initConnections()
 
     connect(m_deviceConfigPage, &DeviceConfigPage::addSlaveRequested,
             m_command, &CommandManager::sendAddDeviceCommand);
+
+    connect(m_deviceConfigPage, &DeviceConfigPage::syncConfigRequested,
+            this, &MainWindow::sendSyncConfigRequest);
 
     connect(m_alarmLogPage, &AlarmLogPage::clearRecoveredAlarmsRequested,
             this, &MainWindow::sendClearRecoveredAlarms);
