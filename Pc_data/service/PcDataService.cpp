@@ -5,6 +5,8 @@
 
 #include "model/ModelConverter.hpp"
 
+static const std::int64_t kRemovedDeviceIgnoreMs = 30000;
+
 static std::int64_t currentTimeMs();
 static std::string removedDeviceKey(const std::string& gatewayId,
                                     const std::string& portId,
@@ -21,17 +23,23 @@ void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
     std::vector<TelemetryPoint> points = ModelConverter::toTelemetryPoints(pack);
 
     std::lock_guard<std::mutex> lock(m_mutex);
+    pruneExpiredRemovedDevicesLocked(currentTimeMs());
 
     for (const auto& point : points) {
         if (point.pointId.empty()) {
             continue;
         }
-        if (m_removedDevices.find(removedDeviceKey(point.gatewayId,
-                                                   point.portId,
-                                                   point.deviceId)) != m_removedDevices.end()) {
+        if (shouldAcceptNewDeviceDataLocked(point.gatewayId,
+                                            point.portId,
+                                            point.deviceId,
+                                            point.timestampMs)) {
+            m_snapshot[point.pointId] = point;
             continue;
         }
-        if (m_removedMasters.find(removedMasterKey(point.gatewayId, point.portId)) != m_removedMasters.end()) {
+        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId)) {
+            continue;
+        }
+        if (isRemovedMasterLocked(point.gatewayId, point.portId)) {
             continue;
         }
 
@@ -80,6 +88,8 @@ bool PcDataService::removeDeviceData(const std::string& gatewayId,
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
+    const std::int64_t nowMs = currentTimeMs();
+    pruneExpiredRemovedDevicesLocked(nowMs);
     bool removed = false;
 
     for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
@@ -91,7 +101,7 @@ bool PcDataService::removeDeviceData(const std::string& gatewayId,
             ++it;
         }
     }
-    m_removedDevices.insert(removedDeviceKey(gatewayId, portId, deviceId));
+    rememberRemovedDeviceLocked(gatewayId, portId, deviceId, nowMs);
 
     return removed;
 }
@@ -104,19 +114,21 @@ bool PcDataService::removeMasterData(const std::string& gatewayId,
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
+    const std::int64_t nowMs = currentTimeMs();
+    pruneExpiredRemovedDevicesLocked(nowMs);
     bool removed = false;
 
     for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
         const TelemetryPoint& point = it->second;
         if (point.gatewayId == gatewayId && point.portId == portId) {
-            m_removedDevices.insert(removedDeviceKey(point.gatewayId, point.portId, point.deviceId));
+            rememberRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId, nowMs);
             it = m_snapshot.erase(it);
             removed = true;
         } else {
             ++it;
         }
     }
-    m_removedMasters.insert(removedMasterKey(gatewayId, portId));
+    m_removedMasters[removedMasterKey(gatewayId, portId)] = nowMs + kRemovedDeviceIgnoreMs;
 
     return removed;
 }
@@ -130,6 +142,7 @@ void PcDataService::forgetRemovedDevice(const std::string& gatewayId,
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
+    pruneExpiredRemovedDevicesLocked(currentTimeMs());
     m_removedDevices.erase(removedDeviceKey(gatewayId, portId, deviceId));
     m_removedMasters.erase(removedMasterKey(gatewayId, portId));
 }
@@ -143,22 +156,29 @@ bool PcDataService::isRemovedDevice(const std::string& gatewayId,
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_removedDevices.find(removedDeviceKey(gatewayId, portId, deviceId)) != m_removedDevices.end();
+    pruneExpiredRemovedDevicesLocked(currentTimeMs());
+    return isRemovedDeviceLocked(gatewayId, portId, deviceId);
 }
 
 std::vector<TelemetryPoint> PcDataService::filterRemovedPoints(const std::vector<TelemetryPoint>& points) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    pruneExpiredRemovedDevicesLocked(currentTimeMs());
 
     std::vector<TelemetryPoint> result;
     result.reserve(points.size());
     for (const TelemetryPoint& point : points) {
-        if (m_removedDevices.find(removedDeviceKey(point.gatewayId,
-                                                   point.portId,
-                                                   point.deviceId)) != m_removedDevices.end()) {
+        if (shouldAcceptNewDeviceDataLocked(point.gatewayId,
+                                            point.portId,
+                                            point.deviceId,
+                                            point.timestampMs)) {
+            result.push_back(point);
             continue;
         }
-        if (m_removedMasters.find(removedMasterKey(point.gatewayId, point.portId)) != m_removedMasters.end()) {
+        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId)) {
+            continue;
+        }
+        if (isRemovedMasterLocked(point.gatewayId, point.portId)) {
             continue;
         }
         result.push_back(point);
@@ -295,6 +315,79 @@ void PcDataService::clear()
     m_snapshot.clear();
     m_removedDevices.clear();
     m_removedMasters.clear();
+}
+
+void PcDataService::pruneExpiredRemovedDevicesLocked(std::int64_t nowMs) const
+{
+    for (auto it = m_removedDevices.begin(); it != m_removedDevices.end(); ) {
+        if (it->second <= nowMs) {
+            it = m_removedDevices.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto it = m_removedMasters.begin(); it != m_removedMasters.end(); ) {
+        if (it->second <= nowMs) {
+            it = m_removedMasters.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void PcDataService::rememberRemovedDeviceLocked(const std::string& gatewayId,
+                                                const std::string& portId,
+                                                int deviceId,
+                                                std::int64_t nowMs)
+{
+    if (gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return;
+    }
+
+    m_removedDevices[removedDeviceKey(gatewayId, portId, deviceId)] = nowMs + kRemovedDeviceIgnoreMs;
+}
+
+bool PcDataService::isRemovedDeviceLocked(const std::string& gatewayId,
+                                          const std::string& portId,
+                                          int deviceId) const
+{
+    return m_removedDevices.find(removedDeviceKey(gatewayId, portId, deviceId)) != m_removedDevices.end();
+}
+
+bool PcDataService::isRemovedMasterLocked(const std::string& gatewayId,
+                                          const std::string& portId) const
+{
+    return m_removedMasters.find(removedMasterKey(gatewayId, portId)) != m_removedMasters.end();
+}
+
+bool PcDataService::shouldAcceptNewDeviceDataLocked(const std::string& gatewayId,
+                                                    const std::string& portId,
+                                                    int deviceId,
+                                                    std::int64_t dataTimeMs) const
+{
+    if (dataTimeMs <= 0) {
+        return false;
+    }
+
+    const std::string deviceKey = removedDeviceKey(gatewayId, portId, deviceId);
+    auto deviceIt = m_removedDevices.find(deviceKey);
+    if (deviceIt != m_removedDevices.end() &&
+        dataTimeMs >= deviceIt->second - kRemovedDeviceIgnoreMs) {
+        m_removedDevices.erase(deviceIt);
+        m_removedMasters.erase(removedMasterKey(gatewayId, portId));
+        return true;
+    }
+
+    const std::string masterKey = removedMasterKey(gatewayId, portId);
+    auto masterIt = m_removedMasters.find(masterKey);
+    if (masterIt != m_removedMasters.end() &&
+        dataTimeMs >= masterIt->second - kRemovedDeviceIgnoreMs) {
+        m_removedMasters.erase(masterIt);
+        return true;
+    }
+
+    return false;
 }
 
 static std::int64_t currentTimeMs()

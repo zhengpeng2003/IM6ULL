@@ -47,6 +47,11 @@ private:
     QString deletedDeviceKey(const QString &gatewayId, const QString &portId, int deviceId) const;
     bool isDeletedDevice(const QString &gatewayId, const QString &portId, int deviceId) const;
     void pruneExpiredDeletedDevicesLocked(qint64 nowMs);
+    void rememberDeletedDeviceLocked(const QString &gatewayId, const QString &portId, int deviceId, qint64 nowMs);
+    void releaseDeletedDeviceOnNewDataLocked(const QString &gatewayId,
+                                             const QString &portId,
+                                             int deviceId,
+                                             qint64 dataTimeMs);
 
 private:
     DeviceManager *m_deviceManager = nullptr;

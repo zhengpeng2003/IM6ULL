@@ -156,8 +156,9 @@ void DataManager::removeDeviceData(const QString &gatewayId, const QString &port
 
     {
         QMutexLocker locker(&m_mutex);
-        pruneExpiredDeletedDevicesLocked(QDateTime::currentMSecsSinceEpoch());
-        m_deletedDevices.insert(deletedDeviceKey(gatewayId, portId, deviceId), 0);
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        pruneExpiredDeletedDevicesLocked(now);
+        rememberDeletedDeviceLocked(gatewayId, portId, deviceId, now);
         for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
             const DeviceNode &node = it.value().node;
             if (node.gatewayId == gatewayId && node.port == portId && node.deviceId == deviceId) {
@@ -184,11 +185,12 @@ void DataManager::removeMasterData(const QString &gatewayId, const QString &port
 
     {
         QMutexLocker locker(&m_mutex);
-        pruneExpiredDeletedDevicesLocked(QDateTime::currentMSecsSinceEpoch());
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        pruneExpiredDeletedDevicesLocked(now);
         for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
             const DeviceNode &node = it.value().node;
             if (node.gatewayId == gatewayId && node.port == portId) {
-                m_deletedDevices.insert(deletedDeviceKey(node.gatewayId, node.port, node.deviceId), 0);
+                rememberDeletedDeviceLocked(node.gatewayId, node.port, node.deviceId, now);
                 it = m_realtimeMap.erase(it);
             } else {
                 ++it;
@@ -240,6 +242,18 @@ void DataManager::markAllDevicesOffline()
 void DataManager::onLatestPointsMessage(const QJsonObject &obj)
 {
     const QList<RealtimeDeviceData> parsedDevices = parseLatestPoints(obj);
+    {
+        QMutexLocker locker(&m_mutex);
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        pruneExpiredDeletedDevicesLocked(now);
+        for (const RealtimeDeviceData &data : parsedDevices) {
+            releaseDeletedDeviceOnNewDataLocked(data.node.gatewayId,
+                                                data.node.port,
+                                                data.node.deviceId,
+                                                data.node.lastUpdateTime);
+        }
+    }
+
     for (const RealtimeDeviceData &data : parsedDevices) {
         if (isDeletedDevice(data.node.gatewayId, data.node.port, data.node.deviceId)) {
             continue;
@@ -263,10 +277,11 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
         QMutexLocker locker(&m_mutex);
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         pruneExpiredDeletedDevicesLocked(now);
-        for (auto it = m_deletedDevices.begin(); it != m_deletedDevices.end(); ++it) {
-            if (it.value() == 0 && !snapshotDeviceKeys.contains(it.key())) {
-                it.value() = now + kDeletedDeviceIgnoreMs;
-            }
+        for (const DeviceNode &device : devices) {
+            releaseDeletedDeviceOnNewDataLocked(device.gatewayId,
+                                                device.port,
+                                                device.deviceId,
+                                                device.lastUpdateTime);
         }
     }
 
@@ -293,8 +308,8 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
             const DeviceNode &node = it.value().node;
             const QString tombstoneKey = deletedDeviceKey(node.gatewayId, node.port, node.deviceId);
             const qint64 expiresAt = m_deletedDevices.value(tombstoneKey, 0);
-            const bool deleted = (expiresAt == 0 && m_deletedDevices.contains(tombstoneKey)) ||
-                                 expiresAt > QDateTime::currentMSecsSinceEpoch();
+            const bool deleted = m_deletedDevices.contains(tombstoneKey) &&
+                                 (expiresAt < 0 || expiresAt > QDateTime::currentMSecsSinceEpoch());
             if (!visibleKeys.contains(it.key()) ||
                 deleted) {
                 it = m_realtimeMap.erase(it);
@@ -379,6 +394,14 @@ QList<DeviceNode> DataManager::parseDevicesSnapshot(const QJsonObject &obj) cons
         node.statusReason = row.value(QStringLiteral("statusReason")).toString();
         node.online = node.status == QStringLiteral("online");
         node.lastUpdateTime = row.value(QStringLiteral("lastSeenMs")).toVariant().toLongLong();
+        const qint64 updateTime = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
+        const qint64 createTime = row.value(QStringLiteral("createTimeMs")).toVariant().toLongLong();
+        if (updateTime > node.lastUpdateTime) {
+            node.lastUpdateTime = updateTime;
+        }
+        if (createTime > node.lastUpdateTime) {
+            node.lastUpdateTime = createTime;
+        }
 
         if (node.factoryId.isEmpty() || node.areaId.isEmpty() || node.gatewayId.isEmpty() ||
             node.port.isEmpty() || node.deviceId <= 0) {
@@ -617,19 +640,50 @@ bool DataManager::isDeletedDevice(const QString &gatewayId, const QString &portI
     QMutexLocker locker(&m_mutex);
     const QString key = deletedDeviceKey(gatewayId, portId, deviceId);
     const qint64 expiresAt = m_deletedDevices.value(key, 0);
-    if (expiresAt == 0 && m_deletedDevices.contains(key)) {
-        return true;
-    }
-    return expiresAt > QDateTime::currentMSecsSinceEpoch();
+    return m_deletedDevices.contains(key) &&
+           (expiresAt < 0 || expiresAt > QDateTime::currentMSecsSinceEpoch());
 }
 
 void DataManager::pruneExpiredDeletedDevicesLocked(qint64 nowMs)
 {
     for (auto it = m_deletedDevices.begin(); it != m_deletedDevices.end(); ) {
-        if (it.value() > 0 && it.value() <= nowMs) {
+        const qint64 value = it.value();
+        const bool expiredDeadline = value > 0 && value <= nowMs;
+        const bool expiredDeleteTime = value < 0 && (-value + kDeletedDeviceIgnoreMs) <= nowMs;
+        if (expiredDeadline || expiredDeleteTime) {
             it = m_deletedDevices.erase(it);
         } else {
             ++it;
         }
+    }
+}
+
+void DataManager::rememberDeletedDeviceLocked(const QString &gatewayId,
+                                              const QString &portId,
+                                              int deviceId,
+                                              qint64 nowMs)
+{
+    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    m_deletedDevices.insert(deletedDeviceKey(gatewayId, portId, deviceId),
+                            -nowMs);
+}
+
+void DataManager::releaseDeletedDeviceOnNewDataLocked(const QString &gatewayId,
+                                                      const QString &portId,
+                                                      int deviceId,
+                                                      qint64 dataTimeMs)
+{
+    const QString key = deletedDeviceKey(gatewayId, portId, deviceId);
+    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0 || !m_deletedDevices.contains(key)) {
+        return;
+    }
+
+    const qint64 value = m_deletedDevices.value(key);
+    const qint64 deletedAt = value < 0 ? -value : value - kDeletedDeviceIgnoreMs;
+    if (dataTimeMs > 0 && deletedAt > 0 && dataTimeMs >= deletedAt) {
+        m_deletedDevices.remove(key);
     }
 }

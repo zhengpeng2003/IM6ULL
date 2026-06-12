@@ -685,6 +685,10 @@ void Widget::requestOfflineCacheConfig()
     if (!_Myclient || !_Myclient->isConnected())
         return;
 
+    QJsonObject payload;
+    payload.insert("cache_enabled", false);
+    payload.insert("flush_enabled", false);
+    (void)sendCommand("set_offline_cache_config", payload);
     (void)sendCommand("get_offline_cache_config");
 }
 
@@ -697,7 +701,15 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
     if (m_stack)
         pageInfo = qobject_cast<Pageinfo *>(m_stack->widget(3));
 
-    const bool cacheEnabled = ackRoot.value("cache_enabled").toBool(true);
+    if (status != "ok" && reason == "unknown_command") {
+        if (pageInfo)
+            pageInfo->setOfflineCacheUnsupported();
+        if (m_operationOverlay && cmd != "get_offline_cache_config")
+            m_operationOverlay->showFailure("缓存命令不支持");
+        return;
+    }
+
+    const bool cacheEnabled = ackRoot.value("cache_enabled").toBool(false);
     const bool flushEnabled = ackRoot.value("flush_enabled").toBool(false);
     const int pendingCount = ackRoot.value("pending_count").toInt(0);
     if (pageInfo)

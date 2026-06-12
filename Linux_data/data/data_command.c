@@ -459,6 +459,13 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
 static int handle_get_offline_cache_config(uint32_t seq, struct json_object *root, const char *cmd)
 {
     (void)root;
+    int cache_enabled = 0;
+    int flush_enabled = 0;
+    if (port_manager_load_offline_cache_config(&cache_enabled, &flush_enabled) == 0) {
+        mqtt_set_offline_cache_enabled(cache_enabled);
+        mqtt_set_offline_cache_flush_enabled(flush_enabled);
+    }
+
     data_ack_send_offline_cache_config(seq,
                                        cmd,
                                        1,
@@ -473,26 +480,32 @@ static int handle_get_offline_cache_config(uint32_t seq, struct json_object *roo
 static int handle_set_offline_cache_config(uint32_t seq, struct json_object *root, const char *cmd)
 {
     struct json_object *v = NULL;
+    int cache_enabled = mqtt_offline_cache_enabled();
+    int flush_enabled = mqtt_offline_cache_flush_enabled();
 
     if (json_object_object_get_ex(root, "cache_enabled", &v) ||
         json_object_object_get_ex(root, "cacheEnabled", &v)) {
-        mqtt_set_offline_cache_enabled(json_object_get_boolean(v));
+        cache_enabled = json_object_get_boolean(v) ? 1 : 0;
+        mqtt_set_offline_cache_enabled(cache_enabled);
     }
 
     if (json_object_object_get_ex(root, "flush_enabled", &v) ||
         json_object_object_get_ex(root, "flushEnabled", &v)) {
-        mqtt_set_offline_cache_flush_enabled(json_object_get_boolean(v));
+        flush_enabled = json_object_get_boolean(v) ? 1 : 0;
+        mqtt_set_offline_cache_flush_enabled(flush_enabled);
     }
+
+    const int saved = port_manager_save_offline_cache_config(cache_enabled, flush_enabled) == 0;
 
     data_ack_send_offline_cache_config(seq,
                                        cmd,
-                                       1,
-                                       "",
-                                       "offline cache config saved",
+                                       saved,
+                                       saved ? "" : "offline_cache_config_save_failed",
+                                       saved ? "offline cache config saved" : "offline cache config save failed",
                                        mqtt_offline_cache_enabled(),
                                        mqtt_offline_cache_flush_enabled(),
                                        mqtt_offline_cache_pending_count());
-    return CMD_PROCESS_HANDLED;
+    return saved ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
 static int handle_clear_offline_cache(uint32_t seq, struct json_object *root, const char *cmd)

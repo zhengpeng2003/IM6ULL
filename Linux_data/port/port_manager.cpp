@@ -61,6 +61,11 @@ struct SavedPortConfig {
     int baud = 9600;
 };
 
+struct OfflineCacheSavedConfig {
+    bool cache_enabled = false;
+    bool flush_enabled = false;
+};
+
 struct PortChannel {
     bool connected = false;
     std::string port;
@@ -105,6 +110,35 @@ json_object *loadDeviceConfigRoot()
         printf("[PortManager] config parse failed path=%s\n", kDeviceConfigPath);
     }
     return root;
+}
+
+OfflineCacheSavedConfig loadOfflineCacheConfigFromRoot(json_object *root)
+{
+    OfflineCacheSavedConfig config;
+    if (!root)
+        return config;
+
+    json_object *v = nullptr;
+    if (json_object_object_get_ex(root, "offline_cache_enabled", &v) ||
+        json_object_object_get_ex(root, "offlineCacheEnabled", &v)) {
+        config.cache_enabled = json_object_get_boolean(v);
+    }
+    if (json_object_object_get_ex(root, "offline_cache_flush_enabled", &v) ||
+        json_object_object_get_ex(root, "offlineCacheFlushEnabled", &v)) {
+        config.flush_enabled = json_object_get_boolean(v);
+    }
+    return config;
+}
+
+OfflineCacheSavedConfig loadSavedOfflineCacheConfig()
+{
+    json_object *root = loadDeviceConfigRoot();
+    if (!root)
+        return OfflineCacheSavedConfig{};
+
+    const OfflineCacheSavedConfig config = loadOfflineCacheConfigFromRoot(root);
+    json_object_put(root);
+    return config;
 }
 
 ManagedType parseType(const char *deviceType)
@@ -739,6 +773,7 @@ struct PortManager::Impl {
     void writeConfigLocked()
     {
         mkdir(kDeviceConfigDir, 0755);
+        const OfflineCacheSavedConfig offline_cache_config = loadSavedOfflineCacheConfig();
 
         json_object *root = json_object_new_object();
         json_object *devices = json_object_new_array();
@@ -752,6 +787,8 @@ struct PortManager::Impl {
 
         json_object_object_add(root, "version", json_object_new_int(1));
         json_object_object_add(root, "updated_ms", json_object_new_int64(currentTimeMs()));
+        json_object_object_add(root, "offline_cache_enabled", json_object_new_boolean(offline_cache_config.cache_enabled));
+        json_object_object_add(root, "offline_cache_flush_enabled", json_object_new_boolean(offline_cache_config.flush_enabled));
 
         for (int slot = 0; slot < kSlotCount; ++slot) {
             PortChannel &channel = channels[slot];
@@ -792,6 +829,47 @@ struct PortManager::Impl {
             printf("[PortManager] write config failed path=%s\n", kDeviceConfigPath);
         }
         json_object_put(root);
+    }
+
+    int saveOfflineCacheConfig(bool cache_enabled, bool flush_enabled)
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        mkdir(kDeviceConfigDir, 0755);
+
+        json_object *root = loadDeviceConfigRoot();
+        if (!root) {
+            root = json_object_new_object();
+        }
+        if (!root) {
+            return -1;
+        }
+
+        json_object_object_add(root, "version", json_object_new_int(1));
+        json_object_object_add(root, "updated_ms", json_object_new_int64(currentTimeMs()));
+        json_object_object_add(root, "offline_cache_enabled", json_object_new_boolean(cache_enabled));
+        json_object_object_add(root, "offline_cache_flush_enabled", json_object_new_boolean(flush_enabled));
+
+        json_object *devices = nullptr;
+        if (!json_object_object_get_ex(root, "devices", &devices) ||
+            !json_object_is_type(devices, json_type_array)) {
+            json_object_object_add(root, "devices", json_object_new_array());
+        }
+
+        int ret = 0;
+        if (!ensureDeviceConfigDir()) {
+            printf("[PortManager] create config dir failed dir=%s errno=%d\n",
+                   kDeviceConfigDir,
+                   errno);
+            ret = -1;
+        } else if (json_object_to_file_ext(kDeviceConfigPath,
+                                           root,
+                                           JSON_C_TO_STRING_PRETTY) != 0) {
+            printf("[PortManager] write cache config failed path=%s\n", kDeviceConfigPath);
+            ret = -1;
+        }
+
+        json_object_put(root);
+        return ret;
     }
 
     void loadDevicesForSlotLocked(int slot)
@@ -1267,6 +1345,21 @@ void PortManager::restoreSavedConnections()
     }
 
     impl_->sendRuntimeState(0, "restore_saved_connections");
+}
+
+int PortManager::loadOfflineCacheConfig(int *cache_enabled, int *flush_enabled)
+{
+    const OfflineCacheSavedConfig config = loadSavedOfflineCacheConfig();
+    if (cache_enabled)
+        *cache_enabled = config.cache_enabled ? 1 : 0;
+    if (flush_enabled)
+        *flush_enabled = config.flush_enabled ? 1 : 0;
+    return 0;
+}
+
+int PortManager::saveOfflineCacheConfig(int cache_enabled, int flush_enabled)
+{
+    return impl_->saveOfflineCacheConfig(cache_enabled != 0, flush_enabled != 0);
 }
 
 int PortManager::sendRuntimeState(uint32_t seq, const char *cmd)
@@ -1761,6 +1854,16 @@ extern "C" void port_manager_publish_latest_status(void)
 extern "C" void port_manager_restore_saved_connections(void)
 {
     g_manager.restoreSavedConnections();
+}
+
+extern "C" int port_manager_load_offline_cache_config(int *cache_enabled, int *flush_enabled)
+{
+    return g_manager.loadOfflineCacheConfig(cache_enabled, flush_enabled);
+}
+
+extern "C" int port_manager_save_offline_cache_config(int cache_enabled, int flush_enabled)
+{
+    return g_manager.saveOfflineCacheConfig(cache_enabled, flush_enabled);
 }
 
 extern "C" int port_manager_send_runtime_state(uint32_t seq, const char *cmd)

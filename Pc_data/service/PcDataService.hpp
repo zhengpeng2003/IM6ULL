@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -104,6 +103,21 @@ public:
     //void generateMockData();
     //void generateMockDataExtraCases();
 private:
+    void pruneExpiredRemovedDevicesLocked(std::int64_t nowMs) const;
+    void rememberRemovedDeviceLocked(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId,
+                                     std::int64_t nowMs);
+    bool isRemovedDeviceLocked(const std::string& gatewayId,
+                               const std::string& portId,
+                               int deviceId) const;
+    bool isRemovedMasterLocked(const std::string& gatewayId,
+                               const std::string& portId) const;
+    bool shouldAcceptNewDeviceDataLocked(const std::string& gatewayId,
+                                         const std::string& portId,
+                                         int deviceId,
+                                         std::int64_t dataTimeMs) const;
+
     mutable std::mutex m_mutex;
 
     /*
@@ -123,8 +137,8 @@ private:
      *     = 从站1湿度最新值
      */
     std::unordered_map<std::string, TelemetryPoint> m_snapshot;
-    std::unordered_set<std::string> m_removedDevices;
-    std::unordered_set<std::string> m_removedMasters;
+    mutable std::unordered_map<std::string, std::int64_t> m_removedDevices;
+    mutable std::unordered_map<std::string, std::int64_t> m_removedMasters;
     std::unordered_map<std::int64_t, SyncGatewayPending> m_syncPendingBySeq;
     std::unordered_map<int, std::vector<SyncGatewayPending> > m_syncRequests;
     std::unordered_map<int, SyncConfigResult> m_syncRequestResults;

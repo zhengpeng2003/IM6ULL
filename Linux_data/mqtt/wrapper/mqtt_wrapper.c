@@ -229,6 +229,12 @@ int mqtt_init(void)
         printf("[MQTT] offline publish cache init failed, continue without cache\n");
     }
 
+    int cache_enabled = 0;
+    int flush_enabled = 0;
+    (void)port_manager_load_offline_cache_config(&cache_enabled, &flush_enabled);
+    offline_publish_set_cache_enabled(cache_enabled);
+    offline_publish_set_flush_enabled(flush_enabled);
+
     g_connected = 0;
     g_subscribed = 0;
     g_last_gateway_heartbeat_ms = 0;
