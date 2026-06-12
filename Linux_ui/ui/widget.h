@@ -45,6 +45,10 @@ private:
                                Pageinfo *pageInfo,
                                PageSetting *pageSetting);
     void handleDeviceStatus(const DataPack &pack);
+    void upsertRegisteredSlave(int masterSlot,
+                               int slaveAddr,
+                               const QString &deviceName,
+                               const QString &deviceType);
     void updateSlaveOnline(int masterSlot,
                            int slaveAddr,
                            const QString &deviceType,

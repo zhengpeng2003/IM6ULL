@@ -17,6 +17,8 @@ public:
     explicit DeviceConfigPage(DeviceManager *device, ConfigManager *config, QWidget *parent = nullptr);
 
 signals:
+    void addSlaveRequested(const QString &gatewayId, const QString &portId, int deviceId,
+                           const QString &deviceType, int pollIntervalMs);
     void deleteMasterDataRequested(const QString &gatewayId, const QString &portId);
     void deleteDeviceDataRequested(const QString &gatewayId, const QString &portId, int deviceId);
 
@@ -46,6 +48,7 @@ private:
     void addStatusItem(QTableWidget *table, int row, int column, const QString &status) const;
     void addDeleteButton(QTableWidget *table, int row, bool master, const QString &gatewayId,
                          const QString &portId, int deviceId = 0);
+    void showAddSlaveDialog();
     void showScanPlaceholder();
 
 private:

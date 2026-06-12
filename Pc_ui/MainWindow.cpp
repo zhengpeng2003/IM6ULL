@@ -499,6 +499,9 @@ void MainWindow::initConnections()
     connect(m_deviceConfigPage, &DeviceConfigPage::deleteDeviceDataRequested,
             this, &MainWindow::sendDeleteDeviceData);
 
+    connect(m_deviceConfigPage, &DeviceConfigPage::addSlaveRequested,
+            m_command, &CommandManager::sendAddDeviceCommand);
+
     connect(m_alarmLogPage, &AlarmLogPage::clearRecoveredAlarmsRequested,
             this, &MainWindow::sendClearRecoveredAlarms);
 

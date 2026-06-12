@@ -5,13 +5,18 @@
 
 #include <QAbstractItemView>
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMap>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -86,9 +91,11 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     auto *slaveHeader = new QHBoxLayout;
     auto *slaveTitle = new QLabel(QStringLiteral("从站配置"), this);
     slaveTitle->setObjectName("PageTitle");
+    auto *addSlave = new QPushButton(QStringLiteral("添加从站"), this);
     auto *scanSlave = new QPushButton(QStringLiteral("扫描从站"), this);
     slaveHeader->addWidget(slaveTitle);
     slaveHeader->addStretch();
+    slaveHeader->addWidget(addSlave);
     slaveHeader->addWidget(scanSlave);
     layout->addLayout(slaveHeader);
 
@@ -110,6 +117,7 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     layout->addWidget(m_slaveTable, 1);
 
     connect(scanMaster, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
+    connect(addSlave, &QPushButton::clicked, this, &DeviceConfigPage::showAddSlaveDialog);
     connect(scanSlave, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
 
     if (m_device) {
@@ -318,6 +326,81 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         }
     });
     table->setCellWidget(row, table->columnCount() - 1, button);
+}
+
+void DeviceConfigPage::showAddSlaveDialog()
+{
+    const QList<MasterRow> masters = buildMasterRows();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("添加从站"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+
+    auto *masterCombo = new QComboBox(&dialog);
+    for (const MasterRow &m : masters) {
+        if (m.gatewayId.isEmpty() || m.portId.isEmpty()) {
+            continue;
+        }
+        if (m.status != QStringLiteral("connected") && m.status != QStringLiteral("online")) {
+            continue;
+        }
+
+        const QString gatewayName = m.gatewayName.isEmpty() ? m.gatewayId : m.gatewayName;
+        const QString portName = m.portName.isEmpty() ? m.portId : m.portName;
+        masterCombo->addItem(QStringLiteral("%1 / %2").arg(gatewayName, portName),
+                             masterKey(m.gatewayId, m.portId));
+    }
+
+    auto *slaveAddr = new QSpinBox(&dialog);
+    slaveAddr->setRange(1, 247);
+    slaveAddr->setValue(1);
+
+    auto *deviceType = new QComboBox(&dialog);
+    deviceType->addItem(QStringLiteral("温湿度传感器"), QStringLiteral("sensor_th"));
+    deviceType->addItem(QStringLiteral("继电器"), QStringLiteral("relay"));
+
+    auto *pollInterval = new QSpinBox(&dialog);
+    pollInterval->setRange(100, 600000);
+    pollInterval->setSingleStep(100);
+    pollInterval->setValue(1000);
+    pollInterval->setSuffix(QStringLiteral(" ms"));
+
+    form->addRow(QStringLiteral("主站"), masterCombo);
+    form->addRow(QStringLiteral("从站地址"), slaveAddr);
+    form->addRow(QStringLiteral("设备类型"), deviceType);
+    form->addRow(QStringLiteral("轮询周期"), pollInterval);
+    layout->addLayout(form);
+
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(box);
+
+    connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (masterCombo->count() == 0) {
+        QMessageBox::information(this,
+                                 QStringLiteral("添加从站"),
+                                 QStringLiteral("暂无已连接主站，请先确认板端端口已连接并已上报。"));
+        return;
+    }
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString selected = masterCombo->currentData().toString();
+    const int split = selected.indexOf(QStringLiteral("/"));
+    if (split <= 0 || split >= selected.size() - 1) {
+        QMessageBox::warning(this, QStringLiteral("添加从站"), QStringLiteral("主站信息无效"));
+        return;
+    }
+
+    emit addSlaveRequested(selected.left(split),
+                           selected.mid(split + 1),
+                           slaveAddr->value(),
+                           deviceType->currentData().toString(),
+                           pollInterval->value());
 }
 
 void DeviceConfigPage::showScanPlaceholder()

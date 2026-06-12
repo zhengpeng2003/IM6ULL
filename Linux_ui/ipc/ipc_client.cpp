@@ -165,6 +165,17 @@ void IpcClient::onReadyRead()
             continue;
         }
 
+        if (msgType == "device_register") {
+            emit deviceRegistered(
+                static_cast<quint32>(root.value("seq").toVariant().toULongLong()),
+                root.value("slot").toInt(),
+                root.value("deviceId").toInt(root.value("slave_id").toInt()),
+                root.value("deviceName").toString(),
+                root.value("deviceType").toString(),
+                root.value("pollIntervalMs").toInt(1000));
+            continue;
+        }
+
         if (msgType == "command" && root.value("cmd").toString() == "emergency") {
             emit emergencyReceived(root.value("level").toInt(),
                                    root.value("reason").toString(),

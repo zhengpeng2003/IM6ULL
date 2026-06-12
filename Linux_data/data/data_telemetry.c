@@ -49,6 +49,18 @@ static void fill_default_site(site_context_t *site)
     copy_text(site->port_name, sizeof(site->port_name), DEFAULT_PORT_NAME);
 }
 
+static void fill_slot_site(site_context_t *site, int slot)
+{
+    fill_default_site(site);
+    if (!site)
+        return;
+
+    if (slot == 1) {
+        copy_text(site->port_id, sizeof(site->port_id), "port_002");
+        copy_text(site->port_name, sizeof(site->port_name), "RS485-2");
+    }
+}
+
 static void add_string(struct json_object *obj, const char *key, const char *value)
 {
     json_object_object_add(obj, key, json_object_new_string(value ? value : ""));
@@ -186,6 +198,11 @@ static struct json_object *pack_device_json(const device_data_t *dev)
 
 telemetry_pack_t telemetry_pack_single(const device_data_t *dev)
 {
+    return telemetry_pack_single_for_slot(0, dev);
+}
+
+telemetry_pack_t telemetry_pack_single_for_slot(int slot, const device_data_t *dev)
+{
     static uint32_t seq = 0;
     telemetry_pack_t pack;
 
@@ -195,7 +212,7 @@ telemetry_pack_t telemetry_pack_single(const device_data_t *dev)
     pack.timestamp = (time_t)(pack.timestamp_ms / 1000);
     copy_text(pack.source_id, sizeof(pack.source_id), DEFAULT_SOURCE_ID);
     copy_text(pack.target_id, sizeof(pack.target_id), DEFAULT_TARGET_ID);
-    fill_default_site(&pack.site);
+    fill_slot_site(&pack.site, slot);
     pack.device_count = 1;
     if (dev)
         pack.devices[0] = *dev;

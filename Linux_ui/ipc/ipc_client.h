@@ -34,6 +34,12 @@ signals:
                            int baud,
                            bool connected,
                            const QString &message);
+    void deviceRegistered(quint32 seq,
+                          int slot,
+                          int deviceId,
+                          const QString &deviceName,
+                          const QString &deviceType,
+                          int pollIntervalMs);
     void commandAckReceived(quint32 seq,
                             const QString &cmd,
                             const QString &status,

@@ -28,6 +28,7 @@ namespace {
 
 const int kSlotCount = 2;
 const int kMinPollIntervalMs = 500;
+const int kOfflineFailureThreshold = 3;
 const char kDeviceConfigPath[] = "/etc/qt_object/device_config.json";
 const char kDeviceConfigDir[] = "/etc/qt_object";
 
@@ -42,6 +43,13 @@ struct ManagedDevice {
     std::chrono::steady_clock::time_point next_poll_time;
     device_data_t last_data = {};
     bool has_last_data = false;
+    int consecutive_failures = 0;
+    bool offline_reported = false;
+};
+
+struct LatestDeviceStatus {
+    int slot = 0;
+    device_data_t data = {};
 };
 
 struct PortChannel {
@@ -624,6 +632,48 @@ struct PortManager::Impl {
         }
     }
 
+    bool recordPollSuccess(int slot, int slave_id)
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        if (!validSlot(slot))
+            return false;
+
+        PortChannel &channel = channels[slot];
+        for (ManagedDevice &device : channel.devices) {
+            if (device.sensor && device.sensor->slaveId() == slave_id) {
+                device.consecutive_failures = 0;
+                device.offline_reported = false;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool recordPollFailure(int slot, int slave_id)
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        if (!validSlot(slot))
+            return false;
+
+        PortChannel &channel = channels[slot];
+        for (ManagedDevice &device : channel.devices) {
+            if (!device.sensor || device.sensor->slaveId() != slave_id)
+                continue;
+
+            ++device.consecutive_failures;
+            if (device.consecutive_failures >= kOfflineFailureThreshold &&
+                !device.offline_reported) {
+                device.offline_reported = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
     void pollDevice(int slot, std::shared_ptr<SensorDevice> sensor)
     {
         PortChannel *channel = nullptr;
@@ -646,31 +696,53 @@ struct PortManager::Impl {
         ret = sensor->read(*channel->bus, &dev);
         io_guard.unlock();
 
-        if (ret == 0 || dev.type != DEV_UNKNOWN) {
-            (void)data_publish_device_status(&dev);
+        if (ret == 0 && dev.valid) {
+            if (!recordPollSuccess(slot, sensor->slaveId()))
+                return;
+
+            (void)data_publish_device_status_for_slot(slot, &dev);
             updateLastData(slot, sensor->slaveId(), dev);
 
             ThresholdAlarmEvent event;
             if (sensor->checkThreshold(dev, &event))
                 publishThresholdAlarm(slot, *sensor, dev, event);
+            return;
         }
+
+        if (!recordPollFailure(slot, sensor->slaveId()))
+            return;
+
+        device_data_t offline = {};
+        offline.device_id = sensor->slaveId();
+        offline.type = sensor->deviceType();
+        offline.valid = 0;
+        snprintf(offline.device_name, sizeof(offline.device_name), "Device %d", sensor->slaveId());
+        snprintf(offline.error_message, sizeof(offline.error_message), "device_offline");
+
+        (void)data_publish_device_status_for_slot(slot, &offline);
+        updateLastData(slot, sensor->slaveId(), offline);
     }
 
     void publishLatestStatus()
     {
-        std::vector<device_data_t> latest;
+        std::vector<LatestDeviceStatus> latest;
         {
             std::lock_guard<std::mutex> guard(lock);
-            for (const PortChannel &channel : channels) {
+            for (int slot = 0; slot < kSlotCount; ++slot) {
+                const PortChannel &channel = channels[slot];
                 for (const ManagedDevice &device : channel.devices) {
-                    if (device.has_last_data)
-                        latest.push_back(device.last_data);
+                    if (device.has_last_data) {
+                        LatestDeviceStatus status;
+                        status.slot = slot;
+                        status.data = device.last_data;
+                        latest.push_back(status);
+                    }
                 }
             }
         }
 
-        for (const device_data_t &dev : latest)
-            (void)data_publish_device_status(&dev);
+        for (const LatestDeviceStatus &status : latest)
+            (void)data_publish_device_status_for_slot(status.slot, &status.data);
     }
 };
 

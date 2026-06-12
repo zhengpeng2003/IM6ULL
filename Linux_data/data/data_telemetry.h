@@ -44,6 +44,7 @@ typedef struct {
 } telemetry_pack_t;
 
 telemetry_pack_t telemetry_pack_single(const device_data_t *dev);
+telemetry_pack_t telemetry_pack_single_for_slot(int slot, const device_data_t *dev);
 int telemetry_pack_to_json(const telemetry_pack_t *pack,
                            char *buf,
                            int buf_size);

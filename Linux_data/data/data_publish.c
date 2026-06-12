@@ -56,6 +56,7 @@ static const char *point_key_from_device(const device_data_t *dev)
 }
 
 typedef struct {
+    int slot;
     int device_id;
     int valid;
     int seen;
@@ -64,7 +65,7 @@ typedef struct {
 static device_status_cache_t g_status_cache[64];
 static pthread_mutex_t g_status_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static int check_device_status_changed(const device_data_t *dev)
+static int check_device_status_changed(int slot_index, const device_data_t *dev)
 {
     if (!dev)
         return 0;
@@ -75,7 +76,9 @@ static int check_device_status_changed(const device_data_t *dev)
     device_status_cache_t *free_slot = NULL;
     device_status_cache_t *slot = NULL;
     for (size_t i = 0; i < sizeof(g_status_cache) / sizeof(g_status_cache[0]); ++i) {
-        if (g_status_cache[i].seen && g_status_cache[i].device_id == dev->device_id) {
+        if (g_status_cache[i].seen &&
+            g_status_cache[i].slot == slot_index &&
+            g_status_cache[i].device_id == dev->device_id) {
             slot = &g_status_cache[i];
             break;
         }
@@ -90,6 +93,7 @@ static int check_device_status_changed(const device_data_t *dev)
         if (!slot->seen || slot->valid != dev->valid)
             changed = slot->seen ? 1 : 0;
 
+        slot->slot = slot_index;
         slot->device_id = dev->device_id;
         slot->valid = dev->valid;
         slot->seen = 1;
@@ -198,11 +202,16 @@ static void send_publish_ack(uint32_t seq, int code, int ipc_code, int mqtt_code
 
 int data_publish_device_status(const device_data_t *dev)
 {
+    return data_publish_device_status_for_slot(0, dev);
+}
+
+int data_publish_device_status_for_slot(int slot, const device_data_t *dev)
+{
     if (!dev)
         return DATA_SEND_INVALID_ARG;
 
     char json[4096];
-    telemetry_pack_t pack = telemetry_pack_single(dev);
+    telemetry_pack_t pack = telemetry_pack_single_for_slot(slot, dev);
     int len = telemetry_pack_to_json(&pack, json, sizeof(json));
     if (len <= 0) {
         send_publish_ack(pack.seq, DATA_SEND_JSON_ERROR, DATA_SEND_JSON_ERROR, DATA_SEND_JSON_ERROR);
@@ -211,11 +220,12 @@ int data_publish_device_status(const device_data_t *dev)
 
     int ipc_code = ipc_server_send(json);
     offline_publish_meta_t meta;
-    const int status_changed = check_device_status_changed(dev);
+    const int status_changed = check_device_status_changed(slot, dev);
     fill_base_meta(&meta,
                    "telemetry_pack",
                    (!dev->valid || status_changed) ? 2 : 1,
                    pack.timestamp_ms);
+    meta.port_id = port_id_from_slot(slot);
     meta.device_id = dev->device_id;
     meta.has_invalid_data = dev->valid ? 0 : 1;
     meta.status_changed = status_changed;
@@ -322,6 +332,7 @@ int data_publish_device_register(uint32_t seq,
     json_object_object_add(root, "sequence", json_object_new_int64(seq));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "timestampMs", json_object_new_int64(now_ms));
+    json_object_object_add(root, "slot", json_object_new_int(slot));
     add_string(root, "sourceId", DEFAULT_SOURCE_ID);
     add_string(root, "targetId", DEFAULT_TARGET_ID);
 
@@ -359,6 +370,7 @@ int data_publish_device_register(uint32_t seq,
     fill_base_meta(&meta, "device_register", 0, now_ms);
     meta.port_id = port_id_from_slot(slot);
     meta.device_id = slave_id;
+    (void)ipc_server_send(json);
     int ret = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, &meta);
     json_object_put(root);
     return ret;

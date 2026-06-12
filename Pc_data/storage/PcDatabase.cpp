@@ -267,8 +267,10 @@ bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
     device.pollIntervalMs = 1000;
     device.expectTelemetry = device.deviceType != "relay";
     device.enabled = true;
-    device.status = point.valid ? "online" : "error";
+    device.status = point.valid ? "online" :
+        (point.errorMessage == "device_offline" ? "offline" : "error");
     device.lastSeenMs = point.timestampMs;
+    device.lastOfflineMs = device.status == "offline" ? point.timestampMs : 0;
     device.statusReason = point.valid ? "" : point.errorMessage;
     device.createTimeMs = point.timestampMs;
     device.updateTimeMs = point.timestampMs;

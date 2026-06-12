@@ -84,6 +84,28 @@ void Widget::initUI()
     });
     connect(_Myclient, &IpcClient::deviceStatusUpdated,
             this, &Widget::handleDeviceStatus);
+    connect(_Myclient,
+            &IpcClient::deviceRegistered,
+            this,
+            [this](quint32 seq,
+                   int slot,
+                   int deviceId,
+                   const QString &deviceName,
+                   const QString &deviceType,
+                   int pollIntervalMs) {
+                Q_UNUSED(seq);
+                Q_UNUSED(pollIntervalMs);
+
+                if (slot < 0 || deviceId <= 0 || deviceType.isEmpty())
+                    return;
+
+                m_connectedMasterSlots.insert(slot);
+                upsertRegisteredSlave(slot, deviceId, deviceName, deviceType);
+                refreshHomeMasterAndSlaveList(slot);
+
+                if (m_operationOverlay)
+                    m_operationOverlay->showSuccess("从站已添加");
+            });
     connect(pageStatus, &PageStatus::masterChanged, this, [this](int masterSlot) {
         refreshHomeMasterAndSlaveList(masterSlot);
     });
@@ -324,17 +346,10 @@ void Widget::initUI()
                         m_addSlaveDialog->setResult(ok, ok ? "Add success" : text);
 
                     if (ok) {
-                        SlaveDeviceInfo info;
-                        info.masterSlot = m_pendingAddSlave.masterSlot;
-                        info.slaveAddr = m_pendingAddSlave.slaveId;
-                        info.deviceName = QString("从站 %1").arg(m_pendingAddSlave.slaveId);
-                        info.displayName = m_pendingAddSlave.deviceType == "sensor_th"
-                            ? "温湿度传感器"
-                            : "继电器";
-                        info.deviceType = m_pendingAddSlave.deviceType;
-                        info.online = false;
-                        m_slaveDevices.append(info);
-
+                        upsertRegisteredSlave(m_pendingAddSlave.masterSlot,
+                                              m_pendingAddSlave.slaveId,
+                                              QString("从站 %1").arg(m_pendingAddSlave.slaveId),
+                                              m_pendingAddSlave.deviceType);
                         refreshHomeMasterAndSlaveList(m_pendingAddSlave.masterSlot);
                     }
 
@@ -482,13 +497,13 @@ void Widget::handleDeviceStatus(const DataPack &pack)
         : QDateTime::currentDateTime().toString("HH:mm:ss");
 
     for (const DeviceData &device : pack.devices) {
-        if (!device.valid)
-            continue;
-
-        int masterSlot = -1;
+        int masterSlot = pack.masterSlot;
+        QString deviceType;
         for (const SlaveDeviceInfo &slave : m_slaveDevices) {
-            if (slave.slaveAddr == device.deviceId) {
+            if (slave.slaveAddr == device.deviceId &&
+                (masterSlot < 0 || slave.masterSlot == masterSlot)) {
                 masterSlot = slave.masterSlot;
+                deviceType = slave.deviceType;
                 break;
             }
         }
@@ -498,6 +513,23 @@ void Widget::handleDeviceStatus(const DataPack &pack)
             masterSlot = 0;
         if (!m_connectedMasterSlots.contains(masterSlot))
             continue;
+
+        if (deviceType.isEmpty()) {
+            if (device.type == DEV_SENSOR_TH)
+                deviceType = "sensor_th";
+            else if (device.type == DEV_RELAY)
+                deviceType = "relay";
+            else
+                deviceType = "unknown";
+        }
+
+        if (!device.valid) {
+            if (device.errorMessage == "device_offline" ||
+                device.errorMessage == "modbus_timeout") {
+                updateSlaveOnline(masterSlot, device.deviceId, deviceType, false);
+            }
+            continue;
+        }
 
         if (device.type == DEV_SENSOR_TH) {
             updateSlaveOnline(masterSlot, device.deviceId, "sensor_th", true);
@@ -524,6 +556,43 @@ void Widget::handleDeviceStatus(const DataPack &pack)
     }
 
     refreshStatusSummary();
+}
+
+void Widget::upsertRegisteredSlave(int masterSlot,
+                                   int slaveAddr,
+                                   const QString &deviceName,
+                                   const QString &deviceType)
+{
+    if (masterSlot < 0 || slaveAddr <= 0 || deviceType.isEmpty())
+        return;
+
+    const QString displayName = deviceType == "sensor_th"
+        ? "温湿度传感器"
+        : (deviceType == "relay" ? "继电器" : deviceType);
+    const QString name = deviceName.isEmpty()
+        ? QString("从站 %1").arg(slaveAddr)
+        : deviceName;
+
+    for (SlaveDeviceInfo &slave : m_slaveDevices) {
+        if (slave.masterSlot != masterSlot ||
+            slave.slaveAddr != slaveAddr ||
+            slave.deviceType != deviceType) {
+            continue;
+        }
+
+        slave.deviceName = name;
+        slave.displayName = displayName;
+        return;
+    }
+
+    SlaveDeviceInfo info;
+    info.masterSlot = masterSlot;
+    info.slaveAddr = slaveAddr;
+    info.deviceName = name;
+    info.displayName = displayName;
+    info.deviceType = deviceType;
+    info.online = false;
+    m_slaveDevices.append(info);
 }
 
 void Widget::updateSlaveOnline(int masterSlot,

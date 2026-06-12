@@ -16,6 +16,8 @@ public:
 
 public slots:
     void sendRelayCommand(const DeviceNode &device, const QString &channel, bool value);
+    void sendAddDeviceCommand(const QString &gatewayId, const QString &portId, int deviceId,
+                              const QString &deviceType, int pollIntervalMs);
     void onCommandAck(const QJsonObject &obj);
 
 signals:

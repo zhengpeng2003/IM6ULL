@@ -27,6 +27,7 @@ struct DeviceData
     int deviceId = 0;
     DeviceType type = DEV_SENSOR_TH;
     bool valid = false;
+    QString errorMessage;
 
     // 温湿度
     double temperature = 0.0;
@@ -42,6 +43,7 @@ struct DataPack
 {
     quint32 seq = 0;
     QDateTime time;
+    int masterSlot = -1;
     QVector<DeviceData> devices;
 };
 

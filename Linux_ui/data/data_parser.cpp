@@ -2,7 +2,36 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QDebug>
+
+namespace {
+
+bool jsonBoolValue(const QJsonValue &value, bool defaultValue = false)
+{
+    if (value.isBool()) {
+        return value.toBool();
+    }
+    if (value.isDouble()) {
+        return value.toInt() != 0;
+    }
+    if (value.isString()) {
+        const QString text = value.toString().trimmed().toLower();
+        return text == "true" || text == "1" || text == "ok";
+    }
+    return defaultValue;
+}
+
+int slotFromPortId(const QString &portId)
+{
+    if (portId == "port_001")
+        return 0;
+    if (portId == "port_002")
+        return 1;
+    return -1;
+}
+
+} // namespace
 
 DataParser::DataParser()
 {
@@ -24,6 +53,11 @@ bool DataParser::parseJson(const QByteArray &json, DataPack &outPack)
     outPack.seq  = root.value("seq").toInt();
     outPack.time = QDateTime::fromSecsSinceEpoch(
         root.value("time").toVariant().toLongLong());
+    outPack.masterSlot = -1;
+
+    const QJsonObject site = root.value("site").toObject();
+    if (!site.isEmpty())
+        outPack.masterSlot = slotFromPortId(site.value("portId").toString());
 
     QJsonArray devs = root.value("devices").toArray();
     outPack.devices.clear();
@@ -33,7 +67,8 @@ bool DataParser::parseJson(const QByteArray &json, DataPack &outPack)
 
         DeviceData dev;
         dev.deviceId = o.value("id").toInt();
-        dev.valid    = o.value("valid").toInt() == 1;
+        dev.valid    = jsonBoolValue(o.value("valid"));
+        dev.errorMessage = o.value("errorMessage").toString();
 
         QString typeStr = o.value("type").toString();
 
@@ -78,4 +113,3 @@ bool DataParser::parseJson(const QByteArray &json, DataPack &outPack)
 
     return true;
 }
-
