@@ -34,6 +34,14 @@ void data_ack_send_port_result(uint32_t seq,
                                const char *device_type,
                                int baud,
                                int connected);
+void data_ack_send_offline_cache_config(uint32_t seq,
+                                        const char *cmd,
+                                        int ok,
+                                        const char *reason,
+                                        const char *message,
+                                        int cache_enabled,
+                                        int flush_enabled,
+                                        int pending_count);
 
 const char *data_ack_message_from_reason(const char *reason);
 

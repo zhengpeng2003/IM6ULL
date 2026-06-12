@@ -188,8 +188,11 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::cout << "delete_device_data skipped: database is not open" << std::endl;
         }
 
-        const bool snapshotRemoved = m_dataService.removeDeviceData(gatewayId, portId, deviceId);
-        const bool ok = dbOk || snapshotRemoved;
+        bool snapshotRemoved = false;
+        if (dbOk) {
+            snapshotRemoved = m_dataService.removeDeviceData(gatewayId, portId, deviceId);
+        }
+        const bool ok = dbOk;
         const std::string reason = ok ? "" : "delete_device_data_failed";
 
         m_ipc.sendMessage(buildDeleteDataAckJson("delete_device_data", ok, reason));

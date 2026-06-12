@@ -15,6 +15,7 @@ public:
 signals:
     void deviceSelected(const QString &deviceKey);
     void pointSelected(const QString &pointId, const QString &deviceKey, const QString &pointName, const QString &unit);
+    void selectionLost();
 
 private:
     QSet<QString> expandedNodeKeys() const;

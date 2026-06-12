@@ -456,6 +456,75 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
     return CMD_PROCESS_HANDLED;
 }
 
+static int handle_get_offline_cache_config(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
+    data_ack_send_offline_cache_config(seq,
+                                       cmd,
+                                       1,
+                                       "",
+                                       "offline cache config",
+                                       mqtt_offline_cache_enabled(),
+                                       mqtt_offline_cache_flush_enabled(),
+                                       mqtt_offline_cache_pending_count());
+    return CMD_PROCESS_HANDLED;
+}
+
+static int handle_set_offline_cache_config(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    struct json_object *v = NULL;
+
+    if (json_object_object_get_ex(root, "cache_enabled", &v) ||
+        json_object_object_get_ex(root, "cacheEnabled", &v)) {
+        mqtt_set_offline_cache_enabled(json_object_get_boolean(v));
+    }
+
+    if (json_object_object_get_ex(root, "flush_enabled", &v) ||
+        json_object_object_get_ex(root, "flushEnabled", &v)) {
+        mqtt_set_offline_cache_flush_enabled(json_object_get_boolean(v));
+    }
+
+    data_ack_send_offline_cache_config(seq,
+                                       cmd,
+                                       1,
+                                       "",
+                                       "offline cache config saved",
+                                       mqtt_offline_cache_enabled(),
+                                       mqtt_offline_cache_flush_enabled(),
+                                       mqtt_offline_cache_pending_count());
+    return CMD_PROCESS_HANDLED;
+}
+
+static int handle_clear_offline_cache(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
+    const int ok = mqtt_clear_offline_cache() == 0;
+    data_ack_send_offline_cache_config(seq,
+                                       cmd,
+                                       ok,
+                                       ok ? "" : "offline_cache_clear_failed",
+                                       ok ? "offline cache cleared" : "offline cache clear failed",
+                                       mqtt_offline_cache_enabled(),
+                                       mqtt_offline_cache_flush_enabled(),
+                                       mqtt_offline_cache_pending_count());
+    return ok ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
+static int handle_flush_offline_cache(uint32_t seq, struct json_object *root, const char *cmd)
+{
+    (void)root;
+    const int ok = mqtt_flush_offline_cache_once() == DATA_SEND_OK;
+    data_ack_send_offline_cache_config(seq,
+                                       cmd,
+                                       ok,
+                                       ok ? "" : "offline_cache_flush_disabled",
+                                       ok ? "offline cache flush requested" : "offline cache flush disabled",
+                                       mqtt_offline_cache_enabled(),
+                                       mqtt_offline_cache_flush_enabled(),
+                                       mqtt_offline_cache_pending_count());
+    return ok ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
+}
+
 static const command_entry_t command_table[] = {
     {"scan_ports", handle_scan_ports},
     {"get_runtime_state", handle_get_runtime_state},
@@ -468,6 +537,10 @@ static const command_entry_t command_table[] = {
     {"get_config", handle_get_config},
     {"get_alarm_config", handle_get_alarm_config},
     {"set_alarm_config", handle_set_alarm_config},
+    {"get_offline_cache_config", handle_get_offline_cache_config},
+    {"set_offline_cache_config", handle_set_offline_cache_config},
+    {"clear_offline_cache", handle_clear_offline_cache},
+    {"flush_offline_cache", handle_flush_offline_cache},
 };
 
 static int process_command_message(uint32_t seq, struct json_object *root, const char *cmd)

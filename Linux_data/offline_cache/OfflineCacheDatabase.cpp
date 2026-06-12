@@ -246,6 +246,16 @@ int OfflineCacheDatabase::countPending()
     return count;
 }
 
+bool OfflineCacheDatabase::clearPending()
+{
+    if (!db_)
+        return false;
+
+    const bool ok = execSql("DELETE FROM offline_publish_queue;", "clear offline cache");
+    printf("[OfflineCache] clear cache %s\n", ok ? "ok" : "failed");
+    return ok;
+}
+
 void OfflineCacheDatabase::enforceMaxRecords()
 {
     int64_t total = countAllRecords();

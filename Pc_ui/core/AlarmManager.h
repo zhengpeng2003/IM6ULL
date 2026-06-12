@@ -17,6 +17,7 @@ public slots:
     void onAlarmMessage(const QJsonObject &obj);
     void acknowledgeAlarm(const QString &alarmId);
     void recoverAlarm(const QString &alarmId);
+    void removeDeviceAlarms(const QString &gatewayId, const QString &portId, int deviceId);
     void clearRecoveredAlarms();
     void clearAllAlarms();
 

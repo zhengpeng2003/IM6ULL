@@ -284,10 +284,14 @@ void mqtt_poll(void)
             data_publish_gateway_register(next_gateway_seq());
             port_manager_publish_latest_status();
 
-            printf("[MQTT] reconnected, start offline cache flush pending=%d\n",
-                   offline_publish_pending_count());
-
-            offline_publish_flush_once();
+            if (offline_publish_flush_enabled()) {
+                printf("[MQTT] reconnected, start offline cache flush pending=%d\n",
+                       offline_publish_pending_count());
+                offline_publish_flush_once();
+            } else {
+                printf("[MQTT] reconnected, offline cache auto flush disabled pending=%d\n",
+                       offline_publish_pending_count());
+            }
 
             g_last_offline_flush_ms = mqtt_time_ms();
             g_last_gateway_heartbeat_ms = 0;
@@ -332,7 +336,8 @@ void mqtt_poll(void)
     }
 
     /* 6. 离线缓存定时刷出 */
-    if (now_ms - g_last_offline_flush_ms >= 200) {
+    if (offline_publish_flush_enabled() &&
+        now_ms - g_last_offline_flush_ms >= 200) {
         offline_publish_flush_once();
         g_last_offline_flush_ms = now_ms;
     }
@@ -404,5 +409,44 @@ int mqtt_send_direct_if_connected(const char *topic, const char *payload)
         return DATA_SEND_MQTT_QUEUE_FULL;
     }
 
+    return DATA_SEND_OK;
+}
+
+void mqtt_set_offline_cache_enabled(int enabled)
+{
+    offline_publish_set_cache_enabled(enabled);
+}
+
+int mqtt_offline_cache_enabled(void)
+{
+    return offline_publish_cache_enabled();
+}
+
+void mqtt_set_offline_cache_flush_enabled(int enabled)
+{
+    offline_publish_set_flush_enabled(enabled);
+}
+
+int mqtt_offline_cache_flush_enabled(void)
+{
+    return offline_publish_flush_enabled();
+}
+
+int mqtt_offline_cache_pending_count(void)
+{
+    return offline_publish_pending_count();
+}
+
+int mqtt_clear_offline_cache(void)
+{
+    return offline_publish_clear_pending();
+}
+
+int mqtt_flush_offline_cache_once(void)
+{
+    if (!offline_publish_flush_enabled())
+        return DATA_SEND_INVALID_ARG;
+
+    offline_publish_flush_once();
     return DATA_SEND_OK;
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QHash>
+#include <QSet>
 #include <QMutex>
 #include <QJsonObject>
 #include <QList>
@@ -22,6 +23,7 @@ public:
     void refreshOfflineStates(qint64 timeoutMs = 30000);
     void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void removeMasterData(const QString &gatewayId, const QString &portId);
+    void forgetRemovedDevice(const QString &gatewayId, const QString &portId, int deviceId);
     void clearAllData();
     void markAllDevicesOffline();
 
@@ -42,10 +44,14 @@ private:
     void evaluateDeviceStatus(RealtimeDeviceData &data) const;
     void applyPointToTypedFields(RealtimeDeviceData &data, const TelemetryPointData &point) const;
     void upsertRealtimeData(const RealtimeDeviceData &data);
+    QString deletedDeviceKey(const QString &gatewayId, const QString &portId, int deviceId) const;
+    bool isDeletedDevice(const QString &gatewayId, const QString &portId, int deviceId) const;
+    void pruneExpiredDeletedDevicesLocked(qint64 nowMs);
 
 private:
     DeviceManager *m_deviceManager = nullptr;
     AlarmManager *m_alarmManager = nullptr;
     mutable QMutex m_mutex;
     QHash<QString, RealtimeDeviceData> m_realtimeMap;
+    QHash<QString, qint64> m_deletedDevices;
 };

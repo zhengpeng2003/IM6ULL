@@ -15,7 +15,7 @@ void sendLatestPoints(IpcServer& ipc, PcDataService& dataService, PcDatabase& da
 {
     std::vector<TelemetryPoint> points = dataService.getLatestPoints();
     if (points.empty() && database.isOpen()) {
-        points = database.queryLatestPoints();
+        points = dataService.filterRemovedPoints(database.queryLatestPoints());
     }
 
     std::cout << "latest point count: " << points.size() << std::endl;

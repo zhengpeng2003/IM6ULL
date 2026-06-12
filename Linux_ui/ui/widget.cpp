@@ -1,7 +1,9 @@
 #include "widget.h"
 #include <algorithm>
 #include <QDebug>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QTimer>
@@ -94,6 +96,27 @@ void Widget::initUI()
                 m_operationOverlay->showFailure("后端未运行");
         });
     });
+    connect(pageInfo, &Pageinfo::offlineCacheConfigChanged,
+            this,
+            [this](bool cacheEnabled, bool flushEnabled) {
+                QJsonObject payload;
+                payload.insert("cache_enabled", cacheEnabled);
+                payload.insert("flush_enabled", flushEnabled);
+                if (!sendCommand("set_offline_cache_config", payload) && m_operationOverlay)
+                    m_operationOverlay->showFailure("缓存配置发送失败");
+            });
+    connect(pageInfo, &Pageinfo::clearOfflineCacheRequested,
+            this,
+            [this]() {
+                if (!sendCommand("clear_offline_cache") && m_operationOverlay)
+                    m_operationOverlay->showFailure("清除缓存命令失败");
+            });
+    connect(pageInfo, &Pageinfo::flushOfflineCacheRequested,
+            this,
+            [this]() {
+                if (!sendCommand("flush_offline_cache") && m_operationOverlay)
+                    m_operationOverlay->showFailure("发送缓存命令失败");
+            });
     connect(_Myclient, &IpcClient::deviceStatusUpdated,
             this, &Widget::handleDeviceStatus);
     connect(_Myclient,
@@ -113,6 +136,13 @@ void Widget::initUI()
 
                 upsertRegisteredSlave(slot, deviceId, deviceName, deviceType);
                 refreshHomeMasterAndSlaveList(slot);
+            });
+    connect(_Myclient,
+            &IpcClient::runtimeStateReceived,
+            this,
+            [this](quint32 seq, const QJsonArray &ports) {
+                Q_UNUSED(seq);
+                handleRuntimeStateSnapshot(ports);
             });
     connect(pageStatus, &PageStatus::masterChanged, this, [this](int masterSlot) {
         refreshHomeMasterAndSlaveList(masterSlot);
@@ -411,13 +441,22 @@ void Widget::initUI()
                    const QString &cmd,
                    const QString &status,
                    const QString &reason,
-                   const QString &message) {
+                   const QString &message,
+                   const QJsonObject &ackRoot) {
                 qDebug() << "[IPC][ack]"
                          << "seq:" << seq
                          << "cmd:" << cmd
                          << "status:" << status
                          << "reason:" << reason
                          << "message:" << message;
+
+                if (cmd == "get_offline_cache_config" ||
+                    cmd == "set_offline_cache_config" ||
+                    cmd == "clear_offline_cache" ||
+                    cmd == "flush_offline_cache") {
+                    handleOfflineCacheAck(cmd, status, reason, ackRoot);
+                    return;
+                }
 
                 if (cmd == "add_device" &&
                     m_pendingAddSlave.active &&
@@ -455,6 +494,7 @@ void Widget::initUI()
                                               m_pendingRemoveSlave.slaveAddr,
                                               m_pendingRemoveSlave.deviceType);
                         refreshHomeMasterAndSlaveList(m_pendingRemoveSlave.masterSlot);
+                        (void)sendCommand("get_runtime_state");
                         if (m_operationOverlay)
                             m_operationOverlay->showSuccess("从站已删除");
                     } else if (m_operationOverlay) {
@@ -462,6 +502,12 @@ void Widget::initUI()
                     }
 
                     m_pendingRemoveSlave = PendingRemoveSlave();
+                    return;
+                }
+
+                if (cmd == "remove_device" && status == "ok") {
+                    handleRemoteRemoveDeviceAck(ackRoot);
+                    (void)sendCommand("get_runtime_state");
                     return;
                 }
 
@@ -573,6 +619,7 @@ void Widget::handleIpcConnected(TopStatusBar *topBar, Pageinfo *pageInfo)
         m_pageStatus->setAlarmText("告警：--");
 
     requestRuntimeRefresh();
+    requestOfflineCacheConfig();
 }
 
 void Widget::handleIpcDisconnected(TopStatusBar *topBar,
@@ -631,6 +678,155 @@ void Widget::requestRuntimeRefresh()
 
     (void)sendCommand("get_runtime_state");
     (void)sendCommand("scan_ports");
+}
+
+void Widget::requestOfflineCacheConfig()
+{
+    if (!_Myclient || !_Myclient->isConnected())
+        return;
+
+    (void)sendCommand("get_offline_cache_config");
+}
+
+void Widget::handleOfflineCacheAck(const QString &cmd,
+                                   const QString &status,
+                                   const QString &reason,
+                                   const QJsonObject &ackRoot)
+{
+    Pageinfo *pageInfo = nullptr;
+    if (m_stack)
+        pageInfo = qobject_cast<Pageinfo *>(m_stack->widget(3));
+
+    const bool cacheEnabled = ackRoot.value("cache_enabled").toBool(true);
+    const bool flushEnabled = ackRoot.value("flush_enabled").toBool(false);
+    const int pendingCount = ackRoot.value("pending_count").toInt(0);
+    if (pageInfo)
+        pageInfo->updateOfflineCacheStatus(cacheEnabled, flushEnabled, pendingCount);
+
+    if (!m_operationOverlay || cmd == "get_offline_cache_config")
+        return;
+
+    if (status != "ok") {
+        m_operationOverlay->showFailure(reason.isEmpty() ? "缓存命令失败" : reason);
+        return;
+    }
+
+    if (cmd == "set_offline_cache_config")
+        m_operationOverlay->showSuccess("缓存配置已保存");
+    else if (cmd == "clear_offline_cache")
+        m_operationOverlay->showSuccess("缓存数据库已清除");
+    else if (cmd == "flush_offline_cache")
+        m_operationOverlay->showSuccess("缓存数据库已发送");
+}
+
+void Widget::handleRuntimeStateSnapshot(const QJsonArray &ports)
+{
+    QSet<int> snapshotSlots;
+    QSet<QString> snapshotSlaveKeys;
+
+    for (const QJsonValue &portValue : ports) {
+        if (!portValue.isObject())
+            continue;
+
+        const QJsonObject portObj = portValue.toObject();
+        const int slot = portObj.value("slot").toInt(-1);
+        if (slot < 0)
+            continue;
+
+        const QString port = portObj.value("port").toString();
+        const int baud = portObj.value("baud").toInt(9600);
+        const bool connected = portObj.value("connected").toBool(false);
+        snapshotSlots.insert(slot);
+
+        MasterPortInfo info = m_runtimePorts.value(slot);
+        info.masterSlot = slot;
+        info.masterName = masterNameForSlot(slot);
+        if (!port.isEmpty())
+            info.deviceNode = port;
+        info.baudRate = baud > 0 ? baud : info.baudRate;
+        info.connected = connected;
+        m_runtimePorts.insert(slot, info);
+
+        if (connected)
+            m_connectedMasterSlots.insert(slot);
+        else
+            m_connectedMasterSlots.remove(slot);
+
+        const QJsonArray devices = portObj.value("devices").toArray();
+        for (const QJsonValue &deviceValue : devices) {
+            if (!deviceValue.isObject())
+                continue;
+
+            const QJsonObject deviceObj = deviceValue.toObject();
+            const int deviceId = deviceObj.value("deviceId").toInt(deviceObj.value("slave_id").toInt());
+            const QString deviceType = deviceObj.value("deviceType").toString();
+            if (deviceId <= 0 || deviceType.isEmpty())
+                continue;
+
+            snapshotSlaveKeys.insert(QString("%1:%2:%3").arg(slot).arg(deviceId).arg(deviceType));
+            upsertRegisteredSlave(slot,
+                                  deviceId,
+                                  deviceObj.value("deviceName").toString(),
+                                  deviceType);
+        }
+    }
+
+    for (int i = m_slaveDevices.size() - 1; i >= 0; --i) {
+        const SlaveDeviceInfo &slave = m_slaveDevices.at(i);
+        if (!snapshotSlots.contains(slave.masterSlot))
+            continue;
+
+        const QString key = QString("%1:%2:%3")
+            .arg(slave.masterSlot)
+            .arg(slave.slaveAddr)
+            .arg(slave.deviceType);
+        if (!snapshotSlaveKeys.contains(key)) {
+            const int slaveSlot = slave.masterSlot;
+            const int slaveAddr = slave.slaveAddr;
+            const QString deviceType = slave.deviceType;
+            removeRegisteredSlave(slaveSlot, slaveAddr, deviceType);
+        }
+    }
+
+    refreshHomeMasterAndSlaveList();
+    refreshStatusSummary();
+}
+
+int Widget::slotFromPortId(const QString &portId) const
+{
+    if (portId == "port_001" || portId == "RS485-1")
+        return 0;
+    if (portId == "port_002" || portId == "RS485-2")
+        return 1;
+    return -1;
+}
+
+void Widget::handleRemoteRemoveDeviceAck(const QJsonObject &ack)
+{
+    int masterSlot = ack.value("slot").toInt(-1);
+    int slaveAddr = ack.value("slave_id").toInt(ack.value("deviceId").toInt(0));
+
+    const QJsonObject target = ack.value("target").toObject();
+    if (masterSlot < 0 && !target.isEmpty())
+        masterSlot = slotFromPortId(target.value("portId").toString());
+    if (slaveAddr <= 0)
+        slaveAddr = target.value("deviceId").toInt(target.value("slave_id").toInt(0));
+
+    if (masterSlot < 0 || slaveAddr <= 0)
+        return;
+
+    bool removed = false;
+    for (int i = m_slaveDevices.size() - 1; i >= 0; --i) {
+        const SlaveDeviceInfo slave = m_slaveDevices.at(i);
+        if (slave.masterSlot != masterSlot || slave.slaveAddr != slaveAddr)
+            continue;
+
+        removeRegisteredSlave(slave.masterSlot, slave.slaveAddr, slave.deviceType);
+        removed = true;
+    }
+
+    if (removed)
+        refreshHomeMasterAndSlaveList(masterSlot);
 }
 
 void Widget::handleDeviceStatus(const DataPack &pack)

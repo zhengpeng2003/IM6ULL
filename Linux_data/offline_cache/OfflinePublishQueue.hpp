@@ -21,11 +21,18 @@ public:
                       const PublishMeta &meta);
     void flushToMqttOnce();
     int countPending();
+    bool clearPending();
+    void setCacheEnabled(bool enabled);
+    bool cacheEnabled() const;
+    void setFlushEnabled(bool enabled);
+    bool flushEnabled() const;
 
 private:
     OfflineCacheDatabase db_;
     OfflineCachePolicy policy_;
     OfflineMqttSender sender_ = nullptr;
     bool initialized_ = false;
-    std::mutex lock_;
+    bool cache_enabled_ = true;
+    bool flush_enabled_ = false;
+    mutable std::mutex lock_;
 };

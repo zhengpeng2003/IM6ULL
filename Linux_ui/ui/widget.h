@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QStackedWidget>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
 #include <QSet>
@@ -49,6 +50,14 @@ private:
     void startIpcAutoReconnect();
     void stopIpcAutoReconnect();
     void requestRuntimeRefresh();
+    void requestOfflineCacheConfig();
+    void handleRuntimeStateSnapshot(const QJsonArray &ports);
+    void handleOfflineCacheAck(const QString &cmd,
+                               const QString &status,
+                               const QString &reason,
+                               const QJsonObject &ackRoot);
+    int slotFromPortId(const QString &portId) const;
+    void handleRemoteRemoveDeviceAck(const QJsonObject &ack);
     void upsertRegisteredSlave(int masterSlot,
                                int slaveAddr,
                                const QString &deviceName,

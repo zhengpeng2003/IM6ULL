@@ -143,7 +143,11 @@ void DeviceTreeWidget::setDevices(const QList<DeviceNode> &devices)
 
     restoreExpandedNodeKeys(expandedKeys);
     if (!selectedDeviceKey.isEmpty()) {
-        setCurrentItem(findDeviceItem(selectedDeviceKey));
+        QTreeWidgetItem *selectedItem = findDeviceItem(selectedDeviceKey);
+        setCurrentItem(selectedItem);
+        if (!selectedItem) {
+            emit selectionLost();
+        }
     }
 }
 
@@ -203,10 +207,16 @@ void DeviceTreeWidget::setRealtimeDevices(const QList<RealtimeDeviceData> &devic
             setCurrentItem(pointItem);
             return;
         }
+        emit selectionLost();
+        return;
     }
 
     if (!selectedDeviceKey.isEmpty()) {
-        setCurrentItem(findDeviceItem(selectedDeviceKey));
+        QTreeWidgetItem *selectedItem = findDeviceItem(selectedDeviceKey);
+        setCurrentItem(selectedItem);
+        if (!selectedItem) {
+            emit selectionLost();
+        }
     }
 }
 

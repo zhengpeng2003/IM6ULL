@@ -109,7 +109,8 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
                                       const std::string& commandType,
                                       const std::string& status,
                                       const std::string& reason,
-                                      const std::string& message)
+                                      const std::string& message,
+                                      const CommandLogTarget* target)
 {
     std::ostringstream oss;
     oss << "{";
@@ -119,6 +120,11 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
     oss << "\"status\":\"" << jsonEscape(status) << "\",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    if (target) {
+        oss << "\"gatewayId\":\"" << jsonEscape(target->gatewayId) << "\",";
+        oss << "\"portId\":\"" << jsonEscape(target->portId) << "\",";
+        oss << "\"deviceId\":" << target->deviceId << ",";
+    }
     oss << "\"timestampMs\":" << currentTimeMs();
     oss << "}";
     return oss.str();

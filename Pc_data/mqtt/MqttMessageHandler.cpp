@@ -295,17 +295,14 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             commandType = getJsonString(root, "cmd");
         }
         const std::string ackStatus = getJsonString(root, "status");
-        const std::string logStatus = ackStatus == "ok" ? "success" : "failed";
-        const std::string reason = getJsonString(root, "reason");
-        const std::string message = getJsonString(root, "message");
+        std::string logStatus = ackStatus == "ok" ? "success" : "failed";
+        std::string reason = getJsonString(root, "reason");
+        std::string message = getJsonString(root, "message");
 
         CommandLogTarget target;
         const bool hasTarget = m_database.isOpen() &&
                                m_database.queryCommandTargetBySeq(seq, target);
 
-        if (m_database.isOpen()) {
-            m_database.updateCommandLogBySeq(seq, logStatus, reason, message, currentTimeMs());
-        }
         if (logStatus == "success" &&
             commandType == "remove_device" &&
             hasTarget &&
@@ -313,19 +310,50 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             const bool deleteOk = m_database.deleteDeviceData(target.gatewayId,
                                                               target.portId,
                                                               target.deviceId);
+            bool snapshotRemoved = false;
+            if (deleteOk) {
+                snapshotRemoved = m_dataService.removeDeviceData(target.gatewayId,
+                                                                 target.portId,
+                                                                 target.deviceId);
+            }
             if (deleteOk && m_ipc.hasClient()) {
                 sendLatestPoints(m_ipc, m_dataService, m_database);
                 sendDevicesSnapshot(m_ipc, m_database);
+                sendPortStatusSnapshot(m_ipc, m_database);
+            } else if (!deleteOk) {
+                logStatus = "failed";
+                reason = "delete_device_data_failed";
+                if (message.empty()) {
+                    message = "gateway removed device, but Pc_data database delete failed";
+                }
             }
             std::cout << "[MQTT RX] remove_device db sync "
                       << (deleteOk ? "ok" : "failed")
                       << ", gateway: " << target.gatewayId
                       << ", port: " << target.portId
                       << ", device: " << target.deviceId
+                      << ", dbOk: " << deleteOk
+                      << ", snapshotRemoved: " << snapshotRemoved
                       << std::endl;
         }
+        if (m_database.isOpen()) {
+            m_database.updateCommandLogBySeq(seq, logStatus, reason, message, currentTimeMs());
+        }
+        if (logStatus == "success" &&
+            commandType == "add_device" &&
+            hasTarget &&
+            target.commandType == "add_device") {
+            m_dataService.forgetRemovedDevice(target.gatewayId,
+                                              target.portId,
+                                              target.deviceId);
+        }
         if (m_ipc.hasClient()) {
-            m_ipc.sendMessage(buildCommandLogUpdateJson(seq, commandType, logStatus, reason, message));
+            m_ipc.sendMessage(buildCommandLogUpdateJson(seq,
+                                                        commandType,
+                                                        logStatus,
+                                                        reason,
+                                                        message,
+                                                        hasTarget ? &target : nullptr));
         }
         std::cout << "[MQTT RX] ack seq: " << seq
                   << ", command: " << commandType
@@ -368,6 +396,13 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                                         ports,
                                                         devices,
                                                         pointConfigs);
+            if (ok) {
+                for (const ConfigSnapshotDevice& snapshotDevice : devices) {
+                    m_dataService.forgetRemovedDevice(snapshotDevice.device.gatewayId,
+                                                      snapshotDevice.device.portId,
+                                                      snapshotDevice.device.deviceId);
+                }
+            }
         } else if (ok) {
             ok = false;
         }
@@ -413,6 +448,10 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                 ok = m_database.upsertDevice(device);
                 if (!ok) {
                     reason = "device_db_save_failed";
+                } else {
+                    m_dataService.forgetRemovedDevice(device.gatewayId,
+                                                      device.portId,
+                                                      device.deviceId);
                 }
             } else {
                 ok = false;
@@ -484,7 +523,8 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << pack.devices.size()
               << std::endl;
 
-    std::vector<TelemetryPoint> receivedPoints = ModelConverter::toTelemetryPoints(pack);
+    std::vector<TelemetryPoint> receivedPoints =
+        m_dataService.filterRemovedPoints(ModelConverter::toTelemetryPoints(pack));
 
     std::cout << "[MQTT RX] received point count: "
               << receivedPoints.size()

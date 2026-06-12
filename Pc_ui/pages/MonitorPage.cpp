@@ -77,6 +77,10 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command, QWidget *pa
     layout->addLayout(body, 1);
 
     connect(m_tree, &DeviceTreeWidget::deviceSelected, this, &MonitorPage::onDeviceSelected);
+    connect(m_tree, &DeviceTreeWidget::selectionLost, this, [this]() {
+        m_currentKey.clear();
+        setDetailText(QStringLiteral("请选择左侧设备"));
+    });
     connect(m_data, &DataManager::deviceTreeChanged, this, &MonitorPage::refreshDeviceTree);
     connect(m_fanOn, &QPushButton::clicked, this, [this](){ sendFanCommand(true); });
     connect(m_fanOff, &QPushButton::clicked, this, [this](){ sendFanCommand(false); });
@@ -93,6 +97,7 @@ void MonitorPage::refreshDeviceTree()
     const QList<DeviceNode> devices = m_data->deviceTreeSnapshot();
     m_tree->setDevices(devices);
     if (devices.isEmpty()) {
+        m_currentKey.clear();
         setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
     }
     //m_tree->expandAll();

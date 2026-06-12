@@ -124,7 +124,8 @@ void IpcClient::onReadyRead()
                 cmd,
                 status,
                 reason,
-                message);
+                message,
+                root);
 
             if (cmd == "scan_ports") {
                 QStringList ports;
@@ -153,35 +154,17 @@ void IpcClient::onReadyRead()
             const QJsonArray portArray = root.value("ports").toArray();
             for (const auto &portValue : portArray) {
                 const QJsonObject portObj = portValue.toObject();
-                const int slot = portObj.value("slot").toInt();
                 const QString port = portObj.value("port").toString();
-                const int baud = portObj.value("baud").toInt();
                 const bool connected = portObj.value("connected").toBool();
                 if (port.isEmpty() && !connected)
                     continue;
                 if (!port.isEmpty())
                     ports.append(port);
-
-                emit portStatusUpdated(slot,
-                                       port,
-                                       QStringLiteral("unknown"),
-                                       baud,
-                                       connected,
-                                       connected ? QStringLiteral("restored") : QStringLiteral("disconnected"));
-
-                const QJsonArray devices = portObj.value("devices").toArray();
-                for (const auto &deviceValue : devices) {
-                    const QJsonObject deviceObj = deviceValue.toObject();
-                    emit deviceRegistered(
-                        static_cast<quint32>(root.value("seq").toVariant().toULongLong()),
-                        slot,
-                        deviceObj.value("deviceId").toInt(),
-                        deviceObj.value("deviceName").toString(),
-                        deviceObj.value("deviceType").toString(),
-                        deviceObj.value("pollIntervalMs").toInt(1000));
-                }
             }
 
+            emit runtimeStateReceived(
+                static_cast<quint32>(root.value("seq").toVariant().toULongLong()),
+                portArray);
             emit portsUpdated(ports);
             continue;
         }

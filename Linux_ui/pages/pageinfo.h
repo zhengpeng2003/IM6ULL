@@ -18,9 +18,13 @@ public:
     explicit Pageinfo(QWidget *parent = nullptr);
     void addInfo(const DataPack &pack);
     void setIpcConnected(bool connected);
+    void updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, int pendingCount);
 
 signals:
     void reconnectIpcRequested();
+    void offlineCacheConfigChanged(bool cacheEnabled, bool flushEnabled);
+    void clearOfflineCacheRequested();
+    void flushOfflineCacheRequested();
 
 private:
     struct InfoCardSpec {
@@ -60,14 +64,26 @@ private:
     void polishState(QWidget *widget);
     void updateIpcStatusLabel();
     void updateLastSync(const QDateTime &time);
+    void updateOfflineCacheButtons();
+    void setToggleButtonChecked(QPushButton *button, bool checked);
 
     QLabel *hintLabel = nullptr;
     QPushButton *reconnectButton = nullptr;
+    QLabel *cacheStateLabel = nullptr;
+    QLabel *flushStateLabel = nullptr;
+    QLabel *pendingCountLabel = nullptr;
+    QPushButton *cacheEnableButton = nullptr;
+    QPushButton *flushEnableButton = nullptr;
+    QPushButton *clearCacheButton = nullptr;
+    QPushButton *flushCacheButton = nullptr;
 
     QVector<InfoCardWidget> infoCards;
     QVector<RuntimeRowWidget> runtimeRows;
     QDateTime lastSyncTime;
     bool m_ipcConnected = false;
+    bool m_cacheEnabled = true;
+    bool m_flushEnabled = false;
+    int m_pendingCount = 0;
 };
 
 #endif // PAGEINFO_H

@@ -130,6 +130,9 @@ TrendPage::TrendPage(DataManager *data, QWidget *parent)
 
     connect(queryButton, &QPushButton::clicked, this, &TrendPage::queryHistory);
     connect(m_tree, &DeviceTreeWidget::pointSelected, this, &TrendPage::onPointSelected);
+    connect(m_tree, &DeviceTreeWidget::selectionLost, this, [this]() {
+        clearCurrentSelection(QStringLiteral("请选择左侧测点后查询历史数据"));
+    });
 
     if (m_data) {
         connect(m_data, &DataManager::realtimeDataUpdated,
@@ -146,6 +149,9 @@ void TrendPage::refreshPointTree()
     }
 
     m_tree->setRealtimeDevices(m_data->allRealtimeData(), true);
+    if (m_data->allRealtimeData().isEmpty()) {
+        clearCurrentSelection(QStringLiteral("暂无可用测点"));
+    }
 }
 
 void TrendPage::onPointSelected(const QString &pointId, const QString &deviceKey, const QString &pointName, const QString &unit)
@@ -375,6 +381,19 @@ void TrendPage::clearTableView()
     if (m_historyTable) {
         m_historyTable->setRowCount(0);
     }
+}
+
+void TrendPage::clearCurrentSelection(const QString &message)
+{
+    m_currentPointId.clear();
+    m_currentDeviceKey.clear();
+    m_currentPointName.clear();
+    m_currentPointUnit.clear();
+    m_activeHistoryRequest = HistoryRequest();
+    m_pendingHistoryRequest = HistoryRequest();
+    m_historyRequestInFlight = false;
+    clearChartView(message);
+    clearTableView();
 }
 
 void TrendPage::resetAxesToRequestRange(qint64 startMs, qint64 endMs)

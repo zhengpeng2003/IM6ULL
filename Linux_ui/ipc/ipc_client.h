@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QLocalSocket>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QStringList>
 #include "data/data_protocol.h"
 #include "data/data_parser.h"
@@ -40,11 +42,13 @@ signals:
                           const QString &deviceName,
                           const QString &deviceType,
                           int pollIntervalMs);
+    void runtimeStateReceived(quint32 seq, const QJsonArray &ports);
     void commandAckReceived(quint32 seq,
                             const QString &cmd,
                             const QString &status,
                             const QString &reason,
-                            const QString &message);
+                            const QString &message,
+                            const QJsonObject &root);
     void alarmConfigReceived(double tempHigh, double humiHigh);
     void emergencyReceived(int level,
                            const QString &reason,

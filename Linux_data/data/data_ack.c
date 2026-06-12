@@ -139,6 +139,34 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_put(root);
 }
 
+void data_ack_send_offline_cache_config(uint32_t seq,
+                                        const char *cmd,
+                                        int ok,
+                                        const char *reason,
+                                        const char *message,
+                                        int cache_enabled,
+                                        int flush_enabled,
+                                        int pending_count)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return;
+
+    json_object_object_add(root, "type", json_object_new_string("ack"));
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
+    json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
+    json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+    json_object_object_add(root, "cache_enabled", json_object_new_boolean(cache_enabled));
+    json_object_object_add(root, "flush_enabled", json_object_new_boolean(flush_enabled));
+    json_object_object_add(root, "pending_count", json_object_new_int(pending_count));
+
+    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    json_object_put(root);
+}
+
 const char *data_ack_message_from_reason(const char *reason)
 {
     if (!reason || reason[0] == '\0')

@@ -78,10 +78,18 @@ void PageStatus::setCurrentMaster(int masterSlot, const QString &masterName, int
 void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
 {
     slaves = slaveList;
+    QMap<QString, bool> visibleKeys;
     for (const SlaveDeviceInfo &slave : slaves) {
+        visibleKeys.insert(runtimeKey(slave), true);
         SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
         runtime.online = slave.online;
         slaveRuntime.insert(runtimeKey(slave), runtime);
+    }
+    for (auto it = slaveRuntime.begin(); it != slaveRuntime.end(); ) {
+        if (!visibleKeys.contains(it.key()))
+            it = slaveRuntime.erase(it);
+        else
+            ++it;
     }
     currentSlaveIndex = slaves.isEmpty() ? -1 : 0;
     rebuildSlaveCards();
@@ -96,7 +104,7 @@ void PageStatus::setSlaveList(const QList<SlaveDeviceInfo> &slaveList)
 void PageStatus::removeSlave(int masterSlot, int slaveAddr, const QString &deviceType)
 {
     for (int i = 0; i < slaves.size(); ++i) {
-        const SlaveDeviceInfo &slave = slaves.at(i);
+        const SlaveDeviceInfo slave = slaves.at(i);
         if (slave.masterSlot != masterSlot ||
             slave.slaveAddr != slaveAddr ||
             slave.deviceType != deviceType) {
@@ -477,7 +485,7 @@ void PageStatus::initUI()
         if (!masterCombo || masterCombo->currentIndex() < 0)
             return;
 
-        const int masterSlot = masterCombo->currentData().toInt(-1);
+        const int masterSlot = masterCombo->currentData().toInt();
         if (masterSlot == currentMasterSlot)
             return;
 
@@ -813,6 +821,8 @@ void PageStatus::updateOpenDialogs()
             return;
         }
     }
+
+    slaveDetailDialog->close();
 }
 
 QString PageStatus::runtimeKey(const SlaveDeviceInfo &slave) const

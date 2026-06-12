@@ -45,6 +45,19 @@ void PageTrend::setMasterList(const QList<MasterStatusInfo> &masters)
 void PageTrend::setSlaveList(const QList<SlaveDeviceInfo> &slaves)
 {
     slaveInfos = slaves;
+    for (int i = trendPoints.size() - 1; i >= 0; --i) {
+        bool exists = false;
+        for (const SlaveDeviceInfo &slave : slaveInfos) {
+            if (trendPoints.at(i).masterSlot == slave.masterSlot &&
+                trendPoints.at(i).slaveAddr == slave.slaveAddr &&
+                trendPoints.at(i).deviceType == slave.deviceType) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists)
+            trendPoints.removeAt(i);
+    }
     refreshSlaveCombo();
     refreshControlState();
     queryCurrentTrend();

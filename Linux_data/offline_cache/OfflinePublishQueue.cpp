@@ -79,6 +79,12 @@ bool OfflinePublishQueue::cacheMessage(const std::string &topic,
 {
     std::lock_guard<std::mutex> guard(lock_);
 
+    if (!cache_enabled_) {
+        printf("[OfflineCache] skip cache because cache is disabled type=%s\n",
+               meta.messageType.c_str());
+        return false;
+    }
+
     if (!initialized_) {
         printf("[OfflineCache] skip cache because queue is not initialized type=%s\n",
                meta.messageType.c_str());
@@ -100,7 +106,7 @@ void OfflinePublishQueue::flushToMqttOnce()
     OfflineMqttSender sender = nullptr;
     {
         std::lock_guard<std::mutex> guard(lock_);
-        if (!initialized_ || !sender_)
+        if (!initialized_ || !sender_ || !flush_enabled_)
             return;
         sender = sender_;
     }
@@ -138,4 +144,37 @@ int OfflinePublishQueue::countPending()
         return 0;
 
     return db_.countPending();
+}
+
+bool OfflinePublishQueue::clearPending()
+{
+    std::lock_guard<std::mutex> guard(lock_);
+    if (!initialized_)
+        return false;
+
+    return db_.clearPending();
+}
+
+void OfflinePublishQueue::setCacheEnabled(bool enabled)
+{
+    std::lock_guard<std::mutex> guard(lock_);
+    cache_enabled_ = enabled;
+}
+
+bool OfflinePublishQueue::cacheEnabled() const
+{
+    std::lock_guard<std::mutex> guard(lock_);
+    return cache_enabled_;
+}
+
+void OfflinePublishQueue::setFlushEnabled(bool enabled)
+{
+    std::lock_guard<std::mutex> guard(lock_);
+    flush_enabled_ = enabled;
+}
+
+bool OfflinePublishQueue::flushEnabled() const
+{
+    std::lock_guard<std::mutex> guard(lock_);
+    return flush_enabled_;
 }

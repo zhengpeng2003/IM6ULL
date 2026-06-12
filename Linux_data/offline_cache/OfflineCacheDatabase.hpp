@@ -27,6 +27,7 @@ public:
     bool remove(int64_t id);
     bool markSendFailed(int64_t id, int64_t nowMs);
     int countPending();
+    bool clearPending();
     void enforceMaxRecords();
 
 private:

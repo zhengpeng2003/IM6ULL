@@ -31,6 +31,11 @@ int offline_publish_cache_message(const char *topic,
                                   const offline_publish_meta_t *meta);
 void offline_publish_flush_once(void);
 int offline_publish_pending_count(void);
+int offline_publish_clear_pending(void);
+void offline_publish_set_cache_enabled(int enabled);
+int offline_publish_cache_enabled(void);
+void offline_publish_set_flush_enabled(int enabled);
+int offline_publish_flush_enabled(void);
 
 #ifdef __cplusplus
 }

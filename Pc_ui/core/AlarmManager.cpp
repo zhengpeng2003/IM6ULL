@@ -1,5 +1,27 @@
 #include "AlarmManager.h"
 #include <QDateTime>
+#include <QRegularExpression>
+
+namespace {
+
+int masterSlotFromPortId(const QString &portId)
+{
+    static const QRegularExpression re("^(?:port_|rs485-|RS485-)?(\\d+)$");
+    const QRegularExpressionMatch match = re.match(portId);
+    if (!match.hasMatch()) {
+        return -1;
+    }
+
+    bool ok = false;
+    const int portNumber = match.captured(1).toInt(&ok);
+    if (!ok || portNumber <= 0) {
+        return -1;
+    }
+
+    return portNumber - 1;
+}
+
+} // namespace
 
 AlarmManager::AlarmManager(QObject *parent) : QObject(parent) {}
 
@@ -62,6 +84,33 @@ void AlarmManager::recoverAlarm(const QString &alarmId)
     emit alarmUpdated(a);
     emit alarmsChanged();
     emit activeAlarmCountChanged(activeAlarmCount());
+}
+
+void AlarmManager::removeDeviceAlarms(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    if (gatewayId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    const int targetMasterSlot = masterSlotFromPortId(portId);
+    bool changed = false;
+    for (auto it = m_alarms.begin(); it != m_alarms.end(); ) {
+        const AlarmRecord &alarm = it.value();
+        const bool sameDevice = alarm.gatewayId == gatewayId &&
+                                alarm.slaveAddr == deviceId &&
+                                (targetMasterSlot < 0 || alarm.masterSlot == targetMasterSlot);
+        if (sameDevice) {
+            it = m_alarms.erase(it);
+            changed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (changed) {
+        emit alarmsChanged();
+        emit activeAlarmCountChanged(activeAlarmCount());
+    }
 }
 
 void AlarmManager::clearRecoveredAlarms()

@@ -81,6 +81,25 @@ QList<PortNode> parsePortStatusSnapshot(const QJsonObject &root)
     return ports;
 }
 
+QString ackCommandName(const QJsonObject &root)
+{
+    QString command = root.value(QStringLiteral("cmd")).toString();
+    if (command.isEmpty()) {
+        command = root.value(QStringLiteral("commandType")).toString();
+    }
+    return command;
+}
+
+bool ackSucceeded(const QJsonObject &root)
+{
+    if (root.contains(QStringLiteral("ok"))) {
+        return root.value(QStringLiteral("ok")).toBool();
+    }
+
+    const QString status = root.value(QStringLiteral("status")).toString();
+    return status == QStringLiteral("ok") || status == QStringLiteral("success");
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -245,7 +264,9 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
             if (action == "delete_master_data") {
                 m_data->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
             } else if (action == "delete_device_data") {
-                m_data->removeDeviceData(m_pendingDeleteGatewayId, m_pendingDeletePortId, m_pendingDeleteDeviceId);
+                onRemoveDeviceSucceeded(m_pendingDeleteGatewayId,
+                                        m_pendingDeletePortId,
+                                        m_pendingDeleteDeviceId);
             } else if (action == "clear_recovered_alarms" && m_alarm) {
                 m_alarm->clearRecoveredAlarms();
             } else if (action == "clear_all_data") {
@@ -285,12 +306,60 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
     }
 
     if (type == "ack" || type == "command_ack") {
+        const QString command = ackCommandName(root);
+        const bool ok = ackSucceeded(root);
         m_command->onCommandAck(root);
+        if (command == QStringLiteral("remove_device")) {
+            if (!ok) {
+                m_pendingDeleteAction.clear();
+                m_pendingDeleteGatewayId.clear();
+                m_pendingDeletePortId.clear();
+                m_pendingDeleteDeviceId = 0;
+                requestDevices();
+                requestLatestPoints();
+                requestPortStatus();
+            }
+        } else if (command == QStringLiteral("add_device")) {
+            requestDevices();
+            requestLatestPoints();
+            requestPortStatus();
+        }
         return;
     }
 
     if (type == "command_log_update") {
         qDebug() << "command log update:" << root;
+        const QString commandType = root.value(QStringLiteral("commandType")).toString();
+        if (commandType == QStringLiteral("remove_device")) {
+            const QString status = root.value(QStringLiteral("status")).toString();
+            QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
+            QString portId = root.value(QStringLiteral("portId")).toString();
+            int deviceId = root.value(QStringLiteral("deviceId")).toInt();
+
+            if (gatewayId.isEmpty() && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                gatewayId = m_pendingDeleteGatewayId;
+            }
+            if (portId.isEmpty() && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                portId = m_pendingDeletePortId;
+            }
+            if (deviceId <= 0 && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                deviceId = m_pendingDeleteDeviceId;
+            }
+
+            if (status == QStringLiteral("success") &&
+                !gatewayId.isEmpty() && !portId.isEmpty() && deviceId > 0) {
+                onRemoveDeviceSucceeded(gatewayId, portId, deviceId);
+            } else {
+                requestDevices();
+                requestLatestPoints();
+                requestPortStatus();
+            }
+
+            m_pendingDeleteAction.clear();
+            m_pendingDeleteGatewayId.clear();
+            m_pendingDeletePortId.clear();
+            m_pendingDeleteDeviceId = 0;
+        }
         return;
     }
 
@@ -389,23 +458,45 @@ void MainWindow::sendDeleteMasterData(const QString &gatewayId, const QString &p
 
 void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
 {
-    if (!m_ipcClient || !m_ipcClient->isConnected() || gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+    if (!m_ipcClient || !m_ipcClient->isConnected() || !m_command ||
+        gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
         return;
     }
-
-    QJsonObject payload;
-    payload.insert(QStringLiteral("type"), QStringLiteral("delete_device_data"));
-    payload.insert(QStringLiteral("gatewayId"), gatewayId);
-    payload.insert(QStringLiteral("portId"), portId);
-    payload.insert(QStringLiteral("deviceId"), deviceId);
-    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
 
     m_pendingDeleteAction = QStringLiteral("delete_device_data");
     m_pendingDeleteGatewayId = gatewayId;
     m_pendingDeletePortId = portId;
     m_pendingDeleteDeviceId = deviceId;
 
-    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    m_command->sendRemoveDeviceCommand(gatewayId, portId, deviceId);
+}
+
+void MainWindow::onRemoveDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    if (m_data) {
+        m_data->removeDeviceData(gatewayId, portId, deviceId);
+    }
+    if (m_alarm) {
+        m_alarm->removeDeviceAlarms(gatewayId, portId, deviceId);
+    }
+    requestDevices();
+    requestLatestPoints();
+    requestPortStatus();
+}
+
+void MainWindow::sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
+                                     const QString &deviceType, int pollIntervalMs)
+{
+    if (m_data) {
+        m_data->forgetRemovedDevice(gatewayId, portId, deviceId);
+    }
+    if (m_command) {
+        m_command->sendAddDeviceCommand(gatewayId, portId, deviceId, deviceType, pollIntervalMs);
+    }
 }
 
 void MainWindow::sendSyncConfigRequest(const QJsonArray &targets)
@@ -565,7 +656,7 @@ void MainWindow::initConnections()
             this, &MainWindow::sendDeleteDeviceData);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::addSlaveRequested,
-            m_command, &CommandManager::sendAddDeviceCommand);
+            this, &MainWindow::sendAddSlaveCommand);
 
     connect(m_deviceConfigPage, &DeviceConfigPage::syncConfigRequested,
             this, &MainWindow::sendSyncConfigRequest);

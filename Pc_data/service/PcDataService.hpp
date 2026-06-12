@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -77,6 +78,13 @@ public:
                           int deviceId);
     bool removeMasterData(const std::string& gatewayId,
                           const std::string& portId);
+    void forgetRemovedDevice(const std::string& gatewayId,
+                             const std::string& portId,
+                             int deviceId);
+    bool isRemovedDevice(const std::string& gatewayId,
+                         const std::string& portId,
+                         int deviceId) const;
+    std::vector<TelemetryPoint> filterRemovedPoints(const std::vector<TelemetryPoint>& points) const;
 
     std::vector<SyncGatewayPending> beginSyncConfigRequest(const std::vector<SyncGatewaySelection>& targets);
     bool findSyncPending(std::int64_t seq, SyncGatewayPending& pending) const;
@@ -115,6 +123,8 @@ private:
      *     = 从站1湿度最新值
      */
     std::unordered_map<std::string, TelemetryPoint> m_snapshot;
+    std::unordered_set<std::string> m_removedDevices;
+    std::unordered_set<std::string> m_removedMasters;
     std::unordered_map<std::int64_t, SyncGatewayPending> m_syncPendingBySeq;
     std::unordered_map<int, std::vector<SyncGatewayPending> > m_syncRequests;
     std::unordered_map<int, SyncConfigResult> m_syncRequestResults;

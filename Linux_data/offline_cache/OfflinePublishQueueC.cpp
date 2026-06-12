@@ -79,3 +79,28 @@ int offline_publish_pending_count(void)
 {
     return queue().countPending();
 }
+
+int offline_publish_clear_pending(void)
+{
+    return queue().clearPending() ? 0 : -1;
+}
+
+void offline_publish_set_cache_enabled(int enabled)
+{
+    queue().setCacheEnabled(enabled != 0);
+}
+
+int offline_publish_cache_enabled(void)
+{
+    return queue().cacheEnabled() ? 1 : 0;
+}
+
+void offline_publish_set_flush_enabled(int enabled)
+{
+    queue().setFlushEnabled(enabled != 0);
+}
+
+int offline_publish_flush_enabled(void)
+{
+    return queue().flushEnabled() ? 1 : 0;
+}

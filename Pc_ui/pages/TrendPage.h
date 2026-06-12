@@ -54,6 +54,7 @@ private:
     void handleTableHistoryResponse(const QJsonArray &points);
     void clearChartView(const QString &message);
     void clearTableView();
+    void clearCurrentSelection(const QString &message);
     void resetAxesToRequestRange(qint64 startMs, qint64 endMs);
     void updateAxes(qint64 firstTimestampMs, qint64 lastTimestampMs, double minValue, double maxValue);
 

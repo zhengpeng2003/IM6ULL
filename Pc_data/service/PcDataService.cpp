@@ -6,6 +6,11 @@
 #include "model/ModelConverter.hpp"
 
 static std::int64_t currentTimeMs();
+static std::string removedDeviceKey(const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId);
+static std::string removedMasterKey(const std::string& gatewayId,
+                                    const std::string& portId);
 
 PcDataService::PcDataService()
 {
@@ -19,6 +24,14 @@ void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
 
     for (const auto& point : points) {
         if (point.pointId.empty()) {
+            continue;
+        }
+        if (m_removedDevices.find(removedDeviceKey(point.gatewayId,
+                                                   point.portId,
+                                                   point.deviceId)) != m_removedDevices.end()) {
+            continue;
+        }
+        if (m_removedMasters.find(removedMasterKey(point.gatewayId, point.portId)) != m_removedMasters.end()) {
             continue;
         }
 
@@ -78,6 +91,7 @@ bool PcDataService::removeDeviceData(const std::string& gatewayId,
             ++it;
         }
     }
+    m_removedDevices.insert(removedDeviceKey(gatewayId, portId, deviceId));
 
     return removed;
 }
@@ -95,14 +109,61 @@ bool PcDataService::removeMasterData(const std::string& gatewayId,
     for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
         const TelemetryPoint& point = it->second;
         if (point.gatewayId == gatewayId && point.portId == portId) {
+            m_removedDevices.insert(removedDeviceKey(point.gatewayId, point.portId, point.deviceId));
             it = m_snapshot.erase(it);
             removed = true;
         } else {
             ++it;
         }
     }
+    m_removedMasters.insert(removedMasterKey(gatewayId, portId));
 
     return removed;
+}
+
+void PcDataService::forgetRemovedDevice(const std::string& gatewayId,
+                                        const std::string& portId,
+                                        int deviceId)
+{
+    if (gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_removedDevices.erase(removedDeviceKey(gatewayId, portId, deviceId));
+    m_removedMasters.erase(removedMasterKey(gatewayId, portId));
+}
+
+bool PcDataService::isRemovedDevice(const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId) const
+{
+    if (gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_removedDevices.find(removedDeviceKey(gatewayId, portId, deviceId)) != m_removedDevices.end();
+}
+
+std::vector<TelemetryPoint> PcDataService::filterRemovedPoints(const std::vector<TelemetryPoint>& points) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<TelemetryPoint> result;
+    result.reserve(points.size());
+    for (const TelemetryPoint& point : points) {
+        if (m_removedDevices.find(removedDeviceKey(point.gatewayId,
+                                                   point.portId,
+                                                   point.deviceId)) != m_removedDevices.end()) {
+            continue;
+        }
+        if (m_removedMasters.find(removedMasterKey(point.gatewayId, point.portId)) != m_removedMasters.end()) {
+            continue;
+        }
+        result.push_back(point);
+    }
+    return result;
 }
 
 std::vector<SyncGatewayPending> PcDataService::beginSyncConfigRequest(const std::vector<SyncGatewaySelection>& targets)
@@ -232,6 +293,8 @@ void PcDataService::clear()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_snapshot.clear();
+    m_removedDevices.clear();
+    m_removedMasters.clear();
 }
 
 static std::int64_t currentTimeMs()
@@ -241,4 +304,17 @@ static std::int64_t currentTimeMs()
     return duration_cast<milliseconds>(
                system_clock::now().time_since_epoch()
                ).count();
+}
+
+static std::string removedDeviceKey(const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId)
+{
+    return gatewayId + "/" + portId + "/" + std::to_string(deviceId);
+}
+
+static std::string removedMasterKey(const std::string& gatewayId,
+                                    const std::string& portId)
+{
+    return gatewayId + "/" + portId;
 }

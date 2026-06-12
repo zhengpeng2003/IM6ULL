@@ -44,6 +44,9 @@ private:
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
+    void onRemoveDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId);
+    void sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
+                             const QString &deviceType, int pollIntervalMs);
     void sendSyncConfigRequest(const QJsonArray &targets);
     void sendClearRecoveredAlarms();
     void sendClearAllData();
