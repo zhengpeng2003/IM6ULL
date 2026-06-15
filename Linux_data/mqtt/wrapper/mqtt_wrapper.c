@@ -450,6 +450,9 @@ int mqtt_clear_offline_cache(void)
 
 int mqtt_flush_offline_cache_once(void)
 {
+    if (!offline_publish_flush_enabled())
+        return DATA_SEND_OFFLINE_CACHE_DISABLED;
+
     if (offline_publish_pending_count() <= 0)
         return DATA_SEND_OK;
 

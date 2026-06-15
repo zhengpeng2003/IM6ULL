@@ -477,7 +477,7 @@ static int handle_get_offline_cache_config(uint32_t seq, struct json_object *roo
                                        cmd,
                                        1,
                                        "",
-                                       "offline cache config",
+                                       "offline cache config loaded",
                                        mqtt_offline_cache_enabled(),
                                        mqtt_offline_cache_flush_enabled(),
                                        mqtt_offline_cache_pending_count());
@@ -528,7 +528,7 @@ static int handle_clear_offline_cache(uint32_t seq, struct json_object *root, co
                                        cmd,
                                        ok,
                                        ok ? "" : "offline_cache_clear_failed",
-                                       ok ? "offline cache cleared" : "offline cache clear failed",
+                                       ok ? "pending offline cache cleared" : "offline cache clear failed",
                                        mqtt_offline_cache_enabled(),
                                        mqtt_offline_cache_flush_enabled(),
                                        mqtt_offline_cache_pending_count());
@@ -543,15 +543,18 @@ static int handle_flush_offline_cache(uint32_t seq, struct json_object *root, co
     const char *reason = "offline_cache_flush_failed";
     const char *message = "offline cache flush failed";
     if (ret == DATA_SEND_MQTT_NOT_READY) {
-        reason = "mqtt_not_connected";
-        message = "mqtt not connected";
+        reason = "mqtt_disconnected";
+        message = "MQTT is disconnected";
+    } else if (ret == DATA_SEND_OFFLINE_CACHE_DISABLED) {
+        reason = "offline_cache_flush_disabled";
+        message = "offline cache flush is disabled";
     }
 
     data_ack_send_offline_cache_config(seq,
                                        cmd,
                                        ok,
                                        ok ? "" : reason,
-                                       ok ? "offline cache flush requested" : message,
+                                       ok ? "offline cache flush once triggered" : message,
                                        mqtt_offline_cache_enabled(),
                                        mqtt_offline_cache_flush_enabled(),
                                        mqtt_offline_cache_pending_count());

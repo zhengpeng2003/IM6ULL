@@ -17,6 +17,10 @@ static int data_ack_code_from_reason(const char *reason)
         return DATA_SEND_INVALID_ARG;
     if (strcmp(reason, "config_write_failed") == 0)
         return DATA_SEND_IPC_WRITE_FAILED;
+    if (strcmp(reason, "mqtt_disconnected") == 0 || strcmp(reason, "mqtt_not_connected") == 0)
+        return DATA_SEND_MQTT_NOT_READY;
+    if (strcmp(reason, "offline_cache_flush_disabled") == 0)
+        return DATA_SEND_OFFLINE_CACHE_DISABLED;
     return ACK_ERROR;
 }
 
@@ -289,8 +293,11 @@ void data_ack_send_offline_cache_config(uint32_t seq,
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "cache_enabled", json_object_new_boolean(cache_enabled));
+    json_object_object_add(root, "cacheEnabled", json_object_new_boolean(cache_enabled));
     json_object_object_add(root, "flush_enabled", json_object_new_boolean(flush_enabled));
+    json_object_object_add(root, "flushEnabled", json_object_new_boolean(flush_enabled));
     json_object_object_add(root, "pending_count", json_object_new_int(pending_count));
+    json_object_object_add(root, "pendingCount", json_object_new_int(pending_count));
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
     json_object_put(root);

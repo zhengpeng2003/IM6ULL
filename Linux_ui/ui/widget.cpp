@@ -99,12 +99,16 @@ void Widget::initUI()
     });
     connect(pageInfo, &Pageinfo::offlineCacheConfigChanged,
             this,
-            [this](bool cacheEnabled, bool flushEnabled) {
+            [this, pageInfo](bool cacheEnabled, bool flushEnabled) {
                 QJsonObject payload;
                 payload.insert("cache_enabled", cacheEnabled);
                 payload.insert("flush_enabled", flushEnabled);
-                if (!sendCommand("set_offline_cache_config", payload) && m_operationOverlay)
-                    m_operationOverlay->showFailure("缓存配置发送失败");
+                if (!sendCommand("set_offline_cache_config", payload)) {
+                    if (pageInfo)
+                        pageInfo->setOfflineCacheBusy(false);
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("缓存配置发送失败");
+                }
             });
     connect(pageInfo, &Pageinfo::offlineCacheRefreshRequested,
             this,
@@ -114,15 +118,23 @@ void Widget::initUI()
             });
     connect(pageInfo, &Pageinfo::clearOfflineCacheRequested,
             this,
-            [this]() {
-                if (!sendCommand("clear_offline_cache") && m_operationOverlay)
-                    m_operationOverlay->showFailure("清除缓存命令失败");
+            [this, pageInfo]() {
+                if (!sendCommand("clear_offline_cache")) {
+                    if (pageInfo)
+                        pageInfo->setOfflineCacheBusy(false);
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("清除缓存命令失败");
+                }
             });
     connect(pageInfo, &Pageinfo::flushOfflineCacheRequested,
             this,
-            [this]() {
-                if (!sendCommand("flush_offline_cache") && m_operationOverlay)
-                    m_operationOverlay->showFailure("发送缓存命令失败");
+            [this, pageInfo]() {
+                if (!sendCommand("flush_offline_cache")) {
+                    if (pageInfo)
+                        pageInfo->setOfflineCacheBusy(false);
+                    if (m_operationOverlay)
+                        m_operationOverlay->showFailure("发送缓存命令失败");
+                }
             });
     connect(_Myclient, &IpcClient::deviceStatusUpdated,
             this, &Widget::handleDeviceStatus);
@@ -485,7 +497,7 @@ void Widget::initUI()
                     cmd == "set_offline_cache_config" ||
                     cmd == "clear_offline_cache" ||
                     cmd == "flush_offline_cache") {
-                    handleOfflineCacheAck(cmd, ok ? "ok" : "failed", reason, ackRoot);
+                    handleOfflineCacheAck(cmd, ok ? "ok" : "failed", reason, message, ackRoot);
                     return;
                 }
 
@@ -712,6 +724,7 @@ void Widget::requestOfflineCacheConfig()
 void Widget::handleOfflineCacheAck(const QString &cmd,
                                    const QString &status,
                                    const QString &reason,
+                                   const QString &message,
                                    const QJsonObject &ackRoot)
 {
     Pageinfo *pageInfo = nullptr;
@@ -726,9 +739,15 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
         return;
     }
 
-    const bool cacheEnabled = ackRoot.value("cache_enabled").toBool(false);
-    const bool flushEnabled = ackRoot.value("flush_enabled").toBool(false);
-    const int pendingCount = ackRoot.value("pending_count").toInt(0);
+    const bool cacheEnabled = ackRoot.contains("cache_enabled")
+                                  ? ackRoot.value("cache_enabled").toBool(false)
+                                  : ackRoot.value("cacheEnabled").toBool(false);
+    const bool flushEnabled = ackRoot.contains("flush_enabled")
+                                  ? ackRoot.value("flush_enabled").toBool(false)
+                                  : ackRoot.value("flushEnabled").toBool(false);
+    const int pendingCount = ackRoot.contains("pending_count")
+                                 ? ackRoot.value("pending_count").toInt(0)
+                                 : ackRoot.value("pendingCount").toInt(0);
     if (pageInfo)
         pageInfo->updateOfflineCacheStatus(cacheEnabled, flushEnabled, pendingCount);
 
@@ -736,13 +755,17 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
         return;
 
     if (status != "ok") {
-        QString failure = reason.isEmpty() ? "缓存命令失败" : reason;
-        if (reason == "mqtt_not_connected")
-            failure = "MQTT 未连接，暂时无法补发";
+        QString failure = !message.isEmpty() ? message : (reason.isEmpty() ? "缓存命令失败" : reason);
+        if (reason == "mqtt_disconnected" || reason == "mqtt_not_connected")
+            failure = "MQTT 未连接，无法发送缓存";
+        else if (reason == "offline_cache_flush_disabled")
+            failure = "自动发送未开启";
         else if (reason == "offline_cache_flush_failed")
-            failure = "离线缓存补发失败";
+            failure = "离线缓存发送失败";
         else if (reason == "offline_cache_config_save_failed")
             failure = "缓存配置保存失败";
+        else if (reason == "offline_cache_clear_failed")
+            failure = "离线缓存清空失败";
         m_operationOverlay->showFailure(failure);
         return;
     }
@@ -751,10 +774,10 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
         m_operationOverlay->showSuccess("缓存配置已保存");
         requestOfflineCacheConfig();
     } else if (cmd == "clear_offline_cache") {
-        m_operationOverlay->showSuccess("缓存数据库已清空");
+        m_operationOverlay->showSuccess("缓存队列已清空");
         requestOfflineCacheConfig();
     } else if (cmd == "flush_offline_cache") {
-        m_operationOverlay->showSuccess("已触发缓存补发");
+        m_operationOverlay->showSuccess("已触发发送，正在刷新缓存状态");
         requestOfflineCacheConfig();
     }
 }
@@ -1259,6 +1282,15 @@ bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOu
             m_pendingRemoveSlave = PendingRemoveSlave();
         if (m_pendingRelay.active && m_pendingRelay.seq == seq)
             failPendingRelay("命令超时");
+        if (timedOutCmd == "set_offline_cache_config" ||
+            timedOutCmd == "clear_offline_cache" ||
+            timedOutCmd == "flush_offline_cache") {
+            if (m_stack) {
+                Pageinfo *pageInfo = qobject_cast<Pageinfo *>(m_stack->widget(3));
+                if (pageInfo)
+                    pageInfo->setOfflineCacheBusy(false);
+            }
+        }
         if (m_operationOverlay && timedOutCmd != "get_runtime_state" && timedOutCmd != "set_relay")
             m_operationOverlay->showFailure("通信超时，请刷新状态");
     });

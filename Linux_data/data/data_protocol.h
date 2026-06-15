@@ -40,7 +40,8 @@ typedef enum {
     DATA_SEND_IPC_WRITE_FAILED = -4,
     DATA_SEND_MQTT_NOT_READY = -5,
     DATA_SEND_MQTT_QUEUE_FULL = -6,
-    DATA_SEND_PARTIAL_FAILED = -7
+    DATA_SEND_PARTIAL_FAILED = -7,
+    DATA_SEND_OFFLINE_CACHE_DISABLED = -8
 } data_send_code_t;//发送错误码
 
 typedef struct {

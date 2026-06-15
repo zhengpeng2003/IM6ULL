@@ -95,11 +95,13 @@ void Pageinfo::initUI()
     cacheEnableButton->setObjectName("ToggleButton");
     cacheEnableButton->setCheckable(true);
     cacheEnableButton->setFixedHeight(23);
-    saveCacheButton = new QPushButton("保存", runtimePanel);
-    saveCacheButton->setObjectName("SmallActionButton");
+    saveCacheButton = new QPushButton("发送关闭", runtimePanel);
+    saveCacheButton->setObjectName("ToggleButton");
+    saveCacheButton->setCheckable(true);
     saveCacheButton->setFixedHeight(23);
+    flushEnableButton = saveCacheButton;
     configRow->addWidget(cacheEnableButton, 1);
-    configRow->addWidget(saveCacheButton);
+    configRow->addWidget(saveCacheButton, 1);
     runtimeLayout->addLayout(configRow);
 
     QHBoxLayout *cacheActions = new QHBoxLayout;
@@ -127,27 +129,37 @@ void Pageinfo::initUI()
     connect(reconnectButton, &QPushButton::clicked,
             this, &Pageinfo::reconnectIpcRequested);
     connect(cacheEnableButton, &QPushButton::clicked, this, [this]() {
-        m_cacheEnabled = cacheEnableButton->isChecked();
-        if (!m_cacheEnabled)
-            m_flushEnabled = false;
-        updateOfflineCacheStatus(m_cacheEnabled, m_flushEnabled, m_pendingCount);
+        if (!m_ipcConnected)
+            return;
+        const bool newCacheEnabled = !m_cacheEnabled;
+        setOfflineCacheBusy(true);
+        emit offlineCacheConfigChanged(newCacheEnabled, newCacheEnabled ? m_flushEnabled : false);
     });
     connect(saveCacheButton, &QPushButton::clicked, this, [this]() {
-        emit offlineCacheConfigChanged(m_cacheEnabled, m_cacheEnabled ? m_flushEnabled : false);
+        if (!m_ipcConnected)
+            return;
+        const bool newFlushEnabled = !m_flushEnabled;
+        setOfflineCacheBusy(true);
+        emit offlineCacheConfigChanged(m_cacheEnabled, newFlushEnabled);
     });
     connect(refreshCacheButton, &QPushButton::clicked,
             this, &Pageinfo::offlineCacheRefreshRequested);
     connect(clearCacheButton, &QPushButton::clicked, this, [this]() {
         if (QMessageBox::question(this,
                                   "清空缓存",
-                                  "确认清空离线缓存？未上传数据可能丢失。不会删除端口、从站和阈值配置。",
+                                  "确定要清空离线缓存队列吗？未上传的数据可能丢失。",
                                   QMessageBox::Yes | QMessageBox::No,
                                   QMessageBox::No) == QMessageBox::Yes) {
+            setOfflineCacheBusy(true);
             emit clearOfflineCacheRequested();
         }
     });
-    connect(flushCacheButton, &QPushButton::clicked,
-            this, &Pageinfo::flushOfflineCacheRequested);
+    connect(flushCacheButton, &QPushButton::clicked, this, [this]() {
+        if (!m_ipcConnected)
+            return;
+        setOfflineCacheBusy(true);
+        emit flushOfflineCacheRequested();
+    });
 
     updateOfflineCacheStatus(m_cacheEnabled, m_flushEnabled, m_pendingCount);
 }
@@ -251,6 +263,19 @@ void Pageinfo::setIpcConnected(bool connected)
         return;
 
     m_ipcConnected = connected;
+    if (!m_ipcConnected) {
+        m_cacheBusy = false;
+        if (cacheStateLabel) {
+            cacheStateLabel->setText("缓存：后端未连接");
+            cacheStateLabel->setProperty("state", QVariant("offline"));
+            polishState(cacheStateLabel);
+        }
+        if (flushStateLabel) {
+            flushStateLabel->setText("发送：后端未连接");
+            flushStateLabel->setProperty("state", QVariant("offline"));
+            polishState(flushStateLabel);
+        }
+    }
     updateIpcStatusLabel();
     updateOfflineCacheButtons();
 }
@@ -259,7 +284,8 @@ void Pageinfo::updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, in
 {
     m_cacheSupported = true;
     m_cacheEnabled = cacheEnabled;
-    m_flushEnabled = cacheEnabled ? flushEnabled : false;
+    m_flushEnabled = flushEnabled;
+    m_cacheBusy = false;
     m_pendingCount = pendingCount < 0 ? 0 : pendingCount;
 
     if (cacheStateLabel) {
@@ -283,10 +309,16 @@ void Pageinfo::updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, in
     updateOfflineCacheButtons();
 }
 
+void Pageinfo::setOfflineCacheBusy(bool busy)
+{
+    m_cacheBusy = busy;
+    updateOfflineCacheButtons();
+}
+
 void Pageinfo::setOfflineCacheUnsupported()
 {
     m_cacheSupported = false;
-    m_cacheEnabled = false;
+    m_cacheEnabled = bool();
     m_flushEnabled = false;
     m_pendingCount = 0;
 
@@ -379,7 +411,7 @@ void Pageinfo::updateLastSync(const QDateTime &time)
 
 void Pageinfo::updateOfflineCacheButtons()
 {
-    const bool available = m_ipcConnected && m_cacheSupported;
+    const bool available = m_ipcConnected && m_cacheSupported && !m_cacheBusy;
     if (cacheEnableButton)
         cacheEnableButton->setEnabled(available);
     if (saveCacheButton)
@@ -387,7 +419,7 @@ void Pageinfo::updateOfflineCacheButtons()
     if (refreshCacheButton)
         refreshCacheButton->setEnabled(available);
     if (flushEnableButton)
-        flushEnableButton->setEnabled(false);
+        flushEnableButton->setEnabled(available);
     if (clearCacheButton)
         clearCacheButton->setEnabled(available && m_pendingCount > 0);
     if (flushCacheButton)
@@ -401,7 +433,10 @@ void Pageinfo::setToggleButtonChecked(QPushButton *button, bool checked)
 
     button->blockSignals(true);
     button->setChecked(checked);
-    button->setText(checked ? "缓存开启" : "缓存关闭");
+    if (button == flushEnableButton)
+        button->setText(checked ? "发送开启" : "发送关闭");
+    else
+        button->setText(checked ? "缓存开启" : "缓存关闭");
     button->setProperty("checked", QVariant(checked ? "true" : "false"));
     polishState(button);
     button->blockSignals(false);

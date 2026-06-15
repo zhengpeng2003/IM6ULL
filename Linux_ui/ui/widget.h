@@ -57,6 +57,7 @@ private:
     void handleOfflineCacheAck(const QString &cmd,
                                const QString &status,
                                const QString &reason,
+                               const QString &message,
                                const QJsonObject &ackRoot);
     bool ackSucceeded(const QString &status, const QJsonObject &ackRoot) const;
     QString ackDisplayText(const QString &cmd,
