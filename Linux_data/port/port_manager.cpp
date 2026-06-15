@@ -59,6 +59,7 @@ struct LatestDeviceStatus {
 struct SavedPortConfig {
     std::string port;
     int baud = 9600;
+    bool auto_restore = true;
 };
 
 struct OfflineCacheSavedConfig {
@@ -563,6 +564,8 @@ struct PortManager::Impl {
             addString(port, "port", display_port.c_str());
             json_object_object_add(port, "baud", json_object_new_int(display_baud));
             json_object_object_add(port, "connected", json_object_new_boolean(channel.connected));
+            json_object_object_add(port, "auto_restore",
+                                   json_object_new_boolean(saved == saved_configs.end() ? true : saved->second.auto_restore));
 
             for (const ManagedDevice &device : channel.devices) {
                 if (!device.sensor)
@@ -683,6 +686,52 @@ struct PortManager::Impl {
         if (!root)
             return configs;
 
+        json_object *ports = nullptr;
+        if (json_object_object_get_ex(root, "ports", &ports) &&
+            json_object_is_type(ports, json_type_array)) {
+            const int count = json_object_array_length(ports);
+            for (int i = 0; i < count; ++i) {
+                json_object *item = json_object_array_get_idx(ports, i);
+                if (!item)
+                    continue;
+
+                json_object *v = nullptr;
+                int slot = -1;
+                if (json_object_object_get_ex(item, "slot", &v))
+                    slot = json_object_get_int(v);
+                if (!validSlot(slot))
+                    continue;
+
+                const char *port = "";
+                if (json_object_object_get_ex(item, "port", &v))
+                    port = json_object_get_string(v);
+                if (!port || port[0] == '\0')
+                    continue;
+
+                int baud = 9600;
+                if (json_object_object_get_ex(item, "baud", &v))
+                    baud = json_object_get_int(v);
+                if (baud <= 0)
+                    baud = 9600;
+
+                SavedPortConfig config;
+                config.port = port;
+                config.baud = baud;
+                config.auto_restore = true;
+                if (json_object_object_get_ex(item, "auto_restore", &v) ||
+                    json_object_object_get_ex(item, "autoRestore", &v)) {
+                    config.auto_restore = json_object_get_boolean(v);
+                }
+                configs[slot] = config;
+            }
+
+            json_object_put(root);
+            return configs;
+        }
+
+        /* Compatibility: old device_config.json had no ports[] and stored
+         * port/baud only in devices[]. Keep this path so existing devices-only
+         * deployments can still restore and later be upgraded on next write. */
         json_object *devices = nullptr;
         if (!json_object_object_get_ex(root, "devices", &devices) ||
             !json_object_is_type(devices, json_type_array)) {
@@ -719,6 +768,7 @@ struct PortManager::Impl {
                 SavedPortConfig config;
                 config.port = port;
                 config.baud = baud;
+                config.auto_restore = true;
                 configs[slot] = config;
             }
         }
@@ -770,19 +820,22 @@ struct PortManager::Impl {
         json_object_put(root);
     }
 
-    void writeConfigLocked()
+    int writeConfigLocked()
     {
         mkdir(kDeviceConfigDir, 0755);
         const OfflineCacheSavedConfig offline_cache_config = loadSavedOfflineCacheConfig();
 
         json_object *root = json_object_new_object();
+        json_object *ports = json_object_new_array();
         json_object *devices = json_object_new_array();
-        if (!root || !devices) {
+        if (!root || !ports || !devices) {
             if (root)
                 json_object_put(root);
+            if (ports)
+                json_object_put(ports);
             if (devices)
                 json_object_put(devices);
-            return;
+            return -1;
         }
 
         json_object_object_add(root, "version", json_object_new_int(1));
@@ -792,6 +845,17 @@ struct PortManager::Impl {
 
         for (int slot = 0; slot < kSlotCount; ++slot) {
             PortChannel &channel = channels[slot];
+            if (!channel.port.empty() && channel.baud > 0) {
+                json_object *port_item = json_object_new_object();
+                if (port_item) {
+                    json_object_object_add(port_item, "slot", json_object_new_int(slot));
+                    addString(port_item, "port", channel.port.c_str());
+                    json_object_object_add(port_item, "baud", json_object_new_int(channel.baud));
+                    json_object_object_add(port_item, "auto_restore", json_object_new_boolean(true));
+                    json_object_array_add(ports, port_item);
+                }
+            }
+
             for (const ManagedDevice &device : channel.devices) {
                 if (!device.sensor)
                     continue;
@@ -801,8 +865,6 @@ struct PortManager::Impl {
                     continue;
 
                 json_object_object_add(item, "slot", json_object_new_int(slot));
-                addString(item, "port", channel.port.c_str());
-                json_object_object_add(item, "baud", json_object_new_int(channel.baud));
                 json_object_object_add(item, "slave_id", json_object_new_int(device.sensor->slaveId()));
                 addString(item, "device_type", device.sensor->deviceTypeName());
                 json_object_object_add(item, "poll_interval_ms", json_object_new_int(device.sensor->pollIntervalMs()));
@@ -818,17 +880,22 @@ struct PortManager::Impl {
             }
         }
 
+        json_object_object_add(root, "ports", ports);
         json_object_object_add(root, "devices", devices);
+        int ret = 0;
         if (!ensureDeviceConfigDir()) {
             printf("[PortManager] create config dir failed dir=%s errno=%d\n",
                    kDeviceConfigDir,
                    errno);
+            ret = -1;
         } else if (json_object_to_file_ext(kDeviceConfigPath,
                                            root,
                                            JSON_C_TO_STRING_PRETTY) != 0) {
             printf("[PortManager] write config failed path=%s\n", kDeviceConfigPath);
+            ret = -1;
         }
         json_object_put(root);
+        return ret;
     }
 
     int saveOfflineCacheConfig(bool cache_enabled, bool flush_enabled)
@@ -1213,7 +1280,7 @@ int PortManager::connectPort(int slot,
 
     std::unique_ptr<ModbusMaster> bus = impl_->createBus(slot, port, baud);
     if (!bus || !bus->init()) {
-        setReason(reason, reason_size, "open_failed");
+        setReason(reason, reason_size, "open_port_failed");
         return -1;
     }
 
@@ -1227,6 +1294,10 @@ int PortManager::connectPort(int slot,
         channel.stop_requested = false;
         impl_->loadDevicesForSlotLocked(slot);
         impl_->startPollingLocked(this, slot);
+        if (impl_->writeConfigLocked() != 0) {
+            setReason(reason, reason_size, "config_write_failed");
+            return -1;
+        }
     }
 
     setReason(reason, reason_size, "");
@@ -1265,7 +1336,21 @@ int PortManager::disconnectPort(int slot, char *reason, size_t reason_size)
     }
 
     impl_->stopPolling(slot);
-    impl_->clearSlot(slot);
+
+    /* disconnect_port is runtime-only: it closes communication and stops
+     * polling, but intentionally keeps device_config.json ports[]/devices[]
+     * so auto_restore can reconnect after restart. Use a future remove_port
+     * or forget_port command for configuration deletion. */
+    {
+        std::lock_guard<std::mutex> guard(impl_->lock);
+        PortChannel &channel = impl_->channels[slot];
+        std::lock_guard<std::mutex> io_guard(channel.io_lock);
+        channel.bus.reset();
+        channel.devices.clear();
+        channel.connected = false;
+        channel.stop_requested = false;
+        channel.poll_running = false;
+    }
 
     setReason(reason, reason_size, "");
     return 0;
@@ -1316,6 +1401,17 @@ void PortManager::restoreSavedConnections()
     for (const auto &entry : configs) {
         const int slot = entry.first;
         const SavedPortConfig &config = entry.second;
+        if (!config.auto_restore) {
+            printf("[PortManager] restore skip slot=%d port=%s reason=auto_restore_disabled\n",
+                   slot,
+                   config.port.c_str());
+            impl_->sendPortStatus(slot,
+                                  false,
+                                  "auto_restore_disabled",
+                                  config.port.c_str(),
+                                  config.baud);
+            continue;
+        }
         if (std::find(available_ports.begin(), available_ports.end(), config.port) ==
             available_ports.end()) {
             printf("[PortManager] restore skip slot=%d port=%s reason=port_not_found\n",
@@ -1436,7 +1532,11 @@ int PortManager::addDevice(int slot,
     }
     device.next_poll_time = std::chrono::steady_clock::now();
     channel.devices.push_back(device);
-    impl_->writeConfigLocked();
+    if (impl_->writeConfigLocked() != 0) {
+        channel.devices.pop_back();
+        setReason(reason, reason_size, "config_write_failed");
+        return -1;
+    }
     impl_->publishThresholdConfig(slot, channel.devices.back());
 
     setReason(reason, reason_size, "");
@@ -1475,8 +1575,14 @@ int PortManager::setDeviceThreshold(int slot,
         return -1;
     }
 
+    sensor_threshold_config_t old_config = {};
+    (void)(*it).sensor->thresholdConfig(&old_config);
     (*it).sensor->setThresholdConfig(*threshold_config);
-    impl_->writeConfigLocked();
+    if (impl_->writeConfigLocked() != 0) {
+        (*it).sensor->setThresholdConfig(old_config);
+        setReason(reason, reason_size, "config_write_failed");
+        return -1;
+    }
     impl_->publishThresholdConfig(slot, *it);
 
     setReason(reason, reason_size, "");
@@ -1510,7 +1616,10 @@ int PortManager::removeDevice(int slot,
     }
 
     channel.devices.erase(it);
-    impl_->writeConfigLocked();
+    if (impl_->writeConfigLocked() != 0) {
+        setReason(reason, reason_size, "config_write_failed");
+        return -1;
+    }
     setReason(reason, reason_size, "");
     return 0;
 }

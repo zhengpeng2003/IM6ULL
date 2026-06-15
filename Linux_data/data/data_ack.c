@@ -124,6 +124,12 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "unknown"));
     json_object_object_add(root, "baud", json_object_new_int(baud));
     json_object_object_add(root, "connected", json_object_new_boolean(connected));
+    if (cmd && strcmp(cmd, "connect_port") == 0)
+        json_object_object_add(root, "auto_restore", json_object_new_boolean(1));
+    if (cmd && strcmp(cmd, "disconnect_port") == 0) {
+        json_object_object_add(root, "config_removed", json_object_new_boolean(0));
+        json_object_object_add(root, "auto_restore", json_object_new_boolean(1));
+    }
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
     json_object_put(root);
@@ -321,7 +327,7 @@ const char *data_ack_message_from_reason(const char *reason)
         return "unsupported device type";
     if (strcmp(reason, "port_already_connected") == 0)
         return "port already connected";
-    if (strcmp(reason, "open_failed") == 0)
+    if (strcmp(reason, "open_failed") == 0 || strcmp(reason, "open_port_failed") == 0)
         return "port open failed";
     if (strcmp(reason, "not_connected") == 0)
         return "not connected";
