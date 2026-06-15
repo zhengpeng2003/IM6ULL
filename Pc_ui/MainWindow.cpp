@@ -308,6 +308,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
     if (type == "ack" || type == "command_ack") {
         const QString command = ackCommandName(root);
         const bool ok = ackSucceeded(root);
+        const QString stage = root.value(QStringLiteral("stage")).toString();
         m_command->onCommandAck(root);
         if (command == QStringLiteral("remove_device")) {
             if (!ok) {
@@ -319,7 +320,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 requestLatestPoints();
                 requestPortStatus();
             }
-        } else if (command == QStringLiteral("add_device")) {
+        } else if (command == QStringLiteral("add_device") && stage == QStringLiteral("done") && !ok) {
             requestDevices();
             requestLatestPoints();
             requestPortStatus();
@@ -330,8 +331,23 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
     if (type == "command_log_update") {
         qDebug() << "command log update:" << root;
         const QString commandType = root.value(QStringLiteral("commandType")).toString();
+        if (m_command) {
+            m_command->onCommandLogUpdate(root);
+        }
+        const QString stage = root.value(QStringLiteral("stage")).toString();
+        const QString status = root.value(QStringLiteral("status")).toString();
+        if (stage == QStringLiteral("done") && status == QStringLiteral("success") &&
+            (commandType == QStringLiteral("add_device") ||
+             commandType == QStringLiteral("set_relay") ||
+             commandType == QStringLiteral("set_threshold") ||
+             commandType == QStringLiteral("cache") ||
+             commandType == QStringLiteral("sync") ||
+             commandType == QStringLiteral("get_config"))) {
+            requestDevices();
+            requestLatestPoints();
+            requestPortStatus();
+        }
         if (commandType == QStringLiteral("remove_device")) {
-            const QString status = root.value(QStringLiteral("status")).toString();
             QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
             QString portId = root.value(QStringLiteral("portId")).toString();
             int deviceId = root.value(QStringLiteral("deviceId")).toInt();

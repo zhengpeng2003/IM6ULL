@@ -2,6 +2,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 
 CommandManager::CommandManager(QObject *parent) : QObject(parent) {}
 
@@ -26,7 +27,8 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
 {
     CommandRecord rec;
     rec.cmdId = createCmdId();
-    rec.timestamp = QDateTime::currentSecsSinceEpoch();
+    rec.timestamp = QDateTime::currentMSecsSinceEpoch();
+    rec.seq = rec.timestamp;
     rec.factoryId = device.factoryId;
     rec.areaId = device.areaId;
     rec.gatewayId = device.gatewayId;
@@ -45,6 +47,9 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["version"] = 1;
     obj["cmd_id"] = rec.cmdId;
     obj["timestamp"] = rec.timestamp;
+    obj["seq"] = rec.seq;
+    obj["cmd"] = rec.command;
+    obj["commandType"] = rec.command;
     obj["factory_id"] = rec.factoryId;
     obj["area_id"] = rec.areaId;
     obj["gateway_id"] = rec.gatewayId;
@@ -57,6 +62,8 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["params"] = params;
 
     m_pending.insert(rec.cmdId, rec);
+    m_seqToCmdId.insert(rec.seq, rec.cmdId);
+    startCommandTimeout(rec.cmdId);
     emit commandStateChanged(rec.cmdId, rec.state);
     emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
@@ -71,6 +78,7 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     CommandRecord rec;
     rec.cmdId = createCmdId();
     rec.timestamp = QDateTime::currentMSecsSinceEpoch();
+    rec.seq = rec.timestamp;
     rec.gatewayId = gatewayId;
     rec.slaveAddr = deviceId;
     rec.deviceType = deviceType;
@@ -92,7 +100,7 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     obj.insert(QStringLiteral("msg_type"), QStringLiteral("command"));
     obj.insert(QStringLiteral("version"), 1);
     obj.insert(QStringLiteral("cmd_id"), rec.cmdId);
-    obj.insert(QStringLiteral("seq"), rec.timestamp);
+    obj.insert(QStringLiteral("seq"), rec.seq);
     obj.insert(QStringLiteral("timestamp"), rec.timestamp);
     obj.insert(QStringLiteral("commandType"), rec.command);
     obj.insert(QStringLiteral("cmd"), rec.command);
@@ -102,6 +110,8 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     obj.insert(QStringLiteral("device"), device);
 
     m_pending.insert(rec.cmdId, rec);
+    m_seqToCmdId.insert(rec.seq, rec.cmdId);
+    startCommandTimeout(rec.cmdId);
     emit commandStateChanged(rec.cmdId, rec.state);
     emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
@@ -115,6 +125,7 @@ void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QSt
     CommandRecord rec;
     rec.cmdId = createCmdId();
     rec.timestamp = QDateTime::currentMSecsSinceEpoch();
+    rec.seq = rec.timestamp;
     rec.gatewayId = gatewayId;
     rec.slaveAddr = deviceId;
     rec.command = QStringLiteral("remove_device");
@@ -129,7 +140,7 @@ void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QSt
     obj.insert(QStringLiteral("msg_type"), QStringLiteral("command"));
     obj.insert(QStringLiteral("version"), 1);
     obj.insert(QStringLiteral("cmd_id"), rec.cmdId);
-    obj.insert(QStringLiteral("seq"), rec.timestamp);
+    obj.insert(QStringLiteral("seq"), rec.seq);
     obj.insert(QStringLiteral("timestamp"), rec.timestamp);
     obj.insert(QStringLiteral("commandType"), rec.command);
     obj.insert(QStringLiteral("cmd"), rec.command);
@@ -140,6 +151,8 @@ void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QSt
     obj.insert(QStringLiteral("target"), target);
 
     m_pending.insert(rec.cmdId, rec);
+    m_seqToCmdId.insert(rec.seq, rec.cmdId);
+    startCommandTimeout(rec.cmdId);
     emit commandStateChanged(rec.cmdId, rec.state);
     emit commandReadyForIpc(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
@@ -148,12 +161,75 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
 {
     const QString cmdId = obj.value("cmd_id").toString();
     if (!m_pending.contains(cmdId)) return;
-    auto rec = m_pending.take(cmdId);
+
+    CommandRecord rec = m_pending.value(cmdId);
     rec.ok = obj.value("ok").toBool();
-    rec.reason = obj.value("reason").toString(obj.value("message").toString());
+    rec.reason = obj.value("message").toString(obj.value("reason").toString());
     rec.ackTime = obj.value("timestamp").toVariant().toLongLong();
-    rec.state = rec.ok ? "success" : "failed";
-    emit commandStateChanged(cmdId, rec.state);
+
+    const QString stage = obj.value("stage").toString();
+    if (stage == QStringLiteral("sent") && rec.ok) {
+        rec.state = QStringLiteral("running");
+        m_pending.insert(cmdId, rec);
+        emit commandStateChanged(cmdId, rec.state);
+        return;
+    }
+
+    if (stage == QStringLiteral("done") && !rec.ok) {
+        rec.state = QStringLiteral("failed");
+        m_pending.insert(cmdId, rec);
+        finishCommand(cmdId, rec.state);
+        return;
+    }
+
+    rec.state = rec.ok ? QStringLiteral("running") : QStringLiteral("failed");
+    m_pending.insert(cmdId, rec);
+    if (rec.ok) {
+        emit commandStateChanged(cmdId, rec.state);
+    } else {
+        finishCommand(cmdId, rec.state);
+    }
+}
+
+void CommandManager::onCommandLogUpdate(const QJsonObject &obj)
+{
+    const qint64 seq = obj.value(QStringLiteral("seq")).toVariant().toLongLong();
+    const QString cmdId = m_seqToCmdId.value(seq);
+    if (cmdId.isEmpty() || !m_pending.contains(cmdId)) return;
+
+    const QString stage = obj.value(QStringLiteral("stage")).toString();
+    const QString status = obj.value(QStringLiteral("status")).toString();
+    if (stage == QStringLiteral("done") && status == QStringLiteral("success")) {
+        finishCommand(cmdId, QStringLiteral("success"));
+    } else if (stage == QStringLiteral("done")) {
+        finishCommand(cmdId, QStringLiteral("failed"));
+    }
+}
+
+void CommandManager::startCommandTimeout(const QString &cmdId)
+{
+    QTimer *timer = new QTimer(this);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, this, [this, cmdId]() {
+        if (!m_pending.contains(cmdId)) return;
+        finishCommand(cmdId, QStringLiteral("timeout"));
+        emit commandTimeout(cmdId);
+    });
+    m_timeoutTimers.insert(cmdId, timer);
+    timer->start(5000);
+}
+
+void CommandManager::finishCommand(const QString &cmdId, const QString &state)
+{
+    const CommandRecord rec = m_pending.take(cmdId);
+    if (rec.seq > 0) {
+        m_seqToCmdId.remove(rec.seq);
+    }
+    if (QTimer *timer = m_timeoutTimers.take(cmdId)) {
+        timer->stop();
+        timer->deleteLater();
+    }
+    emit commandStateChanged(cmdId, state);
 }
 
 QString CommandManager::createCmdId() const

@@ -33,7 +33,11 @@ void data_ack_send(uint32_t seq,
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "stage", json_object_new_string("done"));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
@@ -71,7 +75,11 @@ void data_ack_send_ports(uint32_t seq,
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : "scan_ports"));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : "scan_ports"));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : "scan_ports"));
+    json_object_object_add(root, "stage", json_object_new_string("done"));
     json_object_object_add(root, "status", json_object_new_string("ok"));
+    json_object_object_add(root, "ok", json_object_new_boolean(1));
     json_object_object_add(root, "code", json_object_new_int(DATA_SEND_OK));
     json_object_object_add(root, "reason", json_object_new_string(""));
     json_object_object_add(root, "message", json_object_new_string("scan ports success"));
@@ -99,7 +107,11 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "stage", json_object_new_string("done"));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
@@ -129,7 +141,11 @@ void data_ack_send_offline_cache_config(uint32_t seq,
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "stage", json_object_new_string("done"));
     json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));

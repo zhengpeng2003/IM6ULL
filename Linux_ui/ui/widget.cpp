@@ -423,20 +423,26 @@ void Widget::initUI()
                 payload.insert("states", states);
 
                 if (m_operationOverlay)
-                    m_operationOverlay->showLoading("正在发送继电器命令...");
+                    m_operationOverlay->showLoading("继电器命令执行中...");
 
-                if (sendCommand("set_relay", payload)) {
-                    m_relayStates.insert(key, states);
-                    if (m_pageStatus) {
-                        m_pageStatus->setRelayStates(masterSlot,
-                                                     slaveAddr,
-                                                     (states & 0x01) != 0,
-                                                     (states & 0x02) != 0,
-                                                     (states & 0x04) != 0,
-                                                     QDateTime::currentDateTime().toString("HH:mm:ss"));
-                    }
+                quint32 seq = 0;
+                if (sendCommand("set_relay", payload, &seq)) {
+                    m_pendingRelay.active = true;
+                    m_pendingRelay.seq = seq;
+                    m_pendingRelay.masterSlot = masterSlot;
+                    m_pendingRelay.slaveAddr = slaveAddr;
+                    m_pendingRelay.oldStates = m_relayStates.value(key, 0);
+                    m_pendingRelay.requestedStates = states;
+                    QTimer::singleShot(5000, this, [this, seq]() {
+                        if (!m_pendingRelay.active || m_pendingRelay.seq != seq)
+                            return;
+                        m_pendingRelay = PendingRelayCommand();
+                        if (m_operationOverlay)
+                            m_operationOverlay->showFailure("命令超时，请刷新状态");
+                        (void)sendCommand("get_runtime_state");
+                    });
                 } else if (m_operationOverlay) {
-                    m_operationOverlay->showFailure("继电器命令失败");
+                    m_operationOverlay->showFailure("继电器命令发送失败");
                 }
             });
 
@@ -511,6 +517,31 @@ void Widget::initUI()
                     return;
                 }
 
+                if (cmd == "set_relay" && m_pendingRelay.active && m_pendingRelay.seq == seq) {
+                    const bool ok = (status == "ok");
+                    const QString text = !message.isEmpty() ? message : reason;
+                    if (ok) {
+                        const QString key = relayStateKey(m_pendingRelay.masterSlot, m_pendingRelay.slaveAddr);
+                        const int states = m_pendingRelay.requestedStates;
+                        m_relayStates.insert(key, states);
+                        if (m_pageStatus) {
+                            m_pageStatus->setRelayStates(m_pendingRelay.masterSlot,
+                                                         m_pendingRelay.slaveAddr,
+                                                         (states & 0x01) != 0,
+                                                         (states & 0x02) != 0,
+                                                         (states & 0x04) != 0,
+                                                         QDateTime::currentDateTime().toString("HH:mm:ss"));
+                        }
+                        if (m_operationOverlay)
+                            m_operationOverlay->showSuccess("继电器命令完成");
+                        (void)sendCommand("get_runtime_state");
+                    } else if (m_operationOverlay) {
+                        m_operationOverlay->showFailure(text.isEmpty() ? "继电器命令失败" : text);
+                    }
+                    m_pendingRelay = PendingRelayCommand();
+                    return;
+                }
+
                 if (cmd == "remove_device" && status == "ok") {
                     handleRemoteRemoveDeviceAck(ackRoot);
                     (void)sendCommand("get_runtime_state");
@@ -535,7 +566,7 @@ void Widget::initUI()
                 else if (cmd == "remove_device")
                     m_operationOverlay->showSuccess("删除从站完成");
                 else if (cmd == "set_relay")
-                    m_operationOverlay->showSuccess("继电器命令完成");
+                    m_operationOverlay->showLoading("继电器命令执行中...");
             });
 
     connect(_Myclient,

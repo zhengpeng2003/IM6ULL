@@ -294,14 +294,20 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         if (commandType.empty()) {
             commandType = getJsonString(root, "cmd");
         }
+        if (commandType.empty()) {
+            commandType = getJsonString(root, "command");
+        }
         const std::string ackStatus = getJsonString(root, "status");
-        std::string logStatus = ackStatus == "ok" ? "success" : "failed";
+        std::string logStatus = (ackStatus == "ok" || ackStatus == "success") ? "success" : "failed";
         std::string reason = getJsonString(root, "reason");
         std::string message = getJsonString(root, "message");
 
         CommandLogTarget target;
         const bool hasTarget = m_database.isOpen() &&
                                m_database.queryCommandTargetBySeq(seq, target);
+        if (commandType.empty() && hasTarget) {
+            commandType = target.commandType;
+        }
 
         if (logStatus == "success" &&
             commandType == "remove_device" &&

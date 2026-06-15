@@ -20,6 +20,7 @@ public slots:
                               const QString &deviceType, int pollIntervalMs);
     void sendRemoveDeviceCommand(const QString &gatewayId, const QString &portId, int deviceId);
     void onCommandAck(const QJsonObject &obj);
+    void onCommandLogUpdate(const QJsonObject &obj);
 
 signals:
     void commandReadyForIpc(const QByteArray &payload);
@@ -32,5 +33,10 @@ private:
     QString commandTopic(const DeviceNode &device) const;
 
 private:
+    void startCommandTimeout(const QString &cmdId);
+    void finishCommand(const QString &cmdId, const QString &state);
+
     QHash<QString, CommandRecord> m_pending;
+    QHash<qint64, QString> m_seqToCmdId;
+    QHash<QString, QTimer *> m_timeoutTimers;
 };

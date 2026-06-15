@@ -26,15 +26,25 @@ std::string valueTypeToString(PointValueType type)
 
 std::string buildCommandAckJson(const std::string& cmdId,
                                 bool ok,
-                                const std::string& reason)
+                                const std::string& reason,
+                                std::int64_t seq,
+                                const std::string& commandType,
+                                const std::string& stage,
+                                const std::string& message)
 {
     std::ostringstream oss;
 
     oss << "{";
     oss << "\"type\":\"command_ack\",";
     oss << "\"cmd_id\":\"" << jsonEscape(cmdId) << "\",";
+    oss << "\"seq\":" << seq << ",";
+    oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"stage\":\"" << jsonEscape(stage) << "\",";
     oss << "\"ok\":" << (ok ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"message\":\"" << jsonEscape(message) << "\",";
     oss << "\"timestamp\":" << currentTimeMs();
     oss << "}";
 
@@ -117,6 +127,7 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
     oss << "\"type\":\"command_log_update\",";
     oss << "\"seq\":" << seq << ",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"stage\":\"done\",";
     oss << "\"status\":\"" << jsonEscape(status) << "\",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
@@ -424,6 +435,7 @@ std::string buildDeleteDataAckJson(const std::string& action,
     oss << "\"action\":\"" << jsonEscape(action) << "\",";
     oss << "\"ok\":" << (ok ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    oss << "\"message\":\"" << jsonEscape(message) << "\",";
     oss << "\"timestamp\":" << currentTimeMs();
     oss << "}";
 
