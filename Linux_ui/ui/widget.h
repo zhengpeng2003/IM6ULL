@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QDateTime>
 #include "ui/TopStatusBar.h"
 #include "ui/BottomNavBar.h"
 #include "ui/operationoverlaywidget.h"
@@ -85,6 +86,9 @@ private:
     bool sendCommand(const QString &cmd,
                      QJsonObject payload = QJsonObject(),
                      quint32 *seqOut = nullptr);
+    void handleRelayTelemetryConfirm(int masterSlot, int slaveAddr, int states, const QString &updateTime);
+    void failPendingRelay(const QString &message);
+    QJsonArray relayStatesToArray(int states) const;
 
     struct PendingAddSlave {
         bool active = false;
@@ -107,8 +111,12 @@ private:
         quint32 seq = 0;
         int masterSlot = 0;
         int slaveAddr = 0;
+        int deviceId = 0;
         int oldStates = 0;
-        int requestedStates = 0;
+        int expectedStates = 0;
+        QDateTime startTime;
+        bool ackReceived = false;
+        bool confirmedByTelemetry = false;
     };
 
     struct PendingCommand {

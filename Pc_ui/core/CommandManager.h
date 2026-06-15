@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QHash>
 #include <QJsonObject>
+#include <QMap>
 #include "model/DeviceModel.h"
 #include "model/CommandModel.h"
 
@@ -15,7 +16,7 @@ public:
     explicit CommandManager(QObject *parent = nullptr);
 
 public slots:
-    void sendRelayCommand(const DeviceNode &device, const QString &channel, bool value);
+    void sendRelayCommand(const DeviceNode &device, const QString &channel, bool value, const QMap<QString, bool> &currentStates = QMap<QString, bool>());
     void sendAddDeviceCommand(const QString &gatewayId, const QString &portId, int deviceId,
                               const QString &deviceType, int pollIntervalMs);
     void sendRemoveDeviceCommand(const QString &gatewayId, const QString &portId, int deviceId);

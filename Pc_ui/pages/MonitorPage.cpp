@@ -169,7 +169,7 @@ void MonitorPage::sendFanCommand(bool on)
     if (m_currentKey.isEmpty()) return;
     const auto d = m_data->deviceData(m_currentKey);
     if (d.node.deviceType != "relay") return;
-    m_command->sendRelayCommand(d.node, "fan", on);
+    m_command->sendRelayCommand(d.node, "fan", on, d.relay.channels);
 }
 
 void MonitorPage::setDetailText(const QString &text)
