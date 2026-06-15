@@ -365,6 +365,49 @@ void IpcMessageHandler::handle(const std::string& msg)
             portId = getJsonString(root, "portId");
         }
 
+        if (commandType == "set_relay") {
+            std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+            const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(seq) : cmdId;
+            const int slot = root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1;
+            const int slaveId = root.IsObject() ? getJsonInt(root, "slave_id", getJsonInt(root, "slave_addr", getJsonInt(root, "device_id", 0))) : 0;
+            if (seq <= 0 || gatewayId.empty() || portId.empty() || slot < 0 || slaveId <= 0 ||
+                !root.IsObject() || !root.HasMember("states") || !root["states"].IsArray() || root["states"].Empty()) {
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_argument", seq, commandType, "done", "invalid relay command"));
+                std::cout << "set_relay rejected, invalid relay command" << std::endl;
+                return;
+            }
+
+            if (m_database.isOpen()) {
+                m_database.createCommandLog(commandId, seq, commandType, gatewayId, portId, slaveId, currentTimeMs());
+            }
+            if (!m_database.isOpen() || !m_database.isGatewayPortConnected(gatewayId, portId)) {
+                if (m_database.isOpen()) {
+                    m_database.updateCommandLogBySeq(seq, "failed", "port_not_found", "gateway port is not connected", currentTimeMs());
+                }
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_found", seq, commandType, "done", "gateway port is not connected"));
+                return;
+            }
+
+            std::ostringstream payload;
+            payload << "{\"type\":\"command\",\"cmd\":\"set_relay\",\"seq\":" << seq
+                    << ",\"slot\":" << slot << ",\"slave_id\":" << slaveId << ",\"device_id\":" << slaveId << ",\"states\":[";
+            const rapidjson::Value& states = root["states"];
+            for (rapidjson::SizeType i = 0; i < states.Size(); ++i) {
+                if (i > 0) payload << ",";
+                payload << (states[i].IsBool() ? (states[i].GetBool() ? "true" : "false") : (states[i].GetInt() != 0 ? "true" : "false"));
+            }
+            payload << "]}";
+
+            const std::string topic = "cmd/" + gatewayId;
+            const bool publishOk = m_mqtt.publish(topic, payload.str());
+            if (m_database.isOpen()) {
+                m_database.updateCommandLogBySeq(seq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
+            }
+            m_ipc.sendMessage(buildCommandAckJson(commandId, publishOk, publishOk ? "" : "mqtt_publish_failed", seq, commandType, publishOk ? "sent" : "done", publishOk ? "command published to gateway" : "MQTT publish failed"));
+            std::cout << "set_relay publish " << (publishOk ? "ok" : "failed") << ", topic: " << topic << ", cmd_id: " << commandId << std::endl;
+            return;
+        }
+
         if (commandType == "add_device" || commandType == "remove_device") {
             const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
             int deviceId = 0;

@@ -2,6 +2,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QTimer>
 
 CommandManager::CommandManager(QObject *parent) : QObject(parent) {}
@@ -23,7 +24,7 @@ static QString ipcRelayChannel(const QString &channel)
     return channel;
 }
 
-void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &channel, bool value)
+void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &channel, bool value, const QMap<QString, bool> &currentStates)
 {
     CommandRecord rec;
     rec.cmdId = createCmdId();
@@ -38,7 +39,19 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     rec.command = "set_relay";
     rec.state = "pending";
 
-    QJsonObject params{{"channel", ipcRelayChannel(channel)}, {"value", value}};
+    const QString relayChannel = ipcRelayChannel(channel);
+    if (currentStates.isEmpty() || !currentStates.contains(relayChannel)) {
+        emit commandStateChanged(rec.cmdId, QStringLiteral("failed: 当前继电器状态未知，请刷新后再操作"));
+        return;
+    }
+
+    QJsonArray states;
+    for (int i = 1; i <= 4; ++i) {
+        const QString key = QStringLiteral("relay_%1").arg(i);
+        states.append(key == relayChannel ? value : currentStates.value(key, false));
+    }
+
+    QJsonObject params{{"channel", relayChannel}, {"value", value}, {"states", states}};
     rec.paramsJson = QString::fromUtf8(QJsonDocument(params).toJson(QJsonDocument::Compact));
 
     QJsonObject obj;
@@ -52,12 +65,17 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["commandType"] = rec.command;
     obj["factory_id"] = rec.factoryId;
     obj["area_id"] = rec.areaId;
+    obj["gatewayId"] = rec.gatewayId;
+    obj["portId"] = device.port;
     obj["gateway_id"] = rec.gatewayId;
     obj["port_id"] = device.port;
+    obj["slot"] = rec.masterSlot;
+    obj["slave_id"] = rec.slaveAddr > 0 ? rec.slaveAddr : device.deviceId;
     obj["master_slot"] = rec.masterSlot;
     obj["slave_addr"] = rec.slaveAddr;
     obj["device_id"] = device.deviceId;
     obj["device_type"] = rec.deviceType;
+    obj["states"] = states;
     obj["command"] = rec.command;
     obj["params"] = params;
 

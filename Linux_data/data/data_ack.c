@@ -171,6 +171,42 @@ static struct json_object *data_ack_thresholds_to_json(const sensor_threshold_co
     return thresholds;
 }
 
+void data_ack_send_relay_result(uint32_t seq,
+                                const char *cmd,
+                                int ok,
+                                const char *reason,
+                                const char *message,
+                                int slot,
+                                int slave_id,
+                                int device_id,
+                                uint16_t states)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return;
+
+    data_ack_add_common(root, seq, cmd, ok, reason, message);
+    json_object_object_add(root, "slot", json_object_new_int(slot));
+    json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
+    json_object_object_add(root, "device_id", json_object_new_int(device_id));
+    struct json_object *state_array = json_object_new_array();
+    if (state_array) {
+        for (int bit = 0; bit < 4; ++bit)
+            json_object_array_add(state_array, json_object_new_boolean((states & (1u << bit)) != 0));
+        json_object_object_add(root, "states", state_array);
+    }
+
+    const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    ipc_server_send(payload);
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.priority = 3;
+    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+    json_object_put(root);
+}
+
 void data_ack_send_device_result(uint32_t seq,
                                  const char *cmd,
                                  int ok,

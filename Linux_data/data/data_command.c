@@ -380,17 +380,45 @@ static int handle_set_relay(uint32_t seq, struct json_object *root, const char *
 
     if (!json_object_object_get_ex(root, "states", &v)) {
         snprintf(reason, sizeof(reason), "invalid_request");
-        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+        data_ack_send_relay_result(seq, cmd, 0, reason, "invalid relay command", slot, slave_id, dev.device_id, 0);
         return CMD_PROCESS_ERROR;
     }
-    dev.data.relay.relay_states = (uint16_t)json_object_get_int(v);
+    if (json_object_is_type(v, json_type_array)) {
+        uint16_t mask = 0;
+        const int len = json_object_array_length(v);
+        if (len <= 0) {
+            snprintf(reason, sizeof(reason), "invalid_request");
+            data_ack_send_relay_result(seq, cmd, 0, reason, "invalid relay command", slot, slave_id, dev.device_id, 0);
+            return CMD_PROCESS_ERROR;
+        }
+        for (int i = 0; i < len && i < 16; ++i) {
+            if (json_object_get_boolean(json_object_array_get_idx(v, i)))
+                mask |= (uint16_t)(1u << i);
+        }
+        dev.data.relay.relay_states = mask;
+    } else {
+        dev.data.relay.relay_states = (uint16_t)json_object_get_int(v);
+    }
 
     int ret = port_manager_handle_relay(slot, slave_id, &dev, reason, sizeof(reason));
-    data_ack_send(seq,
-                  cmd,
-                  ret == 0,
-                  ret == 0 ? "" : reason,
-                  ret == 0 ? "relay write success" : data_ack_message_from_reason(reason));
+    if (ret != 0 && strcmp(reason, "relay_not_connected") == 0)
+        snprintf(reason, sizeof(reason), "relay_not_found");
+    const char *ack_message = ret == 0 ? "relay write success" : data_ack_message_from_reason(reason);
+    if (ret != 0 && strcmp(reason, "relay_not_found") == 0)
+        ack_message = "relay device not found";
+    if (ret != 0 && strcmp(reason, "port_not_connected") == 0)
+        ack_message = "port is not connected";
+    if (ret != 0 && strcmp(reason, "modbus_write_failed") == 0)
+        ack_message = "relay write failed";
+    data_ack_send_relay_result(seq,
+                               cmd,
+                               ret == 0,
+                               ret == 0 ? "" : reason,
+                               ack_message,
+                               slot,
+                               slave_id,
+                               dev.device_id,
+                               dev.data.relay.relay_states);
     return ret == 0 ? CMD_PROCESS_FORWARD_MQTT : CMD_PROCESS_ERROR;
 }
 

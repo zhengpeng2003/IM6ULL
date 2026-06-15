@@ -436,7 +436,8 @@ void Widget::initUI()
                 QJsonObject payload;
                 payload.insert("slot", masterSlot);
                 payload.insert("slave_id", slaveAddr);
-                payload.insert("states", states);
+                payload.insert("device_id", slaveAddr);
+                payload.insert("states", relayStatesToArray(states));
 
                 if (m_operationOverlay)
                     m_operationOverlay->showLoading("继电器命令执行中...");
@@ -447,8 +448,12 @@ void Widget::initUI()
                     m_pendingRelay.seq = seq;
                     m_pendingRelay.masterSlot = masterSlot;
                     m_pendingRelay.slaveAddr = slaveAddr;
+                    m_pendingRelay.deviceId = slaveAddr;
                     m_pendingRelay.oldStates = m_relayStates.value(key, 0);
-                    m_pendingRelay.requestedStates = states;
+                    m_pendingRelay.expectedStates = states;
+                    m_pendingRelay.startTime = QDateTime::currentDateTime();
+                    m_pendingRelay.ackReceived = false;
+                    m_pendingRelay.confirmedByTelemetry = false;
                 } else if (m_operationOverlay) {
                     m_operationOverlay->showFailure("继电器命令发送失败");
                 }
@@ -493,7 +498,7 @@ void Widget::initUI()
                     if (cmd == "remove_device" && m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq)
                         m_pendingRemoveSlave = PendingRemoveSlave();
                     if (cmd == "set_relay" && m_pendingRelay.active && m_pendingRelay.seq == seq)
-                        m_pendingRelay = PendingRelayCommand();
+                        failPendingRelay(text);
                     if (m_operationOverlay)
                         m_operationOverlay->showFailure(text);
                     return;
@@ -520,21 +525,17 @@ void Widget::initUI()
                 }
 
                 if (cmd == "set_relay" && m_pendingRelay.active && m_pendingRelay.seq == seq) {
-                    const QString key = relayStateKey(m_pendingRelay.masterSlot, m_pendingRelay.slaveAddr);
-                    const int states = m_pendingRelay.requestedStates;
-                    m_relayStates.insert(key, states);
-                    if (m_pageStatus) {
-                        m_pageStatus->setRelayStates(m_pendingRelay.masterSlot,
-                                                     m_pendingRelay.slaveAddr,
-                                                     (states & 0x01) != 0,
-                                                     (states & 0x02) != 0,
-                                                     (states & 0x04) != 0,
-                                                     QDateTime::currentDateTime().toString("HH:mm:ss"));
-                    }
-                    m_pendingRelay = PendingRelayCommand();
+                    m_pendingRelay.ackReceived = true;
                     if (m_operationOverlay)
-                        m_operationOverlay->showSuccess("继电器命令完成");
+                        m_operationOverlay->showLoading("写入成功，等待状态回读");
                     requestRuntimeRefresh();
+                    QTimer::singleShot(8000, this, [this, seq]() {
+                        if (!m_pendingRelay.active || m_pendingRelay.seq != seq || m_pendingRelay.confirmedByTelemetry)
+                            return;
+                        m_pendingRelay = PendingRelayCommand();
+                        if (m_operationOverlay)
+                            m_operationOverlay->showFailure("继电器写入成功，但状态未确认，请刷新状态");
+                    });
                     return;
                 }
 
@@ -758,6 +759,61 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
     }
 }
 
+QJsonArray Widget::relayStatesToArray(int states) const
+{
+    QJsonArray array;
+    for (int bit = 0; bit < 4; ++bit)
+        array.append((states & (1 << bit)) != 0);
+    return array;
+}
+
+void Widget::failPendingRelay(const QString &message)
+{
+    if (!m_pendingRelay.active)
+        return;
+    const QString key = relayStateKey(m_pendingRelay.masterSlot, m_pendingRelay.slaveAddr);
+    m_relayStates.insert(key, m_pendingRelay.oldStates);
+    if (m_pageStatus) {
+        const int states = m_pendingRelay.oldStates;
+        m_pageStatus->setRelayStates(m_pendingRelay.masterSlot,
+                                     m_pendingRelay.slaveAddr,
+                                     (states & 0x01) != 0,
+                                     (states & 0x02) != 0,
+                                     (states & 0x04) != 0,
+                                     QDateTime::currentDateTime().toString("HH:mm:ss"));
+    }
+    m_pendingRelay = PendingRelayCommand();
+    if (m_operationOverlay)
+        m_operationOverlay->showFailure(message.isEmpty() ? QStringLiteral("继电器命令失败") : message);
+}
+
+void Widget::handleRelayTelemetryConfirm(int masterSlot, int slaveAddr, int states, const QString &updateTime)
+{
+    const QString key = relayStateKey(masterSlot, slaveAddr);
+    m_relayStates.insert(key, states);
+    if (m_pageStatus) {
+        m_pageStatus->setRelayStates(masterSlot,
+                                     slaveAddr,
+                                     (states & 0x01) != 0,
+                                     (states & 0x02) != 0,
+                                     (states & 0x04) != 0,
+                                     updateTime);
+    }
+
+    if (!m_pendingRelay.active ||
+        m_pendingRelay.masterSlot != masterSlot ||
+        m_pendingRelay.slaveAddr != slaveAddr) {
+        return;
+    }
+
+    if (states == m_pendingRelay.expectedStates) {
+        m_pendingRelay.confirmedByTelemetry = true;
+        m_pendingRelay = PendingRelayCommand();
+        if (m_operationOverlay)
+            m_operationOverlay->showSuccess("现场状态已确认");
+    }
+}
+
 void Widget::handleRuntimeStateSnapshot(const QJsonArray &ports)
 {
     QSet<int> snapshotSlots;
@@ -920,16 +976,7 @@ void Widget::handleDeviceStatus(const DataPack &pack)
             }
         } else if (device.type == DEV_RELAY) {
             updateSlaveOnline(masterSlot, device.deviceId, "relay", true);
-            m_relayStates.insert(relayStateKey(masterSlot, device.deviceId),
-                                 device.relayStates);
-            if (m_pageStatus) {
-                m_pageStatus->setRelayStates(masterSlot,
-                                             device.deviceId,
-                                             (device.relayStates & 0x01) != 0,
-                                             (device.relayStates & 0x02) != 0,
-                                             (device.relayStates & 0x04) != 0,
-                                             updateTime);
-            }
+            handleRelayTelemetryConfirm(masterSlot, device.deviceId, device.relayStates, updateTime);
         }
     }
 
@@ -1211,8 +1258,8 @@ bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOu
         if (m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq)
             m_pendingRemoveSlave = PendingRemoveSlave();
         if (m_pendingRelay.active && m_pendingRelay.seq == seq)
-            m_pendingRelay = PendingRelayCommand();
-        if (m_operationOverlay && timedOutCmd != "get_runtime_state")
+            failPendingRelay("命令超时");
+        if (m_operationOverlay && timedOutCmd != "get_runtime_state" && timedOutCmd != "set_relay")
             m_operationOverlay->showFailure("通信超时，请刷新状态");
     });
     pending.timer->start();
