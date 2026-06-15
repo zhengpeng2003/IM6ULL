@@ -23,12 +23,15 @@
 namespace {
 const char* kDeviceRegisterAckTopic = "imx6ull/device/data";
 
-std::string buildSnapshotPointId(const std::string& gatewayId,
-                                 const std::string& portId,
-                                 int deviceId,
+std::string buildSnapshotPointId(const DeviceRecord& device,
                                  const std::string& pointKey)
 {
-    return gatewayId + "." + portId + "." + std::to_string(deviceId) + "." + pointKey;
+    return ModelConverter::buildPointId(device.factoryId,
+                                        device.areaId,
+                                        device.gatewayId,
+                                        device.portId,
+                                        device.deviceId,
+                                        pointKey);
 }
 
 bool getOptionalSnapshotDouble(const rapidjson::Value& obj,
@@ -69,6 +72,8 @@ void appendThresholdPointConfig(std::vector<PointConfig>& configs,
 
     PointConfig config;
     config.timestampMs = timestampMs;
+    config.factoryId = device.factoryId;
+    config.areaId = device.areaId;
     config.gatewayId = device.gatewayId;
     config.gatewayName = device.gatewayName;
     config.portId = device.portId;
@@ -84,7 +89,11 @@ void appendThresholdPointConfig(std::vector<PointConfig>& configs,
     config.hasAlarmLow = getOptionalSnapshotDouble(threshold, "alarm_low", "alarmLow", config.alarmLow);
     config.hasAlarmHigh = getOptionalSnapshotDouble(threshold, "alarm_high", "alarmHigh", config.alarmHigh);
     config.enabled = true;
-    config.pointId = buildSnapshotPointId(device.gatewayId, device.portId, device.deviceId, pointKey);
+    if (config.factoryId.empty() || config.areaId.empty() || config.gatewayId.empty() ||
+        config.portId.empty() || config.deviceId <= 0 || config.pointKey.empty()) {
+        return;
+    }
+    config.pointId = buildSnapshotPointId(device, pointKey);
     configs.push_back(config);
 }
 
@@ -103,8 +112,17 @@ bool parseConfigSnapshot(const std::string& payload,
         return false;
     }
 
-    const std::string gatewayId = getJsonString(root, "gatewayId");
-    if (gatewayId != pending.gatewayId ||
+    const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject() ? root["site"] : root;
+    std::string gatewayId = getJsonString(root, "gatewayId");
+    if (gatewayId.empty()) {
+        gatewayId = getJsonString(site, "gatewayId");
+    }
+    const std::string factoryId = getJsonString(site, "factoryId");
+    const std::string factoryName = getJsonString(site, "factoryName");
+    const std::string areaId = getJsonString(site, "areaId");
+    const std::string areaName = getJsonString(site, "areaName");
+    const std::string gatewayName = getJsonString(site, "gatewayName");
+    if (gatewayId != pending.gatewayId || factoryId.empty() || areaId.empty() ||
         !root.HasMember("ports") || !root["ports"].IsArray()) {
         return false;
     }
@@ -151,7 +169,12 @@ bool parseConfigSnapshot(const std::string& payload,
 
             ConfigSnapshotDevice snapshotDevice;
             DeviceRecord& device = snapshotDevice.device;
+            device.factoryId = factoryId;
+            device.factoryName = factoryName;
+            device.areaId = areaId;
+            device.areaName = areaName;
             device.gatewayId = gatewayId;
+            device.gatewayName = gatewayName;
             device.portId = port.portId;
             device.portName = port.portName;
             device.deviceId = deviceId;

@@ -162,8 +162,8 @@ void TrendPage::onPointSelected(const QString &pointId, const QString &deviceKey
     m_currentPointUnit = unit;
 
     const QString unitText = unit.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(unit);
-    m_statsLabel->setText(QStringLiteral("当前测点: %1%2，请点击查询历史数据")
-                              .arg(pointName.isEmpty() ? pointId : pointName, unitText));
+    m_statsLabel->setText(QStringLiteral("当前测点: %1%2\npointId: %3\n请点击查询历史数据")
+                              .arg(pointName.isEmpty() ? pointId : pointName, unitText, pointId));
     requestTableHistory();
 }
 
@@ -214,8 +214,28 @@ void TrendPage::onHistoryPointsMessage(const QJsonObject &obj)
         return;
     }
 
+    const bool ok = obj.value(QStringLiteral("ok")).toBool(true);
+    const QString reason = obj.value(QStringLiteral("reason")).toString();
+    const QString message = obj.value(QStringLiteral("message")).toString();
+    const int count = obj.value(QStringLiteral("count")).toInt(-1);
     const QJsonArray points = obj.value(QStringLiteral("points")).toArray();
-    if (request.type == HistoryRequestType::ChartRange) {
+
+    if (!ok) {
+        const QString detail = message.isEmpty() ? reason : QStringLiteral("%1/%2").arg(reason, message);
+        if (request.type == HistoryRequestType::ChartRange) {
+            clearChartView(reason == QStringLiteral("invalid_point_id")
+                               ? QStringLiteral("点位 ID 无效")
+                               : QStringLiteral("历史查询失败：%1").arg(detail));
+        } else if (request.type == HistoryRequestType::TableAllHistory) {
+            clearTableView();
+        }
+    } else if (count == 0 || points.isEmpty()) {
+        if (request.type == HistoryRequestType::ChartRange) {
+            clearChartView(QStringLiteral("当前点位暂无历史数据"));
+        } else if (request.type == HistoryRequestType::TableAllHistory) {
+            clearTableView();
+        }
+    } else if (request.type == HistoryRequestType::ChartRange) {
         m_lastStartMs = request.startMs;
         m_lastEndMs = request.endMs;
         handleChartHistoryResponse(points);

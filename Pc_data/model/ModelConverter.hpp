@@ -30,19 +30,21 @@ class ModelConverter
 public:
     static std::vector<TelemetryPoint> toTelemetryPoints(const TelemetryPack& pack);
 
+    /*
+     * 构造全局唯一测点 ID。
+     * 格式：factoryId.areaId.gatewayId.portId.deviceId.pointKey
+     */
+    static std::string buildPointId(const std::string& factoryId,
+                                    const std::string& areaId,
+                                    const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId,
+                                    const std::string& pointKey);
+
 private:
     static TelemetryPoint makeBasePoint(const TelemetryPack& pack,
                                         const DeviceData& device);
 
-    /*
-     * 构造全局唯一测点 ID。
-     *
-     * 格式：
-     * factory_001.area_001.gateway_001.port_001.1.temperature
-     *
-     * 组成：
-     * factoryId + areaId + gatewayId + portId + deviceId + pointKey
-     */
     static std::string buildPointId(const TelemetryPack& pack,
                                     const DeviceData& device,
                                     const std::string& pointKey);

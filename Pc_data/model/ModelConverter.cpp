@@ -65,16 +65,31 @@ TelemetryPoint ModelConverter::makeBasePoint(const TelemetryPack& pack,
     return point;
 }
 
+std::string ModelConverter::buildPointId(const std::string& factoryId,
+                                         const std::string& areaId,
+                                         const std::string& gatewayId,
+                                         const std::string& portId,
+                                         int deviceId,
+                                         const std::string& pointKey)
+{
+    return factoryId + "." +
+           areaId + "." +
+           gatewayId + "." +
+           portId + "." +
+           std::to_string(deviceId) + "." +
+           pointKey;
+}
+
 std::string ModelConverter::buildPointId(const TelemetryPack& pack,
                                          const DeviceData& device,
                                          const std::string& pointKey)
 {
-    return pack.site.factoryId + "." +
-           pack.site.areaId + "." +
-           pack.site.gatewayId + "." +
-           pack.site.portId + "." +
-           std::to_string(device.deviceId) + "." +
-           pointKey;
+    return buildPointId(pack.site.factoryId,
+                        pack.site.areaId,
+                        pack.site.gatewayId,
+                        pack.site.portId,
+                        device.deviceId,
+                        pointKey);
 }
 
 void ModelConverter::appendTemperatureHumidityPoints(const TelemetryPack& pack,

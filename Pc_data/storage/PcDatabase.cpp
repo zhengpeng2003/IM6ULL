@@ -652,11 +652,28 @@ std::vector<TelemetryPoint> PcDatabase::queryLatestPoints()
 std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& pointId,
                                                            std::int64_t startMs,
                                                            std::int64_t endMs,
-                                                           int limit)
+                                                           int limit,
+                                                           bool* ok,
+                                                           std::string* reason)
 {
     std::vector<TelemetryPoint> points;
+    if (ok) {
+        *ok = false;
+    }
+    if (reason) {
+        reason->clear();
+    }
 
-    if (!m_db || pointId.empty()) {
+    if (pointId.empty()) {
+        if (reason) {
+            *reason = "invalid_point_id";
+        }
+        return points;
+    }
+    if (!m_db) {
+        if (reason) {
+            *reason = "db_not_open";
+        }
         return points;
     }
 
@@ -669,6 +686,9 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
     }
 
     if (endMs < startMs) {
+        if (reason) {
+            *reason = "invalid_time_range";
+        }
         return points;
     }
 
@@ -689,6 +709,9 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
     int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         std::cerr << "Prepare query history failed: " << sqlite3_errmsg(m_db) << std::endl;
+        if (reason) {
+            *reason = "db_query_failed";
+        }
         return points;
     }
 
@@ -713,6 +736,18 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
     if (rc != SQLITE_DONE) {
         std::cerr << "Query telemetry_history failed: " << sqlite3_errmsg(m_db) << std::endl;
         points.clear();
+        if (reason) {
+            *reason = "db_query_failed";
+        }
+        sqlite3_finalize(stmt);
+        return points;
+    }
+
+    if (ok) {
+        *ok = true;
+    }
+    if (reason && points.empty()) {
+        *reason = "no_data";
     }
 
     sqlite3_finalize(stmt);
