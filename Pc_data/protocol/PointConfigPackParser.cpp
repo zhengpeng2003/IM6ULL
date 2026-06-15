@@ -9,6 +9,8 @@
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 
+#include "common/JsonUtils.hpp"
+
 namespace {
 
 std::string getString(const rapidjson::Value& obj,
@@ -91,6 +93,21 @@ bool getOptionalDouble(const rapidjson::Value& obj,
     return true;
 }
 
+bool getOptionalDoubleAny(const rapidjson::Value& obj,
+                          std::initializer_list<const char*> keys,
+                          double& outValue)
+{
+    if (!obj.IsObject()) {
+        return false;
+    }
+    for (const char* key : keys) {
+        if (getOptionalDouble(obj, key, outValue)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const rapidjson::Value& nestedObject(const rapidjson::Value& obj, const char* key)
 {
     static const rapidjson::Value empty;
@@ -109,6 +126,76 @@ std::string buildPointId(const PointConfig& config)
                                         config.portId,
                                         config.deviceId,
                                         config.pointKey);
+}
+
+PointConfig basePointConfig(const rapidjson::Value& site,
+                            const std::string& deviceName,
+                            const std::string& deviceType,
+                            int deviceId,
+                            std::int64_t timestampMs)
+{
+    PointConfig config;
+    config.timestampMs = timestampMs;
+    config.factoryId = getString(site, "factoryId");
+    config.factoryName = getString(site, "factoryName");
+    config.areaId = getString(site, "areaId");
+    config.areaName = getString(site, "areaName");
+    config.gatewayId = getString(site, "gatewayId");
+    config.gatewayName = getString(site, "gatewayName");
+    config.portId = getString(site, "portId");
+    config.portName = getString(site, "portName");
+    config.deviceId = deviceId;
+    config.deviceName = deviceName;
+    config.deviceType = deviceType;
+    config.valueType = "number";
+    config.enabled = true;
+    return config;
+}
+
+void appendLegacyThresholdConfig(std::vector<PointConfig>& configs,
+                                 const rapidjson::Value& site,
+                                 const std::string& deviceName,
+                                 const std::string& deviceType,
+                                 int deviceId,
+                                 bool deviceThresholdEnabled,
+                                 const rapidjson::Value& thresholds,
+                                 const rapidjson::Value& thresholdConfig,
+                                 std::int64_t timestampMs)
+{
+    const bool enableAlarm = thresholdConfig.IsObject()
+        ? getJsonBoolAny(thresholdConfig, {"enable"}, deviceThresholdEnabled)
+        : deviceThresholdEnabled;
+
+    PointConfig temperature = basePointConfig(site, deviceName, deviceType, deviceId, timestampMs);
+    temperature.pointKey = "temperature";
+    temperature.pointName = "temperature";
+    temperature.unit = "c";
+    temperature.enableAlarm = enableAlarm;
+    temperature.hasAlarmHigh =
+        (thresholds.IsObject() && getOptionalDoubleAny(thresholds, {"temp_high", "tempHigh"}, temperature.alarmHigh)) ||
+        (thresholdConfig.IsObject() && getOptionalDoubleAny(thresholdConfig, {"temp_high", "tempHigh"}, temperature.alarmHigh));
+
+    PointConfig humidity = basePointConfig(site, deviceName, deviceType, deviceId, timestampMs);
+    humidity.pointKey = "humidity";
+    humidity.pointName = "humidity";
+    humidity.unit = "%";
+    humidity.enableAlarm = enableAlarm;
+    humidity.hasAlarmHigh =
+        (thresholds.IsObject() && getOptionalDoubleAny(thresholds, {"humi_high", "humiHigh"}, humidity.alarmHigh)) ||
+        (thresholdConfig.IsObject() && getOptionalDoubleAny(thresholdConfig, {"humi_high", "humiHigh"}, humidity.alarmHigh));
+
+    if (!temperature.factoryId.empty() && !temperature.areaId.empty() &&
+        !temperature.gatewayId.empty() && !temperature.portId.empty() &&
+        temperature.deviceId > 0 && temperature.hasAlarmHigh) {
+        temperature.pointId = buildPointId(temperature);
+        configs.push_back(temperature);
+    }
+    if (!humidity.factoryId.empty() && !humidity.areaId.empty() &&
+        !humidity.gatewayId.empty() && !humidity.portId.empty() &&
+        humidity.deviceId > 0 && humidity.hasAlarmHigh) {
+        humidity.pointId = buildPointId(humidity);
+        configs.push_back(humidity);
+    }
 }
 
 }
@@ -144,20 +231,41 @@ bool PointConfigPackParser::parseJson(const std::string& payload,
     }
 
     const std::int64_t timestampMs =
-        getInt64(root, "timestampMs", currentTimeMs());
+        getJsonInt64Any(root, {"timestampMs", "timestamp", "time"}, currentTimeMs());
     const rapidjson::Value& site = nestedObject(root, "site");
 
     std::vector<PointConfig> configs;
     const rapidjson::Value& devices = root["devices"];
     for (rapidjson::SizeType i = 0; i < devices.Size(); ++i) {
         const rapidjson::Value& device = devices[i];
-        if (!device.IsObject() || !device.HasMember("points") || !device["points"].IsArray()) {
+        if (!device.IsObject()) {
             continue;
         }
 
-        const int deviceId = getInt(device, "deviceId", getInt(device, "slave_id", 0));
+        const int deviceId = getJsonIntAny(device, {"deviceId", "slave_id", "slaveAddress"}, 0);
         const std::string deviceName = getString(device, "deviceName");
-        const std::string deviceType = getString(device, "deviceType", getString(device, "device_type"));
+        const std::string deviceType = getJsonStringAny(device, {"deviceType", "device_type"});
+        const bool deviceThresholdEnabled =
+            getJsonBoolAny(device, {"threshold_enabled", "thresholdEnabled"}, false);
+        const rapidjson::Value& thresholdConfig = device.HasMember("threshold_config") && device["threshold_config"].IsObject()
+            ? device["threshold_config"]
+            : nestedObject(device, "thresholdConfig");
+        const rapidjson::Value& thresholds = device.HasMember("thresholds") && device["thresholds"].IsObject()
+            ? device["thresholds"]
+            : nestedObject(thresholdConfig, "thresholds");
+
+        if (!device.HasMember("points") || !device["points"].IsArray()) {
+            appendLegacyThresholdConfig(configs,
+                                        site,
+                                        deviceName,
+                                        deviceType,
+                                        deviceId,
+                                        deviceThresholdEnabled,
+                                        thresholds,
+                                        thresholdConfig,
+                                        timestampMs);
+            continue;
+        }
 
         const rapidjson::Value& points = device["points"];
         for (rapidjson::SizeType j = 0; j < points.Size(); ++j) {
@@ -183,11 +291,28 @@ bool PointConfigPackParser::parseJson(const std::string& payload,
             config.pointName = getString(point, "pointName");
             config.unit = getString(point, "unit");
             config.valueType = getString(point, "valueType", "number");
-            config.enableAlarm = getBool(point, "enableAlarm", getBool(point, "enable_alarm", false));
-            config.hasAlarmLow = getOptionalDouble(point, "alarmLow", config.alarmLow) ||
-                                 getOptionalDouble(point, "alarm_low", config.alarmLow);
-            config.hasAlarmHigh = getOptionalDouble(point, "alarmHigh", config.alarmHigh) ||
-                                  getOptionalDouble(point, "alarm_high", config.alarmHigh);
+            config.enableAlarm = getJsonBoolAny(point, {"enableAlarm", "enable_alarm"}, deviceThresholdEnabled);
+            config.hasAlarmLow = getOptionalDoubleAny(point, {"alarmLow", "alarm_low"}, config.alarmLow);
+            config.hasAlarmHigh = getOptionalDoubleAny(point, {"alarmHigh", "alarm_high"}, config.alarmHigh);
+            if (config.pointKey == "temperature" && thresholds.IsObject()) {
+                config.hasAlarmHigh = config.hasAlarmHigh ||
+                    getOptionalDoubleAny(thresholds, {"temp_high", "tempHigh"}, config.alarmHigh);
+            }
+            if (config.pointKey == "humidity" && thresholds.IsObject()) {
+                config.hasAlarmHigh = config.hasAlarmHigh ||
+                    getOptionalDoubleAny(thresholds, {"humi_high", "humiHigh"}, config.alarmHigh);
+            }
+            if (thresholdConfig.IsObject()) {
+                config.enableAlarm = getJsonBoolAny(thresholdConfig, {"enable"}, config.enableAlarm);
+                if (config.pointKey == "temperature") {
+                    config.hasAlarmHigh = config.hasAlarmHigh ||
+                        getOptionalDoubleAny(thresholdConfig, {"temp_high", "tempHigh"}, config.alarmHigh);
+                }
+                if (config.pointKey == "humidity") {
+                    config.hasAlarmHigh = config.hasAlarmHigh ||
+                        getOptionalDoubleAny(thresholdConfig, {"humi_high", "humiHigh"}, config.alarmHigh);
+                }
+            }
             config.enabled = true;
 
             if (config.pointKey.empty() || config.factoryId.empty() ||

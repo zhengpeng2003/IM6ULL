@@ -8,6 +8,16 @@
 
 #include <json-c/json.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
+
+static int64_t data_ack_current_time_ms(void)
+{
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0)
+        return (int64_t)time(NULL) * 1000;
+    return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 static int data_ack_code_from_reason(const char *reason)
 {
@@ -45,6 +55,7 @@ void data_ack_send(uint32_t seq,
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
 
     const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
     ipc_server_send(payload);
@@ -87,6 +98,7 @@ void data_ack_send_ports(uint32_t seq,
     json_object_object_add(root, "code", json_object_new_int(DATA_SEND_OK));
     json_object_object_add(root, "reason", json_object_new_string(""));
     json_object_object_add(root, "message", json_object_new_string("scan ports success"));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
     json_object_object_add(root, "ports", port_array);
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
@@ -119,6 +131,7 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "port", json_object_new_string(port ? port : ""));
     json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "unknown"));
@@ -154,6 +167,7 @@ static void data_ack_add_common(struct json_object *root,
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
 }
 
 static struct json_object *data_ack_thresholds_to_json(const sensor_threshold_config_t *config)
@@ -198,6 +212,7 @@ void data_ack_send_relay_result(uint32_t seq,
     data_ack_add_common(root, seq, cmd, ok, reason, message);
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
+    json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
     json_object_object_add(root, "device_id", json_object_new_int(device_id));
     struct json_object *state_array = json_object_new_array();
     if (state_array) {
@@ -268,6 +283,7 @@ void data_ack_send_threshold_result(uint32_t seq,
     json_object_object_add(root, "deviceType", json_object_new_string(device_type ? device_type : "sensor_th"));
     json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "sensor_th"));
     json_object_object_add(root, "threshold_enabled", json_object_new_boolean(threshold_enabled));
+    json_object_object_add(root, "thresholdEnabled", json_object_new_boolean(threshold_enabled));
     json_object_object_add(root, "thresholds", data_ack_thresholds_to_json(threshold_config));
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
@@ -298,6 +314,7 @@ void data_ack_send_offline_cache_config(uint32_t seq,
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+    json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
     json_object_object_add(root, "cache_enabled", json_object_new_boolean(cache_enabled));
     json_object_object_add(root, "cacheEnabled", json_object_new_boolean(cache_enabled));
     json_object_object_add(root, "flush_enabled", json_object_new_boolean(flush_enabled));

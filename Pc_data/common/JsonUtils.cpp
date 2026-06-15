@@ -148,3 +148,63 @@ std::string getJsonString(const rapidjson::Value& obj, const char* key)
 
     return obj[key].GetString();
 }
+
+std::int64_t getJsonInt64Any(const rapidjson::Value& obj,
+                             std::initializer_list<const char*> keys,
+                             std::int64_t defaultValue)
+{
+    if (!obj.IsObject()) {
+        return defaultValue;
+    }
+    for (const char* key : keys) {
+        if (key && obj.HasMember(key)) {
+            return getJsonInt64(obj, key, defaultValue);
+        }
+    }
+    return defaultValue;
+}
+
+int getJsonIntAny(const rapidjson::Value& obj,
+                  std::initializer_list<const char*> keys,
+                  int defaultValue)
+{
+    if (!obj.IsObject()) {
+        return defaultValue;
+    }
+    for (const char* key : keys) {
+        if (key && obj.HasMember(key)) {
+            return getJsonInt(obj, key, defaultValue);
+        }
+    }
+    return defaultValue;
+}
+
+bool getJsonBoolAny(const rapidjson::Value& obj,
+                    std::initializer_list<const char*> keys,
+                    bool defaultValue)
+{
+    if (!obj.IsObject()) {
+        return defaultValue;
+    }
+    for (const char* key : keys) {
+        if (key && obj.HasMember(key)) {
+            return getJsonBool(obj, key, defaultValue);
+        }
+    }
+    return defaultValue;
+}
+
+std::string getJsonStringAny(const rapidjson::Value& obj,
+                             std::initializer_list<const char*> keys)
+{
+    if (!obj.IsObject()) {
+        return "";
+    }
+    for (const char* key : keys) {
+        const std::string value = key ? getJsonString(obj, key) : std::string();
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    return "";
+}

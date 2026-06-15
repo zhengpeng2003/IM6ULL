@@ -96,6 +96,21 @@ bool isRemoteCommandAllowed(const std::string& commandType)
     return allowed.find(commandType) != allowed.end();
 }
 
+std::string commandNameFrom(const rapidjson::Value& root)
+{
+    return getJsonStringAny(root, {"cmd", "commandType", "command"});
+}
+
+std::int64_t sequenceFrom(const rapidjson::Value& root)
+{
+    return getJsonInt64Any(root, {"seq", "sequence"}, 0);
+}
+
+int deviceIdFrom(const rapidjson::Value& root)
+{
+    return getJsonIntAny(root, {"deviceId", "slave_id", "slaveAddress", "device_id", "slave_addr"}, 0);
+}
+
 int slotFromPortId(const std::string& portId, int fallback)
 {
     if (fallback >= 0) {
@@ -400,13 +415,7 @@ void IpcMessageHandler::handle(const std::string& msg)
         rapidjson::Document root;
         root.Parse(msg.c_str());
         const std::string cmdId = extractJsonStringValue(msg, "cmd_id");
-        std::string commandType = root.IsObject() ? getJsonString(root, "commandType") : "";
-        if (commandType.empty() && root.IsObject()) {
-            commandType = getJsonString(root, "cmd");
-        }
-        if (commandType.empty() && root.IsObject()) {
-            commandType = getJsonString(root, "command");
-        }
+        std::string commandType = root.IsObject() ? commandNameFrom(root) : "";
         std::string gatewayId;
         std::string portId;
         if (root.IsObject() && root.HasMember("target") && root["target"].IsObject()) {
@@ -423,7 +432,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             portId = getJsonString(root, "portId");
         }
 
-        std::int64_t seqForAck = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+        std::int64_t seqForAck = root.IsObject() ? sequenceFrom(root) : 0;
         const std::string commandIdForAck = cmdId.empty() ? std::string("CMD") + std::to_string(seqForAck) : cmdId;
         if (!isRemoteCommandAllowed(commandType)) {
             m_ipc.sendMessage(buildCommandAckJson(commandIdForAck, false, "unsupported_command", seqForAck, commandType, "done", "unsupported command"));
@@ -437,10 +446,10 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         if (commandType == "set_relay") {
-            std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+            std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
             const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(seq) : cmdId;
             const int slot = root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1;
-            const int slaveId = root.IsObject() ? getJsonInt(root, "slave_id", getJsonInt(root, "slave_addr", getJsonInt(root, "device_id", 0))) : 0;
+            const int slaveId = root.IsObject() ? deviceIdFrom(root) : 0;
             if (seq <= 0 || gatewayId.empty() || portId.empty() || slot < 0 || slaveId <= 0 ||
                 !root.IsObject() || !root.HasMember("states") || !root["states"].IsArray() || root["states"].Empty()) {
                 m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", seq, commandType, "done", "invalid relay command"));
@@ -480,14 +489,18 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         if (commandType == "set_device_threshold") {
-            const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+            const std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
             const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(seq) : cmdId;
             const int slot = slotFromPortId(portId, root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1);
-            int slaveId = root.IsObject() ? getJsonInt(root, "slave_id", getJsonInt(root, "device_id", getJsonInt(root, "deviceId", 0))) : 0;
+            int slaveId = root.IsObject() ? deviceIdFrom(root) : 0;
             if (slaveId <= 0 && root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
-                slaveId = getJsonInt(root["device"], "deviceId", getJsonInt(root["device"], "slaveAddress", 0));
+                slaveId = deviceIdFrom(root["device"]);
             }
-            if (slot < 0 || slaveId <= 0 || !root.IsObject() || !root.HasMember("thresholds") || !root["thresholds"].IsObject()) {
+            const bool hasThresholds = root.IsObject() &&
+                ((root.HasMember("thresholds") && root["thresholds"].IsObject()) ||
+                 (root.HasMember("threshold_config") && root["threshold_config"].IsObject()) ||
+                 (root.HasMember("thresholdConfig") && root["thresholdConfig"].IsObject()));
+            if (slot < 0 || slaveId <= 0 || !hasThresholds) {
                 m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", seq, commandType, "done", "slot, slave_id and thresholds are required"));
                 std::cout << "set_device_threshold rejected, invalid request" << std::endl;
                 return;
@@ -505,8 +518,15 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::ostringstream payload;
             payload << "{\"type\":\"command\",\"cmd\":\"set_device_threshold\",\"seq\":" << seq
                     << ",\"slot\":" << slot << ",\"slave_id\":" << slaveId
-                    << ",\"threshold_enabled\":" << (getJsonBool(root, "threshold_enabled", getJsonBool(root, "thresholdEnabled", true)) ? "true" : "false")
-                    << ",\"thresholds\":" << jsonValueToString(root["thresholds"]) << "}";
+                    << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false");
+            if (root.HasMember("thresholds") && root["thresholds"].IsObject()) {
+                payload << ",\"thresholds\":" << jsonValueToString(root["thresholds"]);
+            } else if (root.HasMember("threshold_config") && root["threshold_config"].IsObject()) {
+                payload << ",\"threshold_config\":" << jsonValueToString(root["threshold_config"]);
+            } else {
+                payload << ",\"thresholdConfig\":" << jsonValueToString(root["thresholdConfig"]);
+            }
+            payload << "}";
             const std::string topic = "cmd/" + gatewayId;
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
@@ -517,16 +537,13 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         if (commandType == "add_device" || commandType == "remove_device") {
-            const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+            const std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
             int deviceId = 0;
             if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
-                deviceId = getJsonInt(root["device"], "deviceId", getJsonInt(root["device"], "slaveAddress", 0));
+                deviceId = deviceIdFrom(root["device"]);
             }
             if (deviceId <= 0 && root.IsObject()) {
-                deviceId = getJsonInt(root, "deviceId", 0);
-            }
-            if (deviceId <= 0 && root.IsObject()) {
-                deviceId = getJsonInt(root, "slave_id", 0);
+                deviceId = deviceIdFrom(root);
             }
 
             const std::string commandId = cmdId.empty()
@@ -569,11 +586,11 @@ void IpcMessageHandler::handle(const std::string& msg)
                 std::string deviceType;
                 int pollIntervalMs = 1000;
                 if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
-                    deviceType = getJsonString(root["device"], "deviceType");
+                    deviceType = getJsonStringAny(root["device"], {"deviceType", "device_type"});
                     pollIntervalMs = getJsonInt(root["device"], "pollIntervalMs", pollIntervalMs);
                 }
                 if (deviceType.empty() && root.IsObject()) {
-                    deviceType = getJsonString(root, "device_type");
+                    deviceType = getJsonStringAny(root, {"deviceType", "device_type"});
                 }
                 if (deviceType.empty()) {
                     deviceType = "sensor_th";
@@ -581,8 +598,14 @@ void IpcMessageHandler::handle(const std::string& msg)
                 payload << ",\"device_type\":\"" << jsonEscape(deviceType) << "\""
                         << ",\"poll_interval_ms\":" << pollIntervalMs;
                 if (root.IsObject() && root.HasMember("thresholds") && root["thresholds"].IsObject()) {
-                    payload << ",\"threshold_enabled\":" << (getJsonBool(root, "threshold_enabled", getJsonBool(root, "thresholdEnabled", true)) ? "true" : "false")
+                    payload << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false")
                             << ",\"thresholds\":" << jsonValueToString(root["thresholds"]);
+                } else if (root.IsObject() && root.HasMember("threshold_config") && root["threshold_config"].IsObject()) {
+                    payload << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false")
+                            << ",\"threshold_config\":" << jsonValueToString(root["threshold_config"]);
+                } else if (root.IsObject() && root.HasMember("thresholdConfig") && root["thresholdConfig"].IsObject()) {
+                    payload << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false")
+                            << ",\"thresholdConfig\":" << jsonValueToString(root["thresholdConfig"]);
                 }
             }
             payload << "}";
@@ -609,7 +632,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             return;
         }
 
-        const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+        const std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
         if (gatewayId.empty()) {
             m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_request", seq, commandType, "done", "gateway id is required"));
             std::cout << "command rejected, missing gateway, cmd_id: " << cmdId << std::endl;

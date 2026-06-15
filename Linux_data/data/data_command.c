@@ -13,6 +13,75 @@
 #include <stddef.h>
 #include <string.h>
 
+static int json_get_object_any(struct json_object *obj,
+                               const char * const *keys,
+                               size_t count,
+                               struct json_object **out)
+{
+    if (!obj || !keys || !out)
+        return 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (keys[i] && json_object_object_get_ex(obj, keys[i], out))
+            return 1;
+    }
+    return 0;
+}
+
+static const char *json_get_string_any(struct json_object *obj,
+                                       const char * const *keys,
+                                       size_t count,
+                                       const char *default_value)
+{
+    struct json_object *v = NULL;
+    if (json_get_object_any(obj, keys, count, &v) &&
+        !json_object_is_type(v, json_type_null)) {
+        const char *value = json_object_get_string(v);
+        if (value && value[0] != '\0')
+            return value;
+    }
+    return default_value;
+}
+
+static int json_get_int_any(struct json_object *obj,
+                            const char * const *keys,
+                            size_t count,
+                            int default_value)
+{
+    struct json_object *v = NULL;
+    if (json_get_object_any(obj, keys, count, &v) &&
+        !json_object_is_type(v, json_type_null))
+        return json_object_get_int(v);
+    return default_value;
+}
+
+static int json_get_bool_any(struct json_object *obj,
+                             const char * const *keys,
+                             size_t count,
+                             int default_value)
+{
+    struct json_object *v = NULL;
+    if (json_get_object_any(obj, keys, count, &v) &&
+        !json_object_is_type(v, json_type_null))
+        return json_object_get_boolean(v) ? 1 : 0;
+    return default_value;
+}
+
+static int json_get_double_any(struct json_object *obj,
+                               const char * const *keys,
+                               size_t count,
+                               double *out)
+{
+    struct json_object *v = NULL;
+    if (!out)
+        return 0;
+    if (json_get_object_any(obj, keys, count, &v) &&
+        !json_object_is_type(v, json_type_null)) {
+        *out = json_object_get_double(v);
+        return 1;
+    }
+    return 0;
+}
+
 typedef int (*command_handler_t)(uint32_t seq,
                                  struct json_object *root,
                                  const char *cmd);
@@ -77,28 +146,81 @@ static int parse_point_threshold(struct json_object *obj, point_threshold_config
 static int parse_sensor_threshold_config(struct json_object *root,
                                          sensor_threshold_config_t *config)
 {
-    struct json_object *thresholds;
-    struct json_object *point;
+    struct json_object *thresholds = NULL;
+    struct json_object *point = NULL;
+    struct json_object *compat_config = NULL;
     int has_config = 0;
 
     if (!root || !config)
         return 0;
 
     memset(config, 0, sizeof(*config));
-    if (json_object_object_get_ex(root, "threshold_enabled", &point) ||
-        json_object_object_get_ex(root, "thresholdEnabled", &point)) {
-        config->threshold_enabled = json_object_get_boolean(point);
-        has_config = 1;
+    {
+        const char * const enable_keys[] = {"threshold_enabled", "thresholdEnabled"};
+        if (json_get_object_any(root, enable_keys, 2, &point)) {
+            config->threshold_enabled = json_object_get_boolean(point);
+            has_config = 1;
+        }
     }
 
-    if (!json_object_object_get_ex(root, "thresholds", &thresholds))
-        return has_config;
+    {
+        const char * const cfg_keys[] = {"threshold_config", "thresholdConfig"};
+        if (json_get_object_any(root, cfg_keys, 2, &compat_config) &&
+            compat_config && json_object_is_type(compat_config, json_type_object)) {
+            const char * const enable_keys[] = {"enable"};
+            config->threshold_enabled = json_get_bool_any(compat_config,
+                                                          enable_keys,
+                                                          1,
+                                                          config->threshold_enabled);
+            has_config = 1;
+        }
+    }
 
-    has_config = 1;
-    if (json_object_object_get_ex(thresholds, "temperature", &point))
-        parse_point_threshold(point, &config->temperature);
-    if (json_object_object_get_ex(thresholds, "humidity", &point))
-        parse_point_threshold(point, &config->humidity);
+    double numeric_threshold = 0.0;
+    {
+        const char * const temp_high_keys[] = {"temp_high", "tempHigh"};
+        if (json_get_double_any(root, temp_high_keys, 2, &numeric_threshold) ||
+            json_get_double_any(compat_config, temp_high_keys, 2, &numeric_threshold)) {
+            config->temperature.enable_alarm = 1;
+            config->temperature.has_high = 1;
+            config->temperature.alarm_high = (float)numeric_threshold;
+            has_config = 1;
+        }
+    }
+    {
+        const char * const humi_high_keys[] = {"humi_high", "humiHigh"};
+        if (json_get_double_any(root, humi_high_keys, 2, &numeric_threshold) ||
+            json_get_double_any(compat_config, humi_high_keys, 2, &numeric_threshold)) {
+            config->humidity.enable_alarm = 1;
+            config->humidity.has_high = 1;
+            config->humidity.alarm_high = (float)numeric_threshold;
+            has_config = 1;
+        }
+    }
+
+    if (!json_object_object_get_ex(root, "thresholds", &thresholds) &&
+        (!compat_config ||
+         !json_object_object_get_ex(compat_config, "thresholds", &thresholds))) {
+        return has_config;
+    }
+
+    if (thresholds && json_object_is_type(thresholds, json_type_object)) {
+        has_config = 1;
+        if (json_get_double_any(thresholds, (const char * const[]){"temp_high", "tempHigh"}, 2, &numeric_threshold)) {
+            config->temperature.enable_alarm = 1;
+            config->temperature.has_high = 1;
+            config->temperature.alarm_high = (float)numeric_threshold;
+        }
+        if (json_get_double_any(thresholds, (const char * const[]){"humi_high", "humiHigh"}, 2, &numeric_threshold)) {
+            config->humidity.enable_alarm = 1;
+            config->humidity.has_high = 1;
+            config->humidity.alarm_high = (float)numeric_threshold;
+        }
+        if (json_object_object_get_ex(thresholds, "temperature", &point))
+            parse_point_threshold(point, &config->temperature);
+        if (json_object_object_get_ex(thresholds, "humidity", &point))
+            parse_point_threshold(point, &config->humidity);
+    }
 
     return has_config;
 }
@@ -219,22 +341,31 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
     if (!json_object_object_get_ex(root, "device", &device))
         device = root;
 
-    if (json_object_object_get_ex(device, "deviceId", &v))
-        slave_id = json_object_get_int(v);
-    if (slave_id <= 0 && json_object_object_get_ex(device, "slaveAddress", &v))
-        slave_id = json_object_get_int(v);
-    if (slave_id <= 0 && json_object_object_get_ex(device, "slave_id", &v))
-        slave_id = json_object_get_int(v);
-    if (json_object_object_get_ex(device, "deviceType", &v))
-        device_type = json_object_get_string(v);
-    if (strcmp(device_type, "unknown") == 0 && json_object_object_get_ex(device, "device_type", &v))
-        device_type = json_object_get_string(v);
+    slave_id = json_get_int_any(device,
+                                (const char * const[]){"slave_id", "deviceId", "slaveAddress"},
+                                3,
+                                0);
+    device_type = json_get_string_any(device,
+                                      (const char * const[]){"device_type", "deviceType"},
+                                      2,
+                                      "unknown");
     if (json_object_object_get_ex(device, "pollIntervalMs", &v))
         poll_interval_ms = json_object_get_int(v);
     if (poll_interval_ms <= 0 && json_object_object_get_ex(device, "poll_interval_ms", &v))
         poll_interval_ms = json_object_get_int(v);
     if (parse_sensor_threshold_config(device, &threshold_config))
         threshold_config_ptr = &threshold_config;
+
+    if (slave_id <= 0) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send_device_result(seq, cmd, 0, reason, "missing field: slave_id", slot, slave_id, device_type, poll_interval_ms);
+        return CMD_PROCESS_ERROR;
+    }
+    if (!device_type || device_type[0] == '\0' || strcmp(device_type, "unknown") == 0) {
+        snprintf(reason, sizeof(reason), "invalid_request");
+        data_ack_send_device_result(seq, cmd, 0, reason, "missing field: device_type", slot, slave_id, device_type, poll_interval_ms);
+        return CMD_PROCESS_ERROR;
+    }
 
     int ret = port_manager_add_device_ex(slot,
                                          slave_id,
@@ -275,8 +406,10 @@ static int handle_set_device_threshold(uint32_t seq, struct json_object *root, c
 
     if (json_object_object_get_ex(root, "slot", &v))
         slot = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "slave_id", &v))
-        slave_id = json_object_get_int(v);
+    slave_id = json_get_int_any(root,
+                                (const char * const[]){"slave_id", "deviceId", "slaveAddress"},
+                                3,
+                                slave_id);
 
     if (!parse_sensor_threshold_config(root, &threshold_config)) {
         snprintf(reason, sizeof(reason), "invalid_request");
@@ -332,16 +465,15 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
 
     if (json_object_object_get_ex(root, "slot", &v))
         slot = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "slave_id", &v))
-        slave_id = json_object_get_int(v);
-    if (slave_id <= 0 && json_object_object_get_ex(root, "deviceId", &v))
-        slave_id = json_object_get_int(v);
+    slave_id = json_get_int_any(root,
+                                (const char * const[]){"slave_id", "deviceId", "slaveAddress"},
+                                3,
+                                slave_id);
 
-    const char *device_type = "unknown";
-    if (json_object_object_get_ex(root, "deviceType", &v))
-        device_type = json_object_get_string(v);
-    if (strcmp(device_type, "unknown") == 0 && json_object_object_get_ex(root, "device_type", &v))
-        device_type = json_object_get_string(v);
+    const char *device_type = json_get_string_any(root,
+                                                  (const char * const[]){"device_type", "deviceType"},
+                                                  2,
+                                                  "unknown");
 
     int ret = port_manager_remove_device(slot, slave_id, reason, sizeof(reason));
     data_ack_send_device_result(seq,
@@ -371,12 +503,14 @@ static int handle_set_relay(uint32_t seq, struct json_object *root, const char *
 
     if (json_object_object_get_ex(root, "slot", &v))
         slot = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "slave_id", &v))
-        slave_id = json_object_get_int(v);
-    if (json_object_object_get_ex(root, "device_id", &v))
-        dev.device_id = json_object_get_int(v);
-    else
-        dev.device_id = slave_id;
+    slave_id = json_get_int_any(root,
+                                (const char * const[]){"slave_id", "deviceId", "slaveAddress"},
+                                3,
+                                slave_id);
+    dev.device_id = json_get_int_any(root,
+                                     (const char * const[]){"device_id", "deviceId", "slave_id"},
+                                     3,
+                                     slave_id);
 
     if (!json_object_object_get_ex(root, "states", &v)) {
         snprintf(reason, sizeof(reason), "invalid_request");
@@ -490,15 +624,15 @@ static int handle_set_offline_cache_config(uint32_t seq, struct json_object *roo
     int cache_enabled = mqtt_offline_cache_enabled();
     int flush_enabled = mqtt_offline_cache_flush_enabled();
 
-    if (json_object_object_get_ex(root, "cache_enabled", &v) ||
-        json_object_object_get_ex(root, "cacheEnabled", &v)) {
-        cache_enabled = json_object_get_boolean(v) ? 1 : 0;
-    }
+    cache_enabled = json_get_bool_any(root,
+                                      (const char * const[]){"cache_enabled", "cacheEnabled"},
+                                      2,
+                                      cache_enabled);
 
-    if (json_object_object_get_ex(root, "flush_enabled", &v) ||
-        json_object_object_get_ex(root, "flushEnabled", &v)) {
-        flush_enabled = json_object_get_boolean(v) ? 1 : 0;
-    }
+    flush_enabled = json_get_bool_any(root,
+                                      (const char * const[]){"flush_enabled", "flushEnabled"},
+                                      2,
+                                      flush_enabled);
 
     if (!cache_enabled)
         flush_enabled = 0;
@@ -579,8 +713,8 @@ static const command_entry_t command_table[] = {
 
 static int process_command_message(uint32_t seq, struct json_object *root, const char *cmd)
 {
-    if (!cmd) {
-        data_ack_send(seq, "", 0, "invalid_request", data_ack_message_from_reason("invalid_request"));
+    if (!cmd || cmd[0] == '\0') {
+        data_ack_send(seq, "", 0, "invalid_request", "missing field: cmd");
         return CMD_PROCESS_ERROR;
     }
 
@@ -682,7 +816,7 @@ int data_command_process_message(const char *json_str)
 
     uint32_t seq = 0;
     struct json_object *seq_obj;
-    if (json_object_object_get_ex(root, "seq", &seq_obj))
+    if (json_get_object_any(root, (const char * const[]){"seq", "sequence"}, 2, &seq_obj))
         seq = (uint32_t)json_object_get_int64(seq_obj);
 
     int ret = CMD_PROCESS_ERROR;
@@ -692,8 +826,10 @@ int data_command_process_message(const char *json_str)
         msg_type = json_object_get_string(type_obj);
 
     struct json_object *cmd_obj = NULL;
-    if (!json_object_object_get_ex(root, "cmd", &cmd_obj))
-        json_object_object_get_ex(root, "commandType", &cmd_obj);
+    json_get_object_any(root,
+                        (const char * const[]){"cmd", "commandType", "command"},
+                        3,
+                        &cmd_obj);
     if (cmd_obj) {
         if (msg_type && msg_type[0] != '\0' && strcmp(msg_type, "command") != 0) {
             data_ack_send(seq, json_object_get_string(cmd_obj), 0,
@@ -707,7 +843,7 @@ int data_command_process_message(const char *json_str)
         if (msg_type && msg_type[0] != '\0') {
             data_ack_send(seq, "", 0,
                           "invalid_request",
-                          data_ack_message_from_reason("invalid_request"));
+                          "missing field: cmd");
             ret = CMD_PROCESS_ERROR;
         } else {
             ret = process_device_message(seq, root);

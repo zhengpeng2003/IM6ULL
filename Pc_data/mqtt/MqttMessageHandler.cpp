@@ -310,7 +310,7 @@ bool parseConfigSnapshot(const std::string& payload,
                 continue;
             }
 
-            const int deviceId = getJsonInt(deviceValue, "deviceId", 0);
+            const int deviceId = getJsonIntAny(deviceValue, {"deviceId", "slave_id", "slaveAddress"}, 0);
             if (selected.find(std::make_pair(port.portId, deviceId)) == selected.end()) {
                 continue;
             }
@@ -326,7 +326,7 @@ bool parseConfigSnapshot(const std::string& payload,
             device.portId = port.portId;
             device.portName = port.portName;
             device.deviceId = deviceId;
-            device.deviceType = getJsonString(deviceValue, "deviceType");
+            device.deviceType = getJsonStringAny(deviceValue, {"deviceType", "device_type"});
             device.pollIntervalMs = getJsonInt(deviceValue, "pollIntervalMs", 1000);
             device.expectTelemetry = device.deviceType != "relay";
             device.enabled = true;
@@ -335,12 +335,14 @@ bool parseConfigSnapshot(const std::string& payload,
             device.createTimeMs = timestampMs;
             device.updateTimeMs = timestampMs;
             device.deviceName = "Device " + std::to_string(deviceId);
-            snapshotDevice.thresholdEnabled = getJsonBool(deviceValue, "thresholdEnabled", false);
+            snapshotDevice.thresholdEnabled = getJsonBoolAny(deviceValue, {"threshold_enabled", "thresholdEnabled"}, false);
 
             if (device.deviceType == "sensor_th" &&
-                deviceValue.HasMember("thresholdConfig") &&
-                deviceValue["thresholdConfig"].IsObject()) {
-                const rapidjson::Value& thresholdConfig = deviceValue["thresholdConfig"];
+                ((deviceValue.HasMember("threshold_config") && deviceValue["threshold_config"].IsObject()) ||
+                 (deviceValue.HasMember("thresholdConfig") && deviceValue["thresholdConfig"].IsObject()))) {
+                const rapidjson::Value& thresholdConfig = deviceValue.HasMember("threshold_config") && deviceValue["threshold_config"].IsObject()
+                    ? deviceValue["threshold_config"]
+                    : deviceValue["thresholdConfig"];
                 const rapidjson::Value* thresholds = nullptr;
                 if (thresholdConfig.HasMember("thresholds") && thresholdConfig["thresholds"].IsObject()) {
                     thresholds = &thresholdConfig["thresholds"];
@@ -482,16 +484,13 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             return;
         }
 
-        const std::int64_t seq = getJsonInt64(root, "seq", 0);
-        std::string commandType = getJsonString(root, "commandType");
-        if (commandType.empty()) {
-            commandType = getJsonString(root, "cmd");
-        }
-        if (commandType.empty()) {
-            commandType = getJsonString(root, "command");
-        }
+        const std::int64_t seq = getJsonInt64Any(root, {"seq", "sequence"}, 0);
+        std::string commandType = getJsonStringAny(root, {"cmd", "commandType", "command"});
         const std::string ackStatus = getJsonString(root, "status");
-        std::string logStatus = (ackStatus == "ok" || ackStatus == "success") ? "success" : "failed";
+        const bool ackOk = ackStatus.empty()
+            ? getJsonBool(root, "ok", false)
+            : (ackStatus == "ok" || ackStatus == "success");
+        std::string logStatus = ackOk ? "success" : "failed";
         std::string reason = getJsonString(root, "reason");
         std::string message = getJsonString(root, "message");
 

@@ -42,10 +42,13 @@ std::string buildCommandAckJson(const std::string& cmdId,
     oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"stage\":\"" << jsonEscape(stage) << "\",";
+    oss << "\"status\":\"" << (ok ? (stage == "sent" ? "ok" : "success") : "failed") << "\",";
     oss << "\"ok\":" << (ok ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
-    oss << "\"timestamp\":" << currentTimeMs();
+    const std::int64_t nowMs = currentTimeMs();
+    oss << "\"timestampMs\":" << nowMs << ",";
+    oss << "\"timestamp\":" << nowMs;
     oss << "}";
 
     return oss.str();
@@ -129,9 +132,12 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
         oss << "\"cmd_id\":\"" << jsonEscape(target->commandId) << "\",";
     }
     oss << "\"seq\":" << seq << ",";
+    oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"stage\":\"done\",";
     oss << "\"status\":\"" << jsonEscape(status) << "\",";
+    oss << "\"ok\":" << ((status == "success" || status == "ok") ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
     if (target) {

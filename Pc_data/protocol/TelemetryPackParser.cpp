@@ -6,6 +6,8 @@
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 
+#include "common/JsonUtils.hpp"
+
 namespace {
 
 std::string getString(const rapidjson::Value& obj,
@@ -153,9 +155,13 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
     }
 
     TelemetryPack pack;
-    pack.version = getUInt32(root, "version", 1);
-    pack.sequence = getUInt32(root, "sequence", 0);
-    pack.timestampMs = getInt64(root, "timestampMs", currentTimeMs());
+    pack.version = static_cast<std::uint32_t>(getJsonIntAny(root, {"version", "ver"}, 1));
+    pack.sequence = static_cast<std::uint32_t>(getJsonIntAny(root, {"seq", "sequence"}, 0));
+    pack.timestampMs = getJsonInt64Any(root, {"timestampMs", "timestamp"}, 0);
+    if (pack.timestampMs <= 0) {
+        const std::int64_t legacySeconds = getJsonInt64(root, "time", 0);
+        pack.timestampMs = legacySeconds > 0 ? legacySeconds * 1000 : currentTimeMs();
+    }
     pack.sourceId = getString(root, "sourceId");
     pack.targetId = getString(root, "targetId");
 
@@ -182,9 +188,12 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
         }
 
         DeviceData device;
-        device.deviceId = getInt(item, "deviceId", 0);
+        device.deviceId = getJsonIntAny(item, {"deviceId", "slave_id", "slaveAddress", "id"}, 0);
         device.deviceName = getString(item, "deviceName");
-        const std::string deviceTypeText = getString(item, "deviceType", getString(item, "type", "unknown"));
+        std::string deviceTypeText = getJsonStringAny(item, {"deviceType", "device_type"});
+        if (deviceTypeText.empty()) {
+            deviceTypeText = getString(item, "type", "unknown");
+        }
         device.type = parseDeviceType(deviceTypeText);
         device.valid = getBool(item, "valid", true);
         device.errorMessage = getString(item, "errorMessage");

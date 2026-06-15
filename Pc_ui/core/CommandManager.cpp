@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <initializer_list>
 
 CommandManager::CommandManager(QObject *parent) : QObject(parent) {}
 
@@ -22,6 +23,37 @@ static QString ipcRelayChannel(const QString &channel)
     }
 
     return channel;
+}
+
+static QString stringAny(const QJsonObject &obj, std::initializer_list<const char *> keys)
+{
+    for (const char *key : keys) {
+        const QString value = obj.value(QString::fromLatin1(key)).toString();
+        if (!value.isEmpty()) {
+            return value;
+        }
+    }
+    return QString();
+}
+
+static qint64 int64Any(const QJsonObject &obj, std::initializer_list<const char *> keys, qint64 defaultValue = 0)
+{
+    for (const char *key : keys) {
+        const QJsonValue value = obj.value(QString::fromLatin1(key));
+        if (!value.isUndefined() && !value.isNull()) {
+            return value.toVariant().toLongLong();
+        }
+    }
+    return defaultValue;
+}
+
+static bool ackSuccess(const QJsonObject &obj)
+{
+    const QString status = obj.value(QStringLiteral("status")).toString();
+    if (!status.isEmpty()) {
+        return status == QStringLiteral("ok") || status == QStringLiteral("success");
+    }
+    return obj.value(QStringLiteral("ok")).toBool(false);
 }
 
 void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &channel, bool value, const QMap<QString, bool> &currentStates)
@@ -60,6 +92,7 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["version"] = 1;
     obj["cmd_id"] = rec.cmdId;
     obj["timestamp"] = rec.timestamp;
+    obj["timestampMs"] = rec.timestamp;
     obj["seq"] = rec.seq;
     obj["cmd"] = rec.command;
     obj["commandType"] = rec.command;
@@ -74,6 +107,8 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["gateway_id"] = rec.gatewayId;
     obj["port_id"] = device.port;
     obj["slot"] = rec.masterSlot;
+    obj["deviceId"] = device.deviceId;
+    obj["deviceType"] = rec.deviceType;
     obj["slave_id"] = rec.slaveAddr > 0 ? rec.slaveAddr : device.deviceId;
     obj["master_slot"] = rec.masterSlot;
     obj["slave_addr"] = rec.slaveAddr;
@@ -124,12 +159,16 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     obj.insert(QStringLiteral("cmd_id"), rec.cmdId);
     obj.insert(QStringLiteral("seq"), rec.seq);
     obj.insert(QStringLiteral("timestamp"), rec.timestamp);
+    obj.insert(QStringLiteral("timestampMs"), rec.timestamp);
     obj.insert(QStringLiteral("commandType"), rec.command);
     obj.insert(QStringLiteral("cmd"), rec.command);
     obj.insert(QStringLiteral("gatewayId"), gatewayId);
     obj.insert(QStringLiteral("portId"), portId);
     obj.insert(QStringLiteral("target"), target);
     obj.insert(QStringLiteral("device"), device);
+    obj.insert(QStringLiteral("deviceId"), deviceId);
+    obj.insert(QStringLiteral("deviceType"), deviceType);
+    obj.insert(QStringLiteral("slave_id"), deviceId);
 
     m_pending.insert(rec.cmdId, rec);
     m_seqToCmdId.insert(rec.seq, rec.cmdId);
@@ -164,6 +203,7 @@ void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QSt
     obj.insert(QStringLiteral("cmd_id"), rec.cmdId);
     obj.insert(QStringLiteral("seq"), rec.seq);
     obj.insert(QStringLiteral("timestamp"), rec.timestamp);
+    obj.insert(QStringLiteral("timestampMs"), rec.timestamp);
     obj.insert(QStringLiteral("commandType"), rec.command);
     obj.insert(QStringLiteral("cmd"), rec.command);
     obj.insert(QStringLiteral("gatewayId"), gatewayId);
@@ -185,9 +225,13 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
     if (!m_pending.contains(cmdId)) return;
 
     CommandRecord rec = m_pending.value(cmdId);
-    rec.ok = obj.value("ok").toBool();
+    rec.ok = ackSuccess(obj);
+    const QString cmd = stringAny(obj, {"cmd", "commandType", "command"});
+    if (!cmd.isEmpty()) {
+        rec.command = cmd;
+    }
     rec.reason = obj.value("message").toString(obj.value("reason").toString());
-    rec.ackTime = obj.value("timestamp").toVariant().toLongLong();
+    rec.ackTime = int64Any(obj, {"timestampMs", "timestamp"});
 
     const QString stage = obj.value("stage").toString();
     if (stage == QStringLiteral("sent") && rec.ok) {
@@ -205,6 +249,11 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
         return;
     }
 
+    if (stage == QStringLiteral("done") && rec.ok) {
+        finishCommand(cmdId, QStringLiteral("success"));
+        return;
+    }
+
     rec.state = rec.ok ? QStringLiteral("running") : QStringLiteral("failed");
     m_pending.insert(cmdId, rec);
     if (rec.ok) {
@@ -216,13 +265,18 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
 
 void CommandManager::onCommandLogUpdate(const QJsonObject &obj)
 {
-    const qint64 seq = obj.value(QStringLiteral("seq")).toVariant().toLongLong();
+    const qint64 seq = int64Any(obj, {"seq", "sequence"});
     const QString cmdId = m_seqToCmdId.value(seq);
     if (cmdId.isEmpty() || !m_pending.contains(cmdId)) return;
 
     const QString stage = obj.value(QStringLiteral("stage")).toString();
-    const QString status = obj.value(QStringLiteral("status")).toString();
-    if (stage == QStringLiteral("done") && status == QStringLiteral("success")) {
+    const bool ok = ackSuccess(obj);
+    const QString status = obj.value(QStringLiteral("status")).toString(ok ? QStringLiteral("success") : QStringLiteral("failed"));
+    if (stage == QStringLiteral("sent")) {
+        emit commandStateChanged(cmdId, QStringLiteral("已发送，等待设备确认"));
+        return;
+    }
+    if (stage == QStringLiteral("done") && ok) {
         const CommandRecord rec = m_pending.value(cmdId);
         if (rec.command == QStringLiteral("set_relay")) {
             finishCommand(cmdId, QStringLiteral("写入成功，等待状态回读"));

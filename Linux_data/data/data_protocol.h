@@ -13,6 +13,17 @@
 #define MAX_DEVICE_NAME_LEN 64
 #define MAX_THRESHOLD_POINTS_PER_DEVICE 8
 
+/*
+ * Short-term JSON field authority:
+ * - Commands use cmd + seq; commandType/command and sequence are legacy input aliases.
+ * - ACK uses status + ok + stage + timestampMs; ok is kept for old UI compatibility.
+ * - Cross-module device identity uses deviceId plus slave_id when Modbus address is needed.
+ * - deviceType is the Pc_data/Pc_ui model field; device_type remains valid for Linux_data config.
+ *
+ * Legacy telemetry aliases ver/seq/time/id/type/temp/humi/states are intentionally preserved
+ * because Linux_ui legacy parsing still consumes them during the migration.
+ */
+
 typedef enum {
     MSG_TELEMETRY = 1,
     MSG_COMMAND   = 2,
