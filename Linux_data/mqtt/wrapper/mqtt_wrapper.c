@@ -450,9 +450,16 @@ int mqtt_clear_offline_cache(void)
 
 int mqtt_flush_offline_cache_once(void)
 {
-    if (!offline_publish_flush_enabled())
-        return DATA_SEND_INVALID_ARG;
+    if (offline_publish_pending_count() <= 0)
+        return DATA_SEND_OK;
 
+    if (!mqtt_is_connected())
+        return DATA_SEND_MQTT_NOT_READY;
+
+    const int old_flush_enabled = offline_publish_flush_enabled();
+    offline_publish_set_flush_enabled(1);
     offline_publish_flush_once();
+    offline_publish_set_flush_enabled(old_flush_enabled);
+
     return DATA_SEND_OK;
 }

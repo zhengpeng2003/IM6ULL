@@ -49,7 +49,6 @@ signals:
                             const QString &reason,
                             const QString &message,
                             const QJsonObject &root);
-    void alarmConfigReceived(double tempHigh, double humiHigh);
     void emergencyReceived(int level,
                            const QString &reason,
                            int deviceId,

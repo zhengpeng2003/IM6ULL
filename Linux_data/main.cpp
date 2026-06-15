@@ -1,14 +1,12 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include "alarm_config.h"
 #include "ipc_server.h"
 #include "port_manager.h"
 #include "service_threads.h"
 
 int main()
 {
-    alarm_config_init();
     ipc_server_init();
 
     pthread_t tid_ipc;

@@ -2,6 +2,7 @@
 
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QMessageBox>
 #include <QStyle>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -53,14 +54,14 @@ void Pageinfo::initUI()
 
     QFrame *runtimePanel = new QFrame(this);
     runtimePanel->setObjectName("RuntimePanel");
-    runtimePanel->setMinimumWidth(138);
+    runtimePanel->setMinimumWidth(150);
 
     hintLabel = new QLabel("运行信息", runtimePanel);
     hintLabel->setObjectName("PanelTitle");
 
     QVBoxLayout *runtimeLayout = new QVBoxLayout(runtimePanel);
-    runtimeLayout->setContentsMargins(7, 6, 7, 6);
-    runtimeLayout->setSpacing(5);
+    runtimeLayout->setContentsMargins(6, 5, 6, 5);
+    runtimeLayout->setSpacing(3);
     runtimeLayout->addWidget(hintLabel);
 
     for (const RuntimeRowSpec &spec : rowSpecs)
@@ -87,27 +88,33 @@ void Pageinfo::initUI()
     runtimeLayout->addWidget(flushStateLabel);
     runtimeLayout->addWidget(pendingCountLabel);
 
+    QHBoxLayout *configRow = new QHBoxLayout;
+    configRow->setContentsMargins(0, 0, 0, 0);
+    configRow->setSpacing(4);
     cacheEnableButton = new QPushButton("缓存关闭", runtimePanel);
     cacheEnableButton->setObjectName("ToggleButton");
     cacheEnableButton->setCheckable(true);
-    cacheEnableButton->setFixedHeight(24);
-    runtimeLayout->addWidget(cacheEnableButton);
-
-    flushEnableButton = new QPushButton("允许发送", runtimePanel);
-    flushEnableButton->setObjectName("ToggleButton");
-    flushEnableButton->setCheckable(true);
-    flushEnableButton->setFixedHeight(24);
-    runtimeLayout->addWidget(flushEnableButton);
+    cacheEnableButton->setFixedHeight(23);
+    saveCacheButton = new QPushButton("保存", runtimePanel);
+    saveCacheButton->setObjectName("SmallActionButton");
+    saveCacheButton->setFixedHeight(23);
+    configRow->addWidget(cacheEnableButton, 1);
+    configRow->addWidget(saveCacheButton);
+    runtimeLayout->addLayout(configRow);
 
     QHBoxLayout *cacheActions = new QHBoxLayout;
     cacheActions->setContentsMargins(0, 0, 0, 0);
-    cacheActions->setSpacing(5);
-    clearCacheButton = new QPushButton("清除", runtimePanel);
+    cacheActions->setSpacing(4);
+    refreshCacheButton = new QPushButton("刷新", runtimePanel);
+    refreshCacheButton->setObjectName("SmallActionButton");
+    refreshCacheButton->setFixedHeight(23);
+    clearCacheButton = new QPushButton("清空", runtimePanel);
     clearCacheButton->setObjectName("DangerButton");
-    clearCacheButton->setFixedHeight(24);
-    flushCacheButton = new QPushButton("发送", runtimePanel);
+    clearCacheButton->setFixedHeight(23);
+    flushCacheButton = new QPushButton("补发", runtimePanel);
     flushCacheButton->setObjectName("SmallActionButton");
-    flushCacheButton->setFixedHeight(24);
+    flushCacheButton->setFixedHeight(23);
+    cacheActions->addWidget(refreshCacheButton);
     cacheActions->addWidget(clearCacheButton);
     cacheActions->addWidget(flushCacheButton);
     runtimeLayout->addLayout(cacheActions);
@@ -120,14 +127,25 @@ void Pageinfo::initUI()
     connect(reconnectButton, &QPushButton::clicked,
             this, &Pageinfo::reconnectIpcRequested);
     connect(cacheEnableButton, &QPushButton::clicked, this, [this]() {
-        setToggleButtonChecked(cacheEnableButton, false);
-        emit offlineCacheConfigChanged(false, m_flushEnabled);
+        m_cacheEnabled = cacheEnableButton->isChecked();
+        if (!m_cacheEnabled)
+            m_flushEnabled = false;
+        updateOfflineCacheStatus(m_cacheEnabled, m_flushEnabled, m_pendingCount);
     });
-    connect(flushEnableButton, &QPushButton::clicked, this, [this]() {
-        emit offlineCacheConfigChanged(m_cacheEnabled, flushEnableButton->isChecked());
+    connect(saveCacheButton, &QPushButton::clicked, this, [this]() {
+        emit offlineCacheConfigChanged(m_cacheEnabled, m_cacheEnabled ? m_flushEnabled : false);
     });
-    connect(clearCacheButton, &QPushButton::clicked,
-            this, &Pageinfo::clearOfflineCacheRequested);
+    connect(refreshCacheButton, &QPushButton::clicked,
+            this, &Pageinfo::offlineCacheRefreshRequested);
+    connect(clearCacheButton, &QPushButton::clicked, this, [this]() {
+        if (QMessageBox::question(this,
+                                  "清空缓存",
+                                  "确认清空 MQTT 离线缓存？不会删除端口、从站和阈值配置。",
+                                  QMessageBox::Yes | QMessageBox::No,
+                                  QMessageBox::No) == QMessageBox::Yes) {
+            emit clearOfflineCacheRequested();
+        }
+    });
     connect(flushCacheButton, &QPushButton::clicked,
             this, &Pageinfo::flushOfflineCacheRequested);
 
@@ -240,9 +258,8 @@ void Pageinfo::setIpcConnected(bool connected)
 void Pageinfo::updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, int pendingCount)
 {
     m_cacheSupported = true;
-    Q_UNUSED(cacheEnabled);
-    m_cacheEnabled = false;
-    m_flushEnabled = flushEnabled;
+    m_cacheEnabled = cacheEnabled;
+    m_flushEnabled = cacheEnabled ? flushEnabled : false;
     m_pendingCount = pendingCount < 0 ? 0 : pendingCount;
 
     if (cacheStateLabel) {
@@ -362,14 +379,19 @@ void Pageinfo::updateLastSync(const QDateTime &time)
 
 void Pageinfo::updateOfflineCacheButtons()
 {
+    const bool available = m_ipcConnected && m_cacheSupported;
     if (cacheEnableButton)
-        cacheEnableButton->setEnabled(false);
+        cacheEnableButton->setEnabled(available);
+    if (saveCacheButton)
+        saveCacheButton->setEnabled(available);
+    if (refreshCacheButton)
+        refreshCacheButton->setEnabled(available);
     if (flushEnableButton)
-        flushEnableButton->setEnabled(m_ipcConnected && m_cacheSupported);
+        flushEnableButton->setEnabled(false);
     if (clearCacheButton)
-        clearCacheButton->setEnabled(m_ipcConnected && m_cacheSupported && m_pendingCount > 0);
+        clearCacheButton->setEnabled(available && m_pendingCount > 0);
     if (flushCacheButton)
-        flushCacheButton->setEnabled(m_ipcConnected && m_cacheSupported && m_flushEnabled && m_pendingCount > 0);
+        flushCacheButton->setEnabled(available && m_pendingCount > 0);
 }
 
 void Pageinfo::setToggleButtonChecked(QPushButton *button, bool checked)
@@ -379,6 +401,7 @@ void Pageinfo::setToggleButtonChecked(QPushButton *button, bool checked)
 
     button->blockSignals(true);
     button->setChecked(checked);
+    button->setText(checked ? "缓存开启" : "缓存关闭");
     button->setProperty("checked", QVariant(checked ? "true" : "false"));
     polishState(button);
     button->blockSignals(false);

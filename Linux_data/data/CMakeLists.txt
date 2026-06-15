@@ -1,5 +1,4 @@
 add_library(data_protocol STATIC
-    alarm_config.c
     data_telemetry.c
     data_command.c
     data_ack.c

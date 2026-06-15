@@ -105,6 +105,12 @@ void Widget::initUI()
                 if (!sendCommand("set_offline_cache_config", payload) && m_operationOverlay)
                     m_operationOverlay->showFailure("缓存配置发送失败");
             });
+    connect(pageInfo, &Pageinfo::offlineCacheRefreshRequested,
+            this,
+            [this]() {
+                if (!sendCommand("get_offline_cache_config") && m_operationOverlay)
+                    m_operationOverlay->showFailure("刷新缓存状态失败");
+            });
     connect(pageInfo, &Pageinfo::clearOfflineCacheRequested,
             this,
             [this]() {
@@ -685,10 +691,6 @@ void Widget::requestOfflineCacheConfig()
     if (!_Myclient || !_Myclient->isConnected())
         return;
 
-    QJsonObject payload;
-    payload.insert("cache_enabled", false);
-    payload.insert("flush_enabled", false);
-    (void)sendCommand("set_offline_cache_config", payload);
     (void)sendCommand("get_offline_cache_config");
 }
 
@@ -719,16 +721,27 @@ void Widget::handleOfflineCacheAck(const QString &cmd,
         return;
 
     if (status != "ok") {
-        m_operationOverlay->showFailure(reason.isEmpty() ? "缓存命令失败" : reason);
+        QString failure = reason.isEmpty() ? "缓存命令失败" : reason;
+        if (reason == "mqtt_not_connected")
+            failure = "MQTT 未连接，暂时无法补发";
+        else if (reason == "offline_cache_flush_failed")
+            failure = "离线缓存补发失败";
+        else if (reason == "offline_cache_config_save_failed")
+            failure = "缓存配置保存失败";
+        m_operationOverlay->showFailure(failure);
         return;
     }
 
-    if (cmd == "set_offline_cache_config")
+    if (cmd == "set_offline_cache_config") {
         m_operationOverlay->showSuccess("缓存配置已保存");
-    else if (cmd == "clear_offline_cache")
-        m_operationOverlay->showSuccess("缓存数据库已清除");
-    else if (cmd == "flush_offline_cache")
-        m_operationOverlay->showSuccess("缓存数据库已发送");
+        requestOfflineCacheConfig();
+    } else if (cmd == "clear_offline_cache") {
+        m_operationOverlay->showSuccess("缓存数据库已清空");
+        requestOfflineCacheConfig();
+    } else if (cmd == "flush_offline_cache") {
+        m_operationOverlay->showSuccess("已触发缓存补发");
+        requestOfflineCacheConfig();
+    }
 }
 
 void Widget::handleRuntimeStateSnapshot(const QJsonArray &ports)
