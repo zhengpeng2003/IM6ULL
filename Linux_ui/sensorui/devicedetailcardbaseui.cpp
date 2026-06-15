@@ -1,208 +1,181 @@
 // ============================
-// pages/PageStatus.h
+// sensor_ui/devicedetailcardbaseui.cpp
 // ============================
 
-#ifndef PAGESTATUS_H
-#define PAGESTATUS_H
+#include "devicedetailcardbaseui.h"
 
-#include <QComboBox>
-#include <QFrame>
-#include <QLabel>
-#include <QList>
-#include <QMap>
-#include <QPushButton>
-#include <QScrollArea>
-#include <QStackedWidget>
-#include <QString>
-#include <QVector>
-#include <QWidget>
+#include <QHBoxLayout>
+#include <QStyle>
 
-#include "sensorui/relaycontroldialog.h"
-
-class SlaveListDialog;
-class SlaveDetailDialog;
-class SensorThDetailCardUi;
-class RelayDetailCardUi;
-
-struct MasterStatusInfo
+DeviceDetailCardBaseUi::DeviceDetailCardBaseUi(QWidget *parent)
+    : QFrame(parent)
 {
-    int masterSlot = -1;
-    QString masterName;
-};
+    setObjectName("DetailCard");
 
-struct SlaveDeviceInfo
+    detailTitleLabel = new QLabel("--", this);
+    detailTitleLabel->setObjectName("DetailTitle");
+
+    detailStateLabel = new QLabel("离线", this);
+    detailStateLabel->setObjectName("SlaveState");
+
+    removeSlaveButton = new QPushButton("移除", this);
+    removeSlaveButton->setObjectName("SmallGhostButton");
+    removeSlaveButton->setFixedWidth(58);
+
+    QHBoxLayout *titleLayout = new QHBoxLayout;
+    titleLayout->setContentsMargins(0, 0, 0, 0);
+    titleLayout->setSpacing(6);
+    titleLayout->addWidget(detailTitleLabel, 1);
+    titleLayout->addWidget(detailStateLabel);
+    titleLayout->addWidget(removeSlaveButton);
+
+    detailPortLabel = new QLabel("端口：--", this);
+    detailAddrLabel = new QLabel("地址：--", this);
+    detailTypeLabel = new QLabel("类型：--", this);
+    detailPortLabel->setObjectName("DetailKey");
+    detailAddrLabel->setObjectName("DetailKey");
+    detailTypeLabel->setObjectName("DetailKey");
+
+    QHBoxLayout *baseInfoLayout = new QHBoxLayout;
+    baseInfoLayout->setContentsMargins(0, 0, 0, 0);
+    baseInfoLayout->setSpacing(10);
+    baseInfoLayout->addWidget(detailPortLabel);
+    baseInfoLayout->addWidget(detailAddrLabel);
+    baseInfoLayout->addWidget(detailTypeLabel);
+    baseInfoLayout->addStretch();
+
+    metricPanel = new QFrame(this);
+    metricPanel->setObjectName("MetricPanel");
+    metricGrid = new QGridLayout(metricPanel);
+    metricGrid->setContentsMargins(0, 0, 0, 0);
+    metricGrid->setSpacing(6);
+
+    metricA = createMetricCard("A", "--");
+    metricB = createMetricCard("B", "--");
+    metricC = createMetricCard("C", "--");
+    metricD = createMetricCard("D", "--");
+
+    metricGrid->addWidget(metricA.frame, 0, 0);
+    metricGrid->addWidget(metricB.frame, 0, 1);
+    metricGrid->addWidget(metricC.frame, 1, 0);
+    metricGrid->addWidget(metricD.frame, 1, 1);
+
+    pollIntervalLabel = new QLabel("轮询：--", this);
+    lastUpdateLabel = new QLabel("更新时间：--", this);
+    pollIntervalLabel->setObjectName("DetailKey");
+    lastUpdateLabel->setObjectName("DetailKey");
+
+    QHBoxLayout *footerLayout = new QHBoxLayout;
+    footerLayout->setContentsMargins(0, 0, 0, 0);
+    footerLayout->setSpacing(8);
+    footerLayout->addWidget(pollIntervalLabel);
+    footerLayout->addWidget(lastUpdateLabel, 1);
+
+    extraAreaLayout = new QVBoxLayout;
+    extraAreaLayout->setContentsMargins(0, 0, 0, 0);
+    extraAreaLayout->setSpacing(4);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(10, 8, 10, 8);
+    mainLayout->setSpacing(6);
+    mainLayout->addLayout(titleLayout);
+    mainLayout->addLayout(baseInfoLayout);
+    mainLayout->addWidget(metricPanel, 1);
+    mainLayout->addLayout(extraAreaLayout);
+    mainLayout->addLayout(footerLayout);
+
+    connect(removeSlaveButton, &QPushButton::clicked, this, [this]() {
+        emit removeSlaveRequested(currentMasterSlot,
+                                  currentSlaveAddr,
+                                  currentDeviceType);
+    });
+}
+
+void DeviceDetailCardBaseUi::setBaseInfo(const QString &portName,
+                                         int masterSlot,
+                                         int slaveAddr,
+                                         const QString &typeName,
+                                         const QString &deviceType,
+                                         bool online)
 {
-    int masterSlot = -1;
-    int slaveAddr = -1;
-    QString deviceType;
-    QString displayName;
-    bool online = false;
-    int pollIntervalMs = 1000;
-};
+    currentMasterSlot = masterSlot;
+    currentSlaveAddr = slaveAddr;
+    currentDeviceType = deviceType;
 
-struct SlaveRuntimeInfo
+    detailTitleLabel->setText(typeName.isEmpty() ? deviceType : typeName);
+    detailPortLabel->setText(QString("端口：%1").arg(portName.isEmpty() ? QString("--") : portName));
+    detailAddrLabel->setText(QString("地址：%1").arg(slaveAddr > 0 ? QString::number(slaveAddr) : "--"));
+    detailTypeLabel->setText(QString("类型：%1").arg(deviceType.isEmpty() ? QString("--") : deviceType));
+    setOnline(online);
+}
+
+void DeviceDetailCardBaseUi::setPollInterval(int pollIntervalMs)
 {
-    bool online = false;
+    pollIntervalLabel->setText(pollIntervalMs > 0
+                                   ? QString("轮询：%1 ms").arg(pollIntervalMs)
+                                   : "轮询：--");
+}
 
-    bool hasSensorTh = false;
-    double temperature = 0.0;
-    double humidity = 0.0;
-
-    bool hasRelay = false;
-    QVector<RelayChannelInfo> relayChannels;
-
-    bool ledOn = false;
-    bool fanOn = false;
-    bool buzzerOn = false;
-
-    QString updateTime;
-};
-
-class PageStatus : public QWidget
+void DeviceDetailCardBaseUi::setLastUpdateTime(const QString &updateTime)
 {
-    Q_OBJECT
+    lastUpdateLabel->setText(QString("更新时间：%1").arg(updateTime.isEmpty() ? "--" : updateTime));
+}
 
-public:
-    explicit PageStatus(QWidget *parent = nullptr);
+void DeviceDetailCardBaseUi::setOnline(bool online)
+{
+    detailStateLabel->setText(online ? "在线" : "离线");
+    detailStateLabel->setProperty("state", online ? "online" : "offline");
+    detailStateLabel->style()->unpolish(detailStateLabel);
+    detailStateLabel->style()->polish(detailStateLabel);
+}
 
-    void setMasterSummary(int masterCount,
-                          int onlineSlaveCount,
-                          int alarmCount,
-                          const QString &mqttState);
+DeviceDetailCardBaseUi::MetricCard DeviceDetailCardBaseUi::createMetricCard(const QString &iconText,
+                                                                            const QString &name)
+{
+    MetricCard card;
+    card.frame = new QFrame(metricPanel);
+    card.frame->setObjectName("MetricCard");
+    card.icon = new QLabel(iconText, card.frame);
+    card.name = new QLabel(name, card.frame);
+    card.value = new QLabel("--", card.frame);
+    card.unit = new QLabel(QString(), card.frame);
+    card.icon->setObjectName("MetricIcon");
+    card.name->setObjectName("DetailKey");
+    card.value->setObjectName("MetricValue");
+    card.unit->setObjectName("DetailKey");
 
-    void setMasterList(const QList<MasterStatusInfo> &masters);
+    QHBoxLayout *layout = new QHBoxLayout(card.frame);
+    layout->setContentsMargins(6, 4, 6, 4);
+    layout->setSpacing(4);
+    layout->addWidget(card.icon);
+    layout->addWidget(card.name);
+    layout->addStretch();
+    layout->addWidget(card.value);
+    layout->addWidget(card.unit);
+    return card;
+}
 
-    void setCurrentMaster(int masterSlot,
-                          const QString &masterName,
-                          int slaveCount);
+void DeviceDetailCardBaseUi::setMetricCard(MetricCard &card,
+                                           const QString &iconText,
+                                           const QString &name,
+                                           const QString &value,
+                                           const QString &unit)
+{
+    card.icon->setText(iconText);
+    card.name->setText(name);
+    card.value->setText(value);
+    card.unit->setText(unit);
+}
 
-    void setSlaveList(const QList<SlaveDeviceInfo> &slaveList);
+void DeviceDetailCardBaseUi::setMetricVisible(bool a, bool b, bool c, bool d)
+{
+    metricA.frame->setVisible(a);
+    metricB.frame->setVisible(b);
+    metricC.frame->setVisible(c);
+    metricD.frame->setVisible(d);
+}
 
-    void removeSlave(int masterSlot,
-                     int slaveAddr,
-                     const QString &deviceType);
-
-    int currentMasterSlotValue() const;
-
-    void updateSlaveOnline(int masterSlot,
-                           int slaveAddr,
-                           const QString &deviceType,
-                           bool online);
-
-    void setAlarmText(const QString &text);
-
-    void setSensorThData(int masterSlot,
-                         int slaveAddr,
-                         double temperature,
-                         double humidity,
-                         const QString &updateTime);
-
-    void setRelayChannels(int masterSlot,
-                          int slaveAddr,
-                          const QVector<RelayChannelInfo> &channels,
-                          const QString &updateTime);
-
-    void setRelayStates(int masterSlot,
-                        int slaveAddr,
-                        bool ledOn,
-                        bool fanOn,
-                        bool buzzerOn,
-                        const QString &updateTime);
-
-signals:
-    void addSlaveRequested(int masterSlot);
-    void masterChanged(int masterSlot);
-    void slaveSelected(int masterSlot,
-                       int slaveAddr,
-                       const QString &deviceType);
-
-    void removeSlaveRequested(int masterSlot,
-                              int slaveAddr,
-                              const QString &deviceType);
-
-    void relayChannelCommandRequested(int masterSlot,
-                                      int slaveAddr,
-                                      int channel,
-                                      bool on);
-
-    void relayCommandRequested(int masterSlot,
-                               int slaveAddr,
-                               const QString &channel,
-                               bool on);
-
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override;
-
-private:
-    struct SlaveCard {
-        QFrame *frame = nullptr;
-        QLabel *title = nullptr;
-        QLabel *dot = nullptr;
-        QLabel *state = nullptr;
-    };
-
-private:
-    void initUI();
-
-    void selectSlave(int index);
-    void refreshMasterLabels();
-    void refreshSlaveCards();
-    void rebuildSlaveCards();
-    void clearCurrentDetail();
-    void updateSlaveCardStyle(int index, bool selected);
-    QFrame *createSlaveCard(int index);
-
-    void updateOpenDialogs();
-    void openSlaveListDialog();
-    void openSlaveDetailDialog(int index);
-
-    QString runtimeKey(const SlaveDeviceInfo &slave) const;
-
-    QString runtimeKey(int masterSlot,
-                       int slaveAddr,
-                       const QString &deviceType) const;
-
-    SlaveRuntimeInfo runtimeForSlave(const SlaveDeviceInfo &slave) const;
-
-    bool isCurrentSlave(int masterSlot,
-                        int slaveAddr,
-                        const QString &deviceType) const;
-
-    QString displayTypeName(const QString &deviceType) const;
-    QString displayMasterName() const;
-
-    QVector<RelayChannelInfo> defaultRelayChannelsFromOldState(bool ledOn,
-                                                               bool fanOn,
-                                                               bool buzzerOn) const;
-
-private:
-    int currentMasterSlot = -1;
-    QString currentMasterName;
-    int currentSlaveIndex = -1;
-
-    QList<SlaveDeviceInfo> slaves;
-    QMap<QString, SlaveRuntimeInfo> slaveRuntime;
-
-    QLabel *summaryLabel = nullptr;
-    QLabel *alarmLabel = nullptr;
-
-    QComboBox *masterCombo = nullptr;
-    QPushButton *addSlaveButton = nullptr;
-
-    QFrame *slaveListPanel = nullptr;
-    QLabel *currentPortLabel = nullptr;
-    QLabel *listTitleLabel = nullptr;
-    QLabel *emptyListLabel = nullptr;
-    QScrollArea *slaveScrollArea = nullptr;
-    QVBoxLayout *slaveListLayout = nullptr;
-    QList<SlaveCard> slaveCards;
-
-    QStackedWidget *detailStack = nullptr;
-    SensorThDetailCardUi *sensorThDetailUi = nullptr;
-    RelayDetailCardUi *relayDetailUi = nullptr;
-
-    SlaveListDialog *slaveListDialog = nullptr;
-    SlaveDetailDialog *slaveDetailDialog = nullptr;
-};
-
-#endif // PAGESTATUS_H
+QVBoxLayout *DeviceDetailCardBaseUi::extraLayout()
+{
+    return extraAreaLayout;
+}

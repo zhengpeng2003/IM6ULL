@@ -8,6 +8,7 @@
 #include "devicedetailcardbaseui.h"
 #include "relaycontroldialog.h"
 
+#include <QPushButton>
 #include <QVector>
 
 class RelayDetailCardUi : public DeviceDetailCardBaseUi

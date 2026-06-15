@@ -10,11 +10,11 @@
 #include <QVariant>
 #include <QVBoxLayout>
 
-#include "pageui/slavedetaildialog.h"
-#include "pageui/slavelistdialog.h"
+#include "../pageui/slavedetaildialog.h"
+#include "../pageui/slavelistdialog.h"
 
-#include "sensorui/sensorthdetailcardui.h"
-#include "sensorui/relaydetailcardui.h"
+#include "../sensorui/sensorthdetailcardui.h"
+#include "../sensorui/relaydetailcardui.h"
 
 PageStatus::PageStatus(QWidget *parent)
     : QWidget(parent)
@@ -740,6 +740,12 @@ SlaveRuntimeInfo PageStatus::runtimeForSlave(const SlaveDeviceInfo &slave) const
 {
     SlaveRuntimeInfo runtime = slaveRuntime.value(runtimeKey(slave));
     runtime.online = slave.online;
+
+    if (slave.deviceType == "relay" && runtime.relayChannels.isEmpty())
+        runtime.relayChannels = defaultRelayChannelsFromOldState(runtime.ledOn,
+                                                                 runtime.fanOn,
+                                                                 runtime.buzzerOn);
+
     return runtime;
 }
 

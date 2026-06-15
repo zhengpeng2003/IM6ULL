@@ -6,7 +6,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
-#include "sensorui/sensorui.h"
+#include "../sensorui/relaydetailcardui.h"
+#include "../sensorui/sensorthdetailcardui.h"
 
 SlaveDetailDialog::SlaveDetailDialog(QWidget *parent)
     : QDialog(parent)
@@ -32,13 +33,10 @@ SlaveDetailDialog::SlaveDetailDialog(QWidget *parent)
 
     detailStack = new QStackedWidget(this);
     detailStack->setObjectName("PopupDetailStack");
-    sensorThUi = new SensorThUi(this);
-    relayUi = new RelayUi(this);
-    relayUi->setControlsVisible(false);
-    meterUi = new MeterUi(this);
+    sensorThUi = new SensorThDetailCardUi(detailStack);
+    relayUi = new RelayDetailCardUi(detailStack);
     detailStack->addWidget(sensorThUi);
     detailStack->addWidget(relayUi);
-    detailStack->addWidget(meterUi);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(8, 7, 8, 8);
@@ -68,31 +66,76 @@ void SlaveDetailDialog::applyRuntime(const SlaveDeviceInfo &slave,
                                      const SlaveRuntimeInfo &runtime,
                                      const QString &masterName)
 {
-    if (slave.deviceType == "sensor_th") {
-        sensorThUi->setDeviceInfo(slave.deviceName, masterName, slave.slaveAddr);
-        sensorThUi->clearData();
-        sensorThUi->setOnline(runtime.online);
-        if (runtime.hasSensorTh)
-            sensorThUi->setTemperatureHumidity(runtime.temperature, runtime.humidity, runtime.updateTime);
-        detailStack->setCurrentWidget(sensorThUi);
-    } else if (slave.deviceType == "relay") {
-        relayUi->setDeviceInfo(slave.deviceName, masterName, slave.masterSlot, slave.slaveAddr);
-        relayUi->clearData();
-        relayUi->setOnline(runtime.online);
-        if (runtime.hasRelay)
-            relayUi->setRelayStates(runtime.ledOn, runtime.fanOn, runtime.buzzerOn, runtime.updateTime);
+    const QString portName = masterName.isEmpty()
+        ? QString("RS485-%1").arg(slave.masterSlot + 1)
+        : masterName;
+    const QString typeName = displayNameForSlave(slave);
+
+    if (slave.deviceType == "relay") {
+        relayUi->setBaseInfo(portName,
+                             slave.masterSlot,
+                             slave.slaveAddr,
+                             typeName,
+                             slave.deviceType,
+                             runtime.online);
+        relayUi->setPollInterval(slave.pollIntervalMs);
+        relayUi->setRelayChannels(runtime.hasRelay,
+                                  relayChannelsForRuntime(runtime),
+                                  runtime.updateTime);
         detailStack->setCurrentWidget(relayUi);
-    } else {
-        meterUi->setDeviceInfo(slave.deviceName, masterName, slave.slaveAddr);
-        meterUi->clearData();
-        meterUi->setOnline(runtime.online);
-        if (runtime.hasMeter) {
-            meterUi->setMeterValues(runtime.voltage,
-                                    runtime.current,
-                                    runtime.power,
-                                    runtime.energy,
-                                    runtime.updateTime);
-        }
-        detailStack->setCurrentWidget(meterUi);
+        return;
     }
+
+    sensorThUi->setBaseInfo(portName,
+                            slave.masterSlot,
+                            slave.slaveAddr,
+                            typeName,
+                            slave.deviceType,
+                            runtime.online);
+    sensorThUi->setPollInterval(slave.pollIntervalMs);
+    sensorThUi->clearData();
+
+    if (slave.deviceType == "sensor_th") {
+        sensorThUi->setTemperatureHumidity(runtime.hasSensorTh,
+                                           runtime.temperature,
+                                           runtime.humidity,
+                                           runtime.updateTime);
+    }
+
+    detailStack->setCurrentWidget(sensorThUi);
+}
+
+QString SlaveDetailDialog::displayTypeName(const QString &deviceType) const
+{
+    if (deviceType == "sensor_th")
+        return "温湿度传感器";
+    if (deviceType == "relay")
+        return "继电器";
+    if (deviceType == "meter")
+        return "电表";
+    return deviceType;
+}
+
+QString SlaveDetailDialog::displayNameForSlave(const SlaveDeviceInfo &slave) const
+{
+    return slave.displayName.isEmpty() ? displayTypeName(slave.deviceType) : slave.displayName;
+}
+
+QVector<RelayChannelInfo> SlaveDetailDialog::relayChannelsForRuntime(const SlaveRuntimeInfo &runtime) const
+{
+    if (!runtime.relayChannels.isEmpty())
+        return runtime.relayChannels;
+
+    QVector<RelayChannelInfo> channels;
+    const bool states[] = { runtime.ledOn, runtime.fanOn, runtime.buzzerOn };
+    for (int i = 0; i < 3; ++i) {
+        RelayChannelInfo info;
+        info.channel = i + 1;
+        info.key = QString("do%1").arg(i + 1);
+        info.name = QString("DO%1").arg(i + 1);
+        info.enabled = true;
+        info.on = states[i];
+        channels.append(info);
+    }
+    return channels;
 }
