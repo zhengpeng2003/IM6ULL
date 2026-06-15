@@ -140,7 +140,7 @@ void Pageinfo::initUI()
     connect(clearCacheButton, &QPushButton::clicked, this, [this]() {
         if (QMessageBox::question(this,
                                   "清空缓存",
-                                  "确认清空 MQTT 离线缓存？不会删除端口、从站和阈值配置。",
+                                  "确认清空离线缓存？未上传数据可能丢失。不会删除端口、从站和阈值配置。",
                                   QMessageBox::Yes | QMessageBox::No,
                                   QMessageBox::No) == QMessageBox::Yes) {
             emit clearOfflineCacheRequested();

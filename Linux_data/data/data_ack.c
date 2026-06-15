@@ -125,6 +125,109 @@ void data_ack_send_port_result(uint32_t seq,
     json_object_put(root);
 }
 
+
+static void data_ack_add_common(struct json_object *root,
+                                uint32_t seq,
+                                const char *cmd,
+                                int ok,
+                                const char *reason,
+                                const char *message)
+{
+    json_object_object_add(root, "type", json_object_new_string("ack"));
+    json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "stage", json_object_new_string("done"));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "ok", json_object_new_boolean(ok));
+    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
+    json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
+    json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
+}
+
+static struct json_object *data_ack_thresholds_to_json(const sensor_threshold_config_t *config)
+{
+    struct json_object *thresholds = json_object_new_object();
+    if (!thresholds)
+        return NULL;
+    if (!config)
+        return thresholds;
+
+    struct json_object *temperature = json_object_new_object();
+    struct json_object *humidity = json_object_new_object();
+    if (temperature) {
+        json_object_object_add(temperature, "enable_alarm", json_object_new_boolean(config->temperature.enable_alarm));
+        json_object_object_add(temperature, "alarm_low", config->temperature.has_low ? json_object_new_double(config->temperature.alarm_low) : NULL);
+        json_object_object_add(temperature, "alarm_high", config->temperature.has_high ? json_object_new_double(config->temperature.alarm_high) : NULL);
+        json_object_object_add(thresholds, "temperature", temperature);
+    }
+    if (humidity) {
+        json_object_object_add(humidity, "enable_alarm", json_object_new_boolean(config->humidity.enable_alarm));
+        json_object_object_add(humidity, "alarm_low", config->humidity.has_low ? json_object_new_double(config->humidity.alarm_low) : NULL);
+        json_object_object_add(humidity, "alarm_high", config->humidity.has_high ? json_object_new_double(config->humidity.alarm_high) : NULL);
+        json_object_object_add(thresholds, "humidity", humidity);
+    }
+    return thresholds;
+}
+
+void data_ack_send_device_result(uint32_t seq,
+                                 const char *cmd,
+                                 int ok,
+                                 const char *reason,
+                                 const char *message,
+                                 int slot,
+                                 int slave_id,
+                                 const char *device_type,
+                                 int poll_interval_ms)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return;
+
+    data_ack_add_common(root, seq, cmd, ok, reason, message);
+    json_object_object_add(root, "slot", json_object_new_int(slot));
+    json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
+    json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
+    json_object_object_add(root, "deviceType", json_object_new_string(device_type ? device_type : "unknown"));
+    json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "unknown"));
+    if (poll_interval_ms > 0) {
+        json_object_object_add(root, "pollIntervalMs", json_object_new_int(poll_interval_ms));
+        json_object_object_add(root, "poll_interval_ms", json_object_new_int(poll_interval_ms));
+    }
+
+    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    json_object_put(root);
+}
+
+void data_ack_send_threshold_result(uint32_t seq,
+                                    const char *cmd,
+                                    int ok,
+                                    const char *reason,
+                                    const char *message,
+                                    int slot,
+                                    int slave_id,
+                                    const char *device_type,
+                                    int threshold_enabled,
+                                    const sensor_threshold_config_t *threshold_config)
+{
+    struct json_object *root = json_object_new_object();
+    if (!root)
+        return;
+
+    data_ack_add_common(root, seq, cmd, ok, reason, message);
+    json_object_object_add(root, "slot", json_object_new_int(slot));
+    json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
+    json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
+    json_object_object_add(root, "deviceType", json_object_new_string(device_type ? device_type : "sensor_th"));
+    json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "sensor_th"));
+    json_object_object_add(root, "threshold_enabled", json_object_new_boolean(threshold_enabled));
+    json_object_object_add(root, "thresholds", data_ack_thresholds_to_json(threshold_config));
+
+    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    json_object_put(root);
+}
+
 void data_ack_send_offline_cache_config(uint32_t seq,
                                         const char *cmd,
                                         int ok,
