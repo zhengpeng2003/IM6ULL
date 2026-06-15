@@ -9,7 +9,6 @@
 #include <QStringList>
 #include <QDebug>
 
-static const qint64 kDeletedDeviceIgnoreMs = 30000;
 static const qint64 kRealtimeFreshMs = 30000;
 static const qint64 kRealtimeOfflineMs = 90000;
 
@@ -290,14 +289,7 @@ void DataManager::onLatestPointsMessage(const QJsonObject &obj)
     const QList<RealtimeDeviceData> parsedDevices = parseLatestPoints(obj);
     {
         QMutexLocker locker(&m_mutex);
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        pruneExpiredDeletedDevicesLocked(now);
-        for (const RealtimeDeviceData &data : parsedDevices) {
-            releaseDeletedDeviceOnNewDataLocked(data.node.gatewayId,
-                                                data.node.port,
-                                                data.node.deviceId,
-                                                data.node.lastUpdateTime);
-        }
+        pruneExpiredDeletedDevicesLocked(QDateTime::currentMSecsSinceEpoch());
     }
 
     for (const RealtimeDeviceData &data : parsedDevices) {
@@ -325,14 +317,7 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
 
     {
         QMutexLocker locker(&m_mutex);
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        pruneExpiredDeletedDevicesLocked(now);
-        for (const DeviceNode &device : devices) {
-            releaseDeletedDeviceOnNewDataLocked(device.gatewayId,
-                                                device.port,
-                                                device.deviceId,
-                                                device.lastUpdateTime);
-        }
+        pruneExpiredDeletedDevicesLocked(QDateTime::currentMSecsSinceEpoch());
     }
 
     for (auto it = devices.begin(); it != devices.end(); ) {
@@ -447,15 +432,9 @@ QList<DeviceNode> DataManager::parseDevicesSnapshot(const QJsonObject &obj) cons
         node.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
         node.statusReason = row.value(QStringLiteral("statusReason")).toString();
         node.online = node.status == QStringLiteral("online");
+        // lastUpdateTime means the device's real last telemetry time only.
+        // Do not use create/update config timestamps as fake telemetry freshness.
         node.lastUpdateTime = row.value(QStringLiteral("lastSeenMs")).toVariant().toLongLong();
-        const qint64 updateTime = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
-        const qint64 createTime = row.value(QStringLiteral("createTimeMs")).toVariant().toLongLong();
-        if (updateTime > node.lastUpdateTime) {
-            node.lastUpdateTime = updateTime;
-        }
-        if (createTime > node.lastUpdateTime) {
-            node.lastUpdateTime = createTime;
-        }
 
         if (node.factoryId.isEmpty() || node.areaId.isEmpty() || node.gatewayId.isEmpty() ||
             node.port.isEmpty() || node.deviceId <= 0) {
@@ -499,7 +478,8 @@ TelemetryPointData DataManager::parseTelemetryPoint(const QJsonObject &obj) cons
     if (!point.valid && point.errorMessage.isEmpty()) {
         point.errorMessage = QStringLiteral("数据无效");
     }
-    point.lastUpdateTime = QDateTime::currentMSecsSinceEpoch();
+    point.receiveTimeMs = QDateTime::currentMSecsSinceEpoch();
+    point.lastUpdateTime = point.timestampMs;
     return point;
 }
 
@@ -551,8 +531,8 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
     data.node.deviceType = first.deviceType;
     data.node.expectTelemetry = data.node.deviceType != QStringLiteral("relay") &&
                                 data.node.deviceType != QStringLiteral("led");
-    data.node.online = true;
-    data.node.status = QStringLiteral("online");
+    data.node.online = false;
+    data.node.status = QStringLiteral("unknown");
     data.serviceOffline = false;
     data.node.lastUpdateTime = first.timestampMs;
     data.timestamp = first.timestampMs;
@@ -578,10 +558,10 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
 
 void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
 {
-    data.statusLevel = QStringLiteral("normal");
-    data.statusText = QStringLiteral("正常");
-    data.dataState = QStringLiteral("normal");
-    data.node.online = true;
+    data.statusLevel = QStringLiteral("unknown");
+    data.statusText = QStringLiteral("未知");
+    data.dataState = QStringLiteral("unknown");
+    data.node.online = false;
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const qint64 ageMs = data.timestamp > 0 ? now - data.timestamp : kRealtimeOfflineMs + 1;
@@ -591,10 +571,22 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
         data.dataState = QStringLiteral("mock");
         return;
     }
+    if (!data.valid && (data.errorMessage == QStringLiteral("device_offline") ||
+                        data.errorMessage == QStringLiteral("modbus_timeout") ||
+                        data.errorMessage == QStringLiteral("timeout"))) {
+        data.statusLevel = QStringLiteral("offline");
+        data.statusText = QStringLiteral("设备离线，保留最后值");
+        data.dataState = QStringLiteral("offline");
+        data.node.status = QStringLiteral("offline");
+        data.node.online = false;
+        return;
+    }
+
     if (ageMs > kRealtimeOfflineMs) {
         data.statusLevel = QStringLiteral("offline");
         data.statusText = QStringLiteral("设备离线，保留最后值");
         data.dataState = QStringLiteral("offline");
+        data.node.status = QStringLiteral("offline");
         data.node.online = false;
         return;
     }
@@ -602,9 +594,16 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
         data.statusLevel = QStringLiteral("stale");
         data.statusText = QStringLiteral("旧数据 / 数据过期");
         data.dataState = QStringLiteral("stale");
+        data.node.status = QStringLiteral("stale");
         data.node.online = false;
         return;
     }
+
+    data.node.online = true;
+    data.node.status = QStringLiteral("online");
+    data.statusLevel = QStringLiteral("normal");
+    data.statusText = QStringLiteral("正常");
+    data.dataState = QStringLiteral("normal");
 
     if (data.node.deviceType == "unknown") {
         data.statusLevel = QStringLiteral("warning");
@@ -713,6 +712,12 @@ void DataManager::upsertRealtimeData(const RealtimeDeviceData &data)
     m_deviceManager->updateDeviceOnline(data.node.key(), data.node.online);
 
     QMutexLocker locker(&m_mutex);
+    const RealtimeDeviceData old = m_realtimeMap.value(data.node.key());
+    if (old.timestamp > 0 && data.timestamp > 0 && data.timestamp < old.timestamp) {
+        qDebug() << "latest_points stale dropped in UI" << data.node.key()
+                 << "oldTs" << old.timestamp << "newTs" << data.timestamp;
+        return;
+    }
     m_realtimeMap.insert(data.node.key(), data);
 }
 
@@ -732,16 +737,9 @@ bool DataManager::isDeletedDevice(const QString &gatewayId, const QString &portI
 
 void DataManager::pruneExpiredDeletedDevicesLocked(qint64 nowMs)
 {
-    for (auto it = m_deletedDevices.begin(); it != m_deletedDevices.end(); ) {
-        const qint64 value = it.value();
-        const bool expiredDeadline = value > 0 && value <= nowMs;
-        const bool expiredDeleteTime = value < 0 && (-value + kDeletedDeviceIgnoreMs) <= nowMs;
-        if (expiredDeadline || expiredDeleteTime) {
-            it = m_deletedDevices.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    // Deleted-device tombstones are intentionally sticky. They are released only
+    // by explicit add/register/sync success paths, not by telemetry timestamps.
+    Q_UNUSED(nowMs);
 }
 
 void DataManager::rememberDeletedDeviceLocked(const QString &gatewayId,
@@ -755,21 +753,4 @@ void DataManager::rememberDeletedDeviceLocked(const QString &gatewayId,
 
     m_deletedDevices.insert(deletedDeviceKey(gatewayId, portId, deviceId),
                             -nowMs);
-}
-
-void DataManager::releaseDeletedDeviceOnNewDataLocked(const QString &gatewayId,
-                                                      const QString &portId,
-                                                      int deviceId,
-                                                      qint64 dataTimeMs)
-{
-    const QString key = deletedDeviceKey(gatewayId, portId, deviceId);
-    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0 || !m_deletedDevices.contains(key)) {
-        return;
-    }
-
-    const qint64 value = m_deletedDevices.value(key);
-    const qint64 deletedAt = value < 0 ? -value : value - kDeletedDeviceIgnoreMs;
-    if (dataTimeMs > 0 && deletedAt > 0 && dataTimeMs >= deletedAt) {
-        m_deletedDevices.remove(key);
-    }
 }

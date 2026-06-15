@@ -1615,12 +1615,14 @@ int PortManager::removeDevice(int slot,
         return -1;
     }
 
+    ManagedDevice removed = *it;
     channel.devices.erase(it);
     if (impl_->writeConfigLocked() != 0) {
+        channel.devices.push_back(removed);
         setReason(reason, reason_size, "config_write_failed");
         return -1;
     }
-    setReason(reason, reason_size, "");
+    setReason(reason, reason_size, "ok");
     return 0;
 }
 

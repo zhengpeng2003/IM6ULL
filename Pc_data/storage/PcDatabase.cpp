@@ -1412,12 +1412,24 @@ static void bindCommonPointColumns(sqlite3_stmt* stmt, int offset, const Telemet
 bool PcDatabase::saveLatestPoint(const TelemetryPoint& point)
 {
     static const char* sql =
-        "REPLACE INTO latest_point ("
+        "INSERT INTO latest_point ("
         "point_id,timestamp_ms,factory_id,factory_name,area_id,area_name,"
         "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
         "device_type,point_key,point_name,unit,value_type,number_value,"
         "text_value,valid,error_message"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(point_id) DO UPDATE SET "
+        "timestamp_ms=excluded.timestamp_ms,factory_id=excluded.factory_id,"
+        "factory_name=excluded.factory_name,area_id=excluded.area_id,"
+        "area_name=excluded.area_name,gateway_id=excluded.gateway_id,"
+        "gateway_name=excluded.gateway_name,port_id=excluded.port_id,"
+        "port_name=excluded.port_name,device_id=excluded.device_id,"
+        "device_name=excluded.device_name,device_type=excluded.device_type,"
+        "point_key=excluded.point_key,point_name=excluded.point_name,"
+        "unit=excluded.unit,value_type=excluded.value_type,"
+        "number_value=excluded.number_value,text_value=excluded.text_value,"
+        "valid=excluded.valid,error_message=excluded.error_message "
+        "WHERE excluded.timestamp_ms >= latest_point.timestamp_ms;";
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);

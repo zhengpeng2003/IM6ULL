@@ -29,6 +29,7 @@ struct TelemetryPointData
     bool valid = false;
     QString errorMessage;
     QString dataState;
+    qint64 receiveTimeMs = 0;
     qint64 lastUpdateTime = 0;
 };
 

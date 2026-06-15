@@ -41,6 +41,7 @@ private:
     void requestDevices();
     void requestGatewayStatus();
     void requestPortStatus();
+    void requestFullSnapshot();
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
@@ -77,6 +78,7 @@ private:
     IpcClient *m_ipcClient = nullptr;
     QTimer *m_ipcTimer = nullptr;
     QTimer *m_ipcWatchdogTimer = nullptr;
+    QTimer *m_snapshotFallbackTimer = nullptr;
     qint64 m_lastLatestPointsMs = 0;
     QString m_pendingDeleteAction;
     QString m_pendingDeleteGatewayId;
