@@ -29,26 +29,27 @@ void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
         if (point.pointId.empty()) {
             continue;
         }
-        if (shouldAcceptNewDeviceDataLocked(point.gatewayId,
-                                            point.portId,
-                                            point.deviceId,
-                                            point.timestampMs)) {
-            m_snapshot[point.pointId] = point;
-            continue;
-        }
-        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId)) {
-            continue;
-        }
-        if (isRemovedMasterLocked(point.gatewayId, point.portId)) {
+        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId) ||
+            isRemovedMasterLocked(point.gatewayId, point.portId)) {
+            std::cout << "deleted device telemetry dropped: gatewayId=" << point.gatewayId
+                      << " portId=" << point.portId
+                      << " deviceId=" << point.deviceId
+                      << " pointId=" << point.pointId << std::endl;
             continue;
         }
 
-        /*
-         * Same pointId means the same telemetry point.
-         * When new data arrives, overwrite the old value.
-         * This is the latest snapshot.
-         */
-        m_snapshot[point.pointId] = point;
+        auto old = m_snapshot.find(point.pointId);
+        if (old == m_snapshot.end() || point.timestampMs >= old->second.timestampMs) {
+            const std::int64_t oldTs = old == m_snapshot.end() ? 0 : old->second.timestampMs;
+            m_snapshot[point.pointId] = point;
+            std::cout << "snapshot updated: pointId=" << point.pointId
+                      << " oldTs=" << oldTs
+                      << " newTs=" << point.timestampMs << std::endl;
+        } else {
+            std::cout << "snapshot stale dropped: pointId=" << point.pointId
+                      << " oldTs=" << old->second.timestampMs
+                      << " newTs=" << point.timestampMs << std::endl;
+        }
     }
 }
 
@@ -143,6 +144,9 @@ void PcDataService::forgetRemovedDevice(const std::string& gatewayId,
 
     std::lock_guard<std::mutex> lock(m_mutex);
     pruneExpiredRemovedDevicesLocked(currentTimeMs());
+    std::cout << "forget removed device tombstone: gatewayId=" << gatewayId
+              << " portId=" << portId
+              << " deviceId=" << deviceId << std::endl;
     m_removedDevices.erase(removedDeviceKey(gatewayId, portId, deviceId));
     m_removedMasters.erase(removedMasterKey(gatewayId, portId));
 }
@@ -168,17 +172,12 @@ std::vector<TelemetryPoint> PcDataService::filterRemovedPoints(const std::vector
     std::vector<TelemetryPoint> result;
     result.reserve(points.size());
     for (const TelemetryPoint& point : points) {
-        if (shouldAcceptNewDeviceDataLocked(point.gatewayId,
-                                            point.portId,
-                                            point.deviceId,
-                                            point.timestampMs)) {
-            result.push_back(point);
-            continue;
-        }
-        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId)) {
-            continue;
-        }
-        if (isRemovedMasterLocked(point.gatewayId, point.portId)) {
+        if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId) ||
+            isRemovedMasterLocked(point.gatewayId, point.portId)) {
+            std::cout << "deleted device telemetry dropped: gatewayId=" << point.gatewayId
+                      << " portId=" << point.portId
+                      << " deviceId=" << point.deviceId
+                      << " pointId=" << point.pointId << std::endl;
             continue;
         }
         result.push_back(point);

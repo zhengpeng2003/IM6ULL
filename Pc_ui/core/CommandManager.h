@@ -27,6 +27,8 @@ signals:
     void commandReadyForIpc(const QByteArray &payload);
     void commandReadyToPublish(const QString &topic, const QByteArray &payload, int qos, bool retain);
     void commandStateChanged(const QString &cmdId, const QString &state);
+    void commandMessage(const QString &cmdId, const QString &commandType, const QString &level,
+                        const QString &title, const QString &message);
     void commandTimeout(const QString &cmdId);
 
 private:
@@ -36,6 +38,8 @@ private:
 private:
     void startCommandTimeout(const QString &cmdId);
     void finishCommand(const QString &cmdId, const QString &state);
+    QString friendlyCommandReason(const QString &reason, const QString &message) const;
+    QString successMessageForCommand(const QString &commandType) const;
 
     QHash<QString, CommandRecord> m_pending;
     QHash<qint64, QString> m_seqToCmdId;

@@ -71,6 +71,8 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     masterTitle->setObjectName("PageTitle");
     m_syncButton = new QPushButton(QStringLiteral("配置同步"), this);
     auto *scanMaster = new QPushButton(QStringLiteral("扫描主站"), this);
+    scanMaster->setEnabled(false);
+    scanMaster->setToolTip(QStringLiteral("后端扫描链路未完整接入，暂时禁用以避免误操作"));
     masterHeader->addWidget(masterTitle);
     masterHeader->addStretch();
     masterHeader->addWidget(m_syncButton);
@@ -99,6 +101,8 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     slaveTitle->setObjectName("PageTitle");
     auto *addSlave = new QPushButton(QStringLiteral("添加从站"), this);
     auto *scanSlave = new QPushButton(QStringLiteral("扫描从站"), this);
+    scanSlave->setEnabled(false);
+    scanSlave->setToolTip(QStringLiteral("后端扫描链路未完整接入，暂时禁用以避免误操作"));
     slaveHeader->addWidget(slaveTitle);
     slaveHeader->addStretch();
     slaveHeader->addWidget(addSlave);
@@ -134,9 +138,7 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
                 this, &DeviceConfigPage::refreshTables);
     }
 
-    m_refreshTimer = new QTimer(this);
-    connect(m_refreshTimer, &QTimer::timeout, this, &DeviceConfigPage::refreshTables);
-    m_refreshTimer->start(1000);
+    // DeviceManager signals refresh the table; avoid unnecessary UI-side periodic churn.
 
     refreshTables();
 }

@@ -238,6 +238,8 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
         rec.state = QStringLiteral("running");
         m_pending.insert(cmdId, rec);
         emit commandStateChanged(cmdId, QStringLiteral("已发送，等待设备确认"));
+        emit commandMessage(cmdId, rec.command, QStringLiteral("info"),
+                            QStringLiteral("命令已发送"), QStringLiteral("等待设备确认"));
         return;
     }
 
@@ -245,12 +247,16 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
         rec.state = QStringLiteral("failed");
         m_pending.insert(cmdId, rec);
         const QString message = rec.reason.isEmpty() ? QStringLiteral("failed") : QStringLiteral("failed: ") + rec.reason;
+        emit commandMessage(cmdId, rec.command, QStringLiteral("error"),
+                            QStringLiteral("命令执行失败"), friendlyCommandReason(rec.reason, rec.reason));
         finishCommand(cmdId, message);
         return;
     }
 
     if (stage == QStringLiteral("done") && rec.ok) {
-        finishCommand(cmdId, QStringLiteral("success"));
+        const QString msg = successMessageForCommand(rec.command);
+        emit commandMessage(cmdId, rec.command, QStringLiteral("success"), msg, QString());
+        finishCommand(cmdId, msg);
         return;
     }
 
@@ -273,19 +279,34 @@ void CommandManager::onCommandLogUpdate(const QJsonObject &obj)
     const bool ok = ackSuccess(obj);
     const QString status = obj.value(QStringLiteral("status")).toString(ok ? QStringLiteral("success") : QStringLiteral("failed"));
     if (stage == QStringLiteral("sent")) {
+        const CommandRecord rec = m_pending.value(cmdId);
         emit commandStateChanged(cmdId, QStringLiteral("已发送，等待设备确认"));
+        emit commandMessage(cmdId, rec.command, QStringLiteral("info"),
+                            QStringLiteral("命令已发送"), QStringLiteral("等待设备确认"));
         return;
     }
     if (stage == QStringLiteral("done") && ok) {
         const CommandRecord rec = m_pending.value(cmdId);
         if (rec.command == QStringLiteral("set_relay")) {
+            emit commandMessage(cmdId, rec.command, QStringLiteral("success"),
+                                QStringLiteral("写入成功，等待状态回读"), QString());
             finishCommand(cmdId, QStringLiteral("写入成功，等待状态回读"));
         } else {
-            finishCommand(cmdId, QStringLiteral("success"));
+            const QString msg = successMessageForCommand(rec.command);
+            emit commandMessage(cmdId, rec.command, QStringLiteral("success"), msg, QString());
+            finishCommand(cmdId, msg);
         }
     } else if (stage == QStringLiteral("done")) {
-        const QString message = obj.value(QStringLiteral("message")).toString(obj.value(QStringLiteral("reason")).toString());
-        finishCommand(cmdId, status == QStringLiteral("timeout") ? QStringLiteral("执行超时，请刷新状态") : QStringLiteral("failed: ") + message);
+        const CommandRecord rec = m_pending.value(cmdId);
+        const QString reason = obj.value(QStringLiteral("reason")).toString();
+        const QString rawMessage = obj.value(QStringLiteral("message")).toString();
+        const QString message = status == QStringLiteral("timeout")
+            ? QStringLiteral("执行超时，请刷新状态")
+            : friendlyCommandReason(reason, rawMessage);
+        emit commandMessage(cmdId, rec.command, QStringLiteral("error"),
+                            status == QStringLiteral("timeout") ? QStringLiteral("执行超时") : QStringLiteral("命令执行失败"),
+                            message);
+        finishCommand(cmdId, message);
     }
 }
 
@@ -295,7 +316,11 @@ void CommandManager::startCommandTimeout(const QString &cmdId)
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, this, [this, cmdId]() {
         if (!m_pending.contains(cmdId)) return;
-        finishCommand(cmdId, QStringLiteral("执行超时，请刷新状态"));
+        const CommandRecord rec = m_pending.value(cmdId);
+        emit commandMessage(cmdId, rec.command, QStringLiteral("error"),
+                            QStringLiteral("执行超时"),
+                            QStringLiteral("未收到 Linux_data ACK，请检查板端服务、MQTT 或设备连接"));
+        finishCommand(cmdId, QStringLiteral("执行超时：未收到 Linux_data ACK，请检查板端服务、MQTT 或设备连接"));
         emit commandTimeout(cmdId);
     });
     m_timeoutTimers.insert(cmdId, timer);
@@ -324,4 +349,31 @@ QString CommandManager::commandTopic(const DeviceNode &device) const
 {
     return QString("factory/%1/area/%2/gateway/%3/command")
         .arg(device.factoryId, device.areaId, device.gatewayId);
+}
+
+
+QString CommandManager::friendlyCommandReason(const QString &reason, const QString &message) const
+{
+    if (!message.isEmpty()) {
+        return message;
+    }
+    if (reason == QStringLiteral("invalid_request")) return QStringLiteral("请求参数错误");
+    if (reason == QStringLiteral("port_not_connected")) return QStringLiteral("端口未连接");
+    if (reason == QStringLiteral("mqtt_publish_failed")) return QStringLiteral("MQTT 发送失败，请检查 Pc_data 与 Broker 连接");
+    if (reason == QStringLiteral("linux_data_ack_timeout")) return QStringLiteral("板端执行超时，可能 Linux_data 未运行或 MQTT 不通");
+    if (reason == QStringLiteral("delete_device_data_failed")) return QStringLiteral("PC 侧数据删除失败");
+    if (reason == QStringLiteral("unsupported_command")) return QStringLiteral("不支持的命令");
+    if (reason == QStringLiteral("device_not_found")) return QStringLiteral("设备不存在或已被删除");
+    if (reason == QStringLiteral("db_not_open")) return QStringLiteral("数据库未打开");
+    if (reason == QStringLiteral("timeout")) return QStringLiteral("执行超时");
+    return reason.isEmpty() ? QStringLiteral("未知错误") : reason;
+}
+
+QString CommandManager::successMessageForCommand(const QString &commandType) const
+{
+    if (commandType == QStringLiteral("remove_device")) return QStringLiteral("删除成功");
+    if (commandType == QStringLiteral("add_device")) return QStringLiteral("添加成功");
+    if (commandType == QStringLiteral("set_device_threshold") || commandType == QStringLiteral("set_threshold")) return QStringLiteral("阈值设置成功");
+    if (commandType == QStringLiteral("set_relay")) return QStringLiteral("写入成功，等待状态回读");
+    return QStringLiteral("命令执行成功");
 }

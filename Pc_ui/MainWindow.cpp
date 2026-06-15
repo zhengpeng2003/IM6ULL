@@ -117,6 +117,7 @@ void MainWindow::initIpc()
     m_ipcClient = new IpcClient(this);
     m_ipcTimer = new QTimer(this);
     m_ipcWatchdogTimer = new QTimer(this);
+    m_snapshotFallbackTimer = new QTimer(this);
 
     connect(m_ipcClient, &IpcClient::connected, this, [this]() {
         qDebug() << "Pc_ui IPC connected";
@@ -126,10 +127,7 @@ void MainWindow::initIpc()
         if (m_topBar) {
             m_topBar->setServiceOnline(true);
         }
-        requestGatewayStatus();
-        requestPortStatus();
-        requestDevices();
-        requestLatestPoints();
+        requestFullSnapshot();
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
@@ -161,11 +159,14 @@ void MainWindow::initIpc()
             return;
         }
 
-        requestDevices();
-        requestGatewayStatus();
-        requestPortStatus();
-        requestLatestPoints();
+        // m_ipcTimer only handles reconnect. Live data is pushed by Pc_data.
 
+    });
+
+    connect(m_snapshotFallbackTimer, &QTimer::timeout, this, [this]() {
+        if (m_ipcClient && m_ipcClient->isConnected()) {
+            requestFullSnapshot();
+        }
     });
 
     connect(m_ipcWatchdogTimer, &QTimer::timeout, this, [this]() {
@@ -184,6 +185,15 @@ void MainWindow::initIpc()
         }
     });
 
+    connect(m_command, &CommandManager::commandMessage, this,
+            [this](const QString &, const QString &, const QString &level, const QString &title, const QString &message) {
+        const QString text = title + (message.isEmpty() ? QString() : QStringLiteral("：") + message);
+        statusBar()->showMessage(text, 8000);
+        if (level == QStringLiteral("error") || level == QStringLiteral("warning") || level == QStringLiteral("success")) {
+            qDebug() << "command user message:" << level << text;
+        }
+    });
+
     connect(m_command, &CommandManager::commandReadyForIpc, this, [this](const QByteArray &payload) {
         if (!m_ipcClient || !m_ipcClient->isConnected()) {
             qDebug() << "IPC command send skipped: client is not connected.";
@@ -195,6 +205,7 @@ void MainWindow::initIpc()
     });
 
     m_ipcTimer->start(2000);
+    m_snapshotFallbackTimer->start(30000);
     m_ipcWatchdogTimer->start(1000);
     m_ipcClient->connectToServer();
 }
@@ -291,8 +302,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         m_pendingDeleteGatewayId.clear();
         m_pendingDeletePortId.clear();
         m_pendingDeleteDeviceId = 0;
-        requestDevices();
-        requestLatestPoints();
+        requestFullSnapshot();
         return;
     }
 
@@ -314,8 +324,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         if (m_deviceConfigPage) {
             m_deviceConfigPage->onSyncConfigResult(root);
         }
-        requestDevices();
-        requestPortStatus();
+        requestFullSnapshot();
         return;
     }
 
@@ -330,14 +339,10 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 m_pendingDeleteGatewayId.clear();
                 m_pendingDeletePortId.clear();
                 m_pendingDeleteDeviceId = 0;
-                requestDevices();
-                requestLatestPoints();
-                requestPortStatus();
+                requestFullSnapshot();
             }
         } else if (command == QStringLiteral("add_device") && stage == QStringLiteral("done") && !ok) {
-            requestDevices();
-            requestLatestPoints();
-            requestPortStatus();
+            requestFullSnapshot();
         }
         return;
     }
@@ -358,9 +363,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
              commandType == QStringLiteral("cache") ||
              commandType == QStringLiteral("sync") ||
              commandType == QStringLiteral("get_config"))) {
-            requestDevices();
-            requestLatestPoints();
-            requestPortStatus();
+            requestFullSnapshot();
             requestGatewayStatus();
         }
         if (commandType == QStringLiteral("remove_device")) {
@@ -382,9 +385,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 !gatewayId.isEmpty() && !portId.isEmpty() && deviceId > 0) {
                 onRemoveDeviceSucceeded(gatewayId, portId, deviceId);
             } else {
-                requestDevices();
-                requestLatestPoints();
-                requestPortStatus();
+                requestFullSnapshot();
             }
 
             m_pendingDeleteAction.clear();
@@ -433,6 +434,14 @@ void MainWindow::requestPortStatus()
     }
 
     m_ipcClient->sendMessage(QString(R"({"type":"get_port_status"})"));
+}
+
+void MainWindow::requestFullSnapshot()
+{
+    requestGatewayStatus();
+    requestPortStatus();
+    requestDevices();
+    requestLatestPoints();
 }
 
 void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit)
@@ -515,17 +524,12 @@ void MainWindow::onRemoveDeviceSucceeded(const QString &gatewayId, const QString
     if (m_alarm) {
         m_alarm->removeDeviceAlarms(gatewayId, portId, deviceId);
     }
-    requestDevices();
-    requestLatestPoints();
-    requestPortStatus();
+    requestFullSnapshot();
 }
 
 void MainWindow::sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
                                      const QString &deviceType, int pollIntervalMs)
 {
-    if (m_data) {
-        m_data->forgetRemovedDevice(gatewayId, portId, deviceId);
-    }
     if (m_command) {
         m_command->sendAddDeviceCommand(gatewayId, portId, deviceId, deviceType, pollIntervalMs);
     }
@@ -629,7 +633,7 @@ void MainWindow::initManagers()
 void MainWindow::initUi()
 {
     setWindowTitle(QStringLiteral("Pc_mqtt 工业物联网监控平台"));
-    statusBar()->hide();
+    statusBar()->showMessage(QStringLiteral("就绪"));
 
     auto *central = new QWidget(this);
     auto *rootLayout = new QVBoxLayout(central);
