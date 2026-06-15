@@ -14,16 +14,22 @@
 class Pageinfo : public QWidget
 {
     Q_OBJECT
+
 public:
     explicit Pageinfo(QWidget *parent = nullptr);
+
     void addInfo(const DataPack &pack);
     void setIpcConnected(bool connected);
-    void updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, int pendingCount);
+
+    void updateOfflineCacheStatus(bool cacheEnabled,
+                                  bool flushEnabled,
+                                  int pendingCount);
+
     void setOfflineCacheUnsupported();
-    void setOfflineCacheBusy(bool busy);
 
 signals:
     void reconnectIpcRequested();
+
     void offlineCacheConfigChanged(bool cacheEnabled, bool flushEnabled);
     void offlineCacheRefreshRequested();
     void clearOfflineCacheRequested();
@@ -59,37 +65,48 @@ private:
         QLabel *valueLabel = nullptr;
     };
 
+private:
     void initUI();
+
     QFrame *createInfoCard(const InfoCardSpec &spec);
     QWidget *createRuntimeRow(const RuntimeRowSpec &spec);
-    void setInfoCardValue(const QString &key, const QString &value, const QString &state = QString());
-    void setRuntimeRowValue(const QString &key, const QString &value, const QString &state = QString());
+
+    void setInfoCardValue(const QString &key,
+                          const QString &value,
+                          const QString &state = QString());
+
+    void setRuntimeRowValue(const QString &key,
+                            const QString &value,
+                            const QString &state = QString());
+
     void polishState(QWidget *widget);
+
     void updateIpcStatusLabel();
     void updateLastSync(const QDateTime &time);
     void updateOfflineCacheButtons();
-    void setToggleButtonChecked(QPushButton *button, bool checked);
 
+private:
     QLabel *hintLabel = nullptr;
+
     QPushButton *reconnectButton = nullptr;
+
     QLabel *cacheStateLabel = nullptr;
-    QLabel *flushStateLabel = nullptr;
     QLabel *pendingCountLabel = nullptr;
-    QPushButton *cacheEnableButton = nullptr;
+
     QPushButton *refreshCacheButton = nullptr;
-    QPushButton *saveCacheButton = nullptr;
-    QPushButton *flushEnableButton = nullptr;
-    QPushButton *clearCacheButton = nullptr;
     QPushButton *flushCacheButton = nullptr;
+    QPushButton *moreCacheButton = nullptr;
 
     QVector<InfoCardWidget> infoCards;
     QVector<RuntimeRowWidget> runtimeRows;
+
     QDateTime lastSyncTime;
+
     bool m_ipcConnected = false;
-    bool m_cacheEnabled = bool();
+    bool m_cacheEnabled = false;
     bool m_flushEnabled = false;
     bool m_cacheSupported = true;
-    bool m_cacheBusy = false;
+
     int m_pendingCount = 0;
 };
 

@@ -1,58 +1,65 @@
-#pragma once
+// ============================
+// pages/PageStatus.h
+// ============================
 
+#ifndef PAGESTATUS_H
+#define PAGESTATUS_H
+
+#include <QComboBox>
 #include <QFrame>
 #include <QLabel>
-#include <QPushButton>
-#include <QEvent>
 #include <QList>
 #include <QMap>
-#include <QStringList>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QStackedWidget>
+#include <QString>
 #include <QVector>
 #include <QWidget>
-
-class QComboBox;
-class QGridLayout;
-class QHBoxLayout;
-class QPushButton;
-class QScrollArea;
-class QVBoxLayout;
-class SlaveDetailDialog;
+#include "sensorui/relaycontroldialog.h"
 class SlaveListDialog;
+class SlaveDetailDialog;
+class SensorThDetailCardUi;
+class RelayDetailCardUi;
 
-struct SlaveDeviceInfo {
-    int masterSlot = 0;
-    int slaveAddr = 0;
-    QString deviceName;
-    QString displayName;
-    QString deviceType;
-    bool online = false;
-};
-
-struct MasterStatusInfo {
-    int masterSlot = 0;
+struct MasterStatusInfo
+{
+    int masterSlot = -1;
     QString masterName;
 };
 
-struct SlaveRuntimeInfo {
+struct SlaveDeviceInfo
+{
+    int masterSlot = -1;
+    int slaveAddr = -1;
+    QString deviceType;
+    QString displayName;
     bool online = false;
+    int pollIntervalMs = 1000;
+};
+
+struct SlaveRuntimeInfo
+{
+    bool online = false;
+
     bool hasSensorTh = false;
     double temperature = 0.0;
     double humidity = 0.0;
+
     bool hasRelay = false;
+    QVector<RelayChannelInfo> relayChannels;
+
     bool ledOn = false;
     bool fanOn = false;
     bool buzzerOn = false;
-    bool hasMeter = false;
-    QString voltage;
-    QString current;
-    QString power;
-    QString energy;
+
     QString updateTime;
 };
 
 class PageStatus : public QWidget
 {
     Q_OBJECT
+
 public:
     explicit PageStatus(QWidget *parent = nullptr);
 
@@ -62,40 +69,60 @@ public:
                           const QString &mqttState);
 
     void setMasterList(const QList<MasterStatusInfo> &masters);
-    void setCurrentMaster(int masterSlot, const QString &masterName, int slaveCount);
+
+    void setCurrentMaster(int masterSlot,
+                          const QString &masterName,
+                          int slaveCount);
+
     void setSlaveList(const QList<SlaveDeviceInfo> &slaveList);
-    void removeSlave(int masterSlot, int slaveAddr, const QString &deviceType);
+
+    void removeSlave(int masterSlot,
+                     int slaveAddr,
+                     const QString &deviceType);
+
     int currentMasterSlotValue() const;
+
     void updateSlaveOnline(int masterSlot,
                            int slaveAddr,
                            const QString &deviceType,
                            bool online);
-    void selectSlave(int index);
+
     void setAlarmText(const QString &text);
+
     void setSensorThData(int masterSlot,
                          int slaveAddr,
                          double temperature,
                          double humidity,
                          const QString &updateTime);
+
+    void setRelayChannels(int masterSlot,
+                          int slaveAddr,
+                          const QVector<RelayChannelInfo> &channels,
+                          const QString &updateTime);
+
     void setRelayStates(int masterSlot,
                         int slaveAddr,
                         bool ledOn,
                         bool fanOn,
                         bool buzzerOn,
                         const QString &updateTime);
-    void setMeterValues(int masterSlot,
-                        int slaveAddr,
-                        const QString &voltage,
-                        const QString &current,
-                        const QString &power,
-                        const QString &energy,
-                        const QString &updateTime);
 
 signals:
     void addSlaveRequested(int masterSlot);
-    void removeSlaveRequested(int masterSlot, int slaveAddr, const QString &deviceType);
     void masterChanged(int masterSlot);
-    void slaveSelected(int masterSlot, int slaveAddr, const QString &deviceType);
+    void slaveSelected(int masterSlot,
+                       int slaveAddr,
+                       const QString &deviceType);
+
+    void removeSlaveRequested(int masterSlot,
+                              int slaveAddr,
+                              const QString &deviceType);
+
+    void relayChannelCommandRequested(int masterSlot,
+                                      int slaveAddr,
+                                      int channel,
+                                      bool on);
+
     void relayCommandRequested(int masterSlot,
                                int slaveAddr,
                                const QString &channel,
@@ -112,82 +139,68 @@ private:
         QLabel *state = nullptr;
     };
 
-    struct MetricCard {
-        QFrame *frame = nullptr;
-        QLabel *icon = nullptr;
-        QLabel *name = nullptr;
-        QLabel *value = nullptr;
-        QLabel *unit = nullptr;
-    };
-
+private:
     void initUI();
+
+    void selectSlave(int index);
     void refreshMasterLabels();
     void refreshSlaveCards();
     void rebuildSlaveCards();
     void clearCurrentDetail();
     void updateSlaveCardStyle(int index, bool selected);
     QFrame *createSlaveCard(int index);
-    MetricCard createMetricCard(const QString &iconText, const QString &name);
-    void setMetricCard(MetricCard &card,
-                       const QString &iconText,
-                       const QString &name,
-                       const QString &value,
-                       const QString &unit);
-    void setDetailMeta(const SlaveDeviceInfo &slave);
-    void showSensorDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
-    void showRelayDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
-    void showMeterDetail(const SlaveDeviceInfo &slave, const SlaveRuntimeInfo &runtime);
-    QString displayTypeName(const QString &deviceType) const;
-    QString displayMasterName() const;
+
+    void updateOpenDialogs();
     void openSlaveListDialog();
     void openSlaveDetailDialog(int index);
-    void updateOpenDialogs();
+
     QString runtimeKey(const SlaveDeviceInfo &slave) const;
-    QString runtimeKey(int masterSlot, int slaveAddr, const QString &deviceType) const;
+
+    QString runtimeKey(int masterSlot,
+                       int slaveAddr,
+                       const QString &deviceType) const;
+
     SlaveRuntimeInfo runtimeForSlave(const SlaveDeviceInfo &slave) const;
-    bool isCurrentSlave(int masterSlot, int slaveAddr, const QString &deviceType) const;
 
-    QLabel *summaryLabel = nullptr;
-    QLabel *listTitleLabel = nullptr;
-    QLabel *currentPortLabel = nullptr;
+    bool isCurrentSlave(int masterSlot,
+                        int slaveAddr,
+                        const QString &deviceType) const;
 
-    QComboBox *masterCombo = nullptr;
-    QPushButton *addSlaveButton = nullptr;
-    QPushButton *removeSlaveButton = nullptr;
-    QLabel *alarmLabel = nullptr;
-    QFrame *slaveListPanel = nullptr;
-    QScrollArea *slaveScrollArea = nullptr;
-    QLabel *emptyListLabel = nullptr;
-    QVBoxLayout *slaveListLayout = nullptr;
+    QString displayTypeName(const QString &deviceType) const;
+    QString displayMasterName() const;
+
+    QVector<RelayChannelInfo> defaultRelayChannelsFromOldState(bool ledOn,
+                                                               bool fanOn,
+                                                               bool buzzerOn) const;
+
+private:
+    int currentMasterSlot = -1;
+    QString currentMasterName;
+    int currentSlaveIndex = -1;
 
     QList<SlaveDeviceInfo> slaves;
     QMap<QString, SlaveRuntimeInfo> slaveRuntime;
-    QVector<SlaveCard> slaveCards;
+
+    QLabel *summaryLabel = nullptr;
+    QLabel *alarmLabel = nullptr;
+
+    QComboBox *masterCombo = nullptr;
+    QPushButton *addSlaveButton = nullptr;
+
+    QFrame *slaveListPanel = nullptr;
+    QLabel *currentPortLabel = nullptr;
+    QLabel *listTitleLabel = nullptr;
+    QLabel *emptyListLabel = nullptr;
+    QScrollArea *slaveScrollArea = nullptr;
+    QVBoxLayout *slaveListLayout = nullptr;
+    QList<SlaveCard> slaveCards;
+
+    QStackedWidget *detailStack = nullptr;
+    SensorThDetailCardUi *sensorThDetailUi = nullptr;
+    RelayDetailCardUi *relayDetailUi = nullptr;
+
     SlaveListDialog *slaveListDialog = nullptr;
     SlaveDetailDialog *slaveDetailDialog = nullptr;
-    int currentSlaveIndex = -1;
-    int currentMasterSlot = -1;
-    QString currentMasterName;
-
-    QFrame *detailPanel = nullptr;
-    QLabel *detailTitleLabel = nullptr;
-    QLabel *detailStateLabel = nullptr;
-    QLabel *detailPortLabel = nullptr;
-    QLabel *detailAddrLabel = nullptr;
-    QLabel *detailTypeLabel = nullptr;
-    QFrame *metricPanel = nullptr;
-    QGridLayout *metricGrid = nullptr;
-    MetricCard metricA;
-    MetricCard metricB;
-    MetricCard metricC;
-    MetricCard metricD;
-    QWidget *relayControlPanel = nullptr;
-    QPushButton *ledOnButton = nullptr;
-    QPushButton *ledOffButton = nullptr;
-    QPushButton *fanOnButton = nullptr;
-    QPushButton *fanOffButton = nullptr;
-    QPushButton *buzzerOnButton = nullptr;
-    QPushButton *buzzerOffButton = nullptr;
-    QLabel *pollIntervalLabel = nullptr;
-    QLabel *lastUpdateLabel = nullptr;
 };
+
+#endif // PAGESTATUS_H

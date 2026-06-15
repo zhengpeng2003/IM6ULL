@@ -12,6 +12,10 @@ SOURCES += \
     pageui/TrendChartWidget.cpp \
     pages/pageinfo.cpp \
     pages/pagesetting.cpp \
+    sensorui/devicedetailcardbaseui.cpp \
+    sensorui/relaycontroldialog.cpp \
+    sensorui/relaydetailcardui.cpp \
+    sensorui/sensorthdetailcardui.cpp \
     ui/loadingspinnerwidget.cpp \
     ui/operationoverlaywidget.cpp \
     pages/pagetrend.cpp \
@@ -19,7 +23,6 @@ SOURCES += \
     ui/widget.cpp \
     ui/TopStatusBar.cpp \
     ui/BottomNavBar.cpp \
-    sensorui/sensorui.cpp \
     pages/PageStatus.cpp \
     ipc/ipc_client.cpp
 
@@ -31,6 +34,10 @@ HEADERS += \
     pageui/TrendChartWidget.h \
     pages/pageinfo.h \
     pages/pagesetting.h \
+    sensorui/devicedetailcardbaseui.h \
+    sensorui/relaycontroldialog.h \
+    sensorui/relaydetailcardui.h \
+    sensorui/sensorthdetailcardui.h \
     ui/loadingspinnerwidget.h \
     ui/operationoverlaywidget.h \
     pages/pagetrend.h \
@@ -38,7 +45,6 @@ HEADERS += \
     ui/widget.h \
     ui/TopStatusBar.h \
     ui/BottomNavBar.h \
-    sensorui/sensorui.h \
     pages/PageStatus.h \
     ipc/ipc_client.h \
     data/data_protocol.h

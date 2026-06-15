@@ -105,7 +105,7 @@ void Widget::initUI()
                 payload.insert("flush_enabled", flushEnabled);
                 if (!sendCommand("set_offline_cache_config", payload)) {
                     if (pageInfo)
-                        pageInfo->setOfflineCacheBusy(false);
+                        //pageInfo->setOfflineCacheBusy(false);
                     if (m_operationOverlay)
                         m_operationOverlay->showFailure("缓存配置发送失败");
                 }
@@ -121,7 +121,7 @@ void Widget::initUI()
             [this, pageInfo]() {
                 if (!sendCommand("clear_offline_cache")) {
                     if (pageInfo)
-                        pageInfo->setOfflineCacheBusy(false);
+                        //pageInfo->setOfflineCacheBusy(false);
                     if (m_operationOverlay)
                         m_operationOverlay->showFailure("清除缓存命令失败");
                 }
@@ -131,7 +131,7 @@ void Widget::initUI()
             [this, pageInfo]() {
                 if (!sendCommand("flush_offline_cache")) {
                     if (pageInfo)
-                        pageInfo->setOfflineCacheBusy(false);
+                        //pageInfo->setOfflineCacheBusy(false);
                     if (m_operationOverlay)
                         m_operationOverlay->showFailure("发送缓存命令失败");
                 }
@@ -1287,8 +1287,8 @@ bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOu
             timedOutCmd == "flush_offline_cache") {
             if (m_stack) {
                 Pageinfo *pageInfo = qobject_cast<Pageinfo *>(m_stack->widget(3));
-                if (pageInfo)
-                    pageInfo->setOfflineCacheBusy(false);
+                //if (pageInfo)
+                    //pageInfo->setOfflineCacheBusy(false);
             }
         }
         if (m_operationOverlay && timedOutCmd != "get_runtime_state" && timedOutCmd != "set_relay")
