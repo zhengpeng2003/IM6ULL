@@ -9,7 +9,7 @@
 #include <QtMath>
 #include <algorithm>
 
-#include "pageui/TrendChartWidget.h"
+#include "../pageui/TrendChartWidget.h"
 
 PageTrend::PageTrend(QWidget *parent)
     : QWidget(parent)
@@ -215,7 +215,7 @@ void PageTrend::refreshSlaveCombo()
         for (const SlaveDeviceInfo &slave : slaveInfos) {
             if (slave.masterSlot != masterSlot)
                 continue;
-            const QString name = slave.displayName.isEmpty() ? slave.deviceName : slave.displayName;
+            const QString name = slave.displayName.isEmpty() ? slave.deviceType : slave.displayName;
             slaveCombo->addItem(QString("%1 %2").arg(slave.slaveAddr).arg(name),
                                 slave.slaveAddr);
         }

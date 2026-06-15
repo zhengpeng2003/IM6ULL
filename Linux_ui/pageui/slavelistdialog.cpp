@@ -135,9 +135,12 @@ void SlaveListDialog::updateRow(Row &row,
                                 const SlaveDeviceInfo &slave,
                                 const SlaveRuntimeInfo &runtime)
 {
-    const QString name = slave.displayName.isEmpty() ? slave.deviceType : slave.displayName;
+    const QString typeName = slave.deviceType == "sensor_th"
+        ? "温湿度传感器"
+        : (slave.deviceType == "relay" ? "继电器" : (slave.deviceType == "meter" ? "电表" : slave.deviceType));
+    const QString name = slave.displayName.isEmpty() ? typeName : slave.displayName;
     row.title->setText(QString("地址 %1  %2").arg(slave.slaveAddr).arg(name));
-    row.meta->setText(QString("%1  %2").arg(currentMasterName).arg(slave.deviceName));
+    row.meta->setText(QString("%1  %2").arg(currentMasterName.isEmpty() ? "--" : currentMasterName).arg(slave.deviceType));
     row.state->setText(runtime.online ? "在线" : "离线");
     row.state->setProperty("state", runtime.online ? "online" : "offline");
     row.state->style()->unpolish(row.state);

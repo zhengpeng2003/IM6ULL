@@ -16,11 +16,12 @@
 #include <QString>
 #include <QVector>
 #include <QWidget>
-#include "sensorui/relaycontroldialog.h"
+#include "../sensorui/relaycontroldialog.h"
 class SlaveListDialog;
 class SlaveDetailDialog;
 class SensorThDetailCardUi;
 class RelayDetailCardUi;
+class QVBoxLayout;
 
 struct MasterStatusInfo
 {

@@ -14,10 +14,10 @@
 #include "ui/TopStatusBar.h"
 #include "ui/BottomNavBar.h"
 #include "ui/operationoverlaywidget.h"
-#include "pages/pagesetting.h"
-#include "pages/pagetrend.h"
-#include "pages/PageStatus.h"
-#include "pages/pageinfo.h"
+#include "../pages/pagesetting.h"
+#include "../pages/pagetrend.h"
+#include "../pages/PageStatus.h"
+#include "../pages/pageinfo.h"
 #include "ipc/ipc_client.h"
 
 QT_BEGIN_NAMESPACE

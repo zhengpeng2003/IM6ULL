@@ -9,7 +9,7 @@
 #include <QTimer>
 #include <QMessageBox>
 
-#include "pageui/addslavedialog.h"
+#include "../pageui/addslavedialog.h"
 
 IpcClient *Widget::_Myclient = nullptr;   // ✅ static 定义只能在 cpp
 
@@ -1028,16 +1028,14 @@ void Widget::upsertRegisteredSlave(int masterSlot,
             continue;
         }
 
-        slave.deviceName = name;
-        slave.displayName = displayName;
+        slave.displayName = name.isEmpty() ? displayName : name;
         return;
     }
 
     SlaveDeviceInfo info;
     info.masterSlot = masterSlot;
     info.slaveAddr = slaveAddr;
-    info.deviceName = name;
-    info.displayName = displayName;
+    info.displayName = name.isEmpty() ? displayName : name;
     info.deviceType = deviceType;
     info.online = false;
     m_slaveDevices.append(info);

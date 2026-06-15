@@ -7,8 +7,8 @@
 #include <QVector>
 #include <QWidget>
 
-#include "data/data_protocol.h"
-#include "pages/PageStatus.h"
+#include "../data/data_protocol.h"
+#include "PageStatus.h"
 
 class QLabel;
 class QPushButton;
