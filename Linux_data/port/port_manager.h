@@ -23,6 +23,7 @@ public:
                     int baud,
                     char *reason,
                     size_t reason_size);
+    int getPortInfo(int slot, char *port, size_t port_size, int *baud, int *connected);
     int disconnectPort(int slot, char *reason, size_t reason_size);
     void pollSlot(int slot);
     int addDevice(int slot,
@@ -74,6 +75,7 @@ int port_manager_connect(int slot,
                          int baud,
                          char *reason,
                          size_t reason_size);
+int port_manager_get_port_info(int slot, char *port, size_t port_size, int *baud, int *connected);
 int port_manager_disconnect(int slot, char *reason, size_t reason_size);
 void port_manager_poll_slot(int slot);
 int port_manager_add_device(int slot,

@@ -7,6 +7,7 @@
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QTimer>
+#include <QMessageBox>
 
 #include "pageui/addslavedialog.h"
 
@@ -189,6 +190,13 @@ void Widget::initUI()
             [this](int masterSlot, const QString &deviceNode) {
                 Q_UNUSED(deviceNode);
 
+                if (QMessageBox::question(this,
+                                          "断开端口",
+                                          "确认断开当前端口通信？该操作不一定删除端口和从站配置。",
+                                          QMessageBox::Yes | QMessageBox::No,
+                                          QMessageBox::No) != QMessageBox::Yes)
+                    return;
+
                 if (m_operationOverlay)
                     m_operationOverlay->showLoading("正在断开端口...");
 
@@ -368,9 +376,17 @@ void Widget::initUI()
                     return;
                 }
 
+                if (QMessageBox::question(this,
+                                          "删除从站",
+                                          "确认删除该从站配置？",
+                                          QMessageBox::Yes | QMessageBox::No,
+                                          QMessageBox::No) != QMessageBox::Yes)
+                    return;
+
                 QJsonObject payload;
                 payload.insert("slot", masterSlot);
                 payload.insert("slave_id", slaveAddr);
+                payload.insert("device_type", deviceType);
 
                 quint32 seq = 0;
                 if (m_operationOverlay)
@@ -433,14 +449,6 @@ void Widget::initUI()
                     m_pendingRelay.slaveAddr = slaveAddr;
                     m_pendingRelay.oldStates = m_relayStates.value(key, 0);
                     m_pendingRelay.requestedStates = states;
-                    QTimer::singleShot(5000, this, [this, seq]() {
-                        if (!m_pendingRelay.active || m_pendingRelay.seq != seq)
-                            return;
-                        m_pendingRelay = PendingRelayCommand();
-                        if (m_operationOverlay)
-                            m_operationOverlay->showFailure("命令超时，请刷新状态");
-                        (void)sendCommand("get_runtime_state");
-                    });
                 } else if (m_operationOverlay) {
                     m_operationOverlay->showFailure("继电器命令发送失败");
                 }
@@ -462,111 +470,85 @@ void Widget::initUI()
                          << "reason:" << reason
                          << "message:" << message;
 
+                const bool wasPending = m_pendingCommands.contains(seq);
+                completePendingCommand(seq);
+
+                const bool ok = ackSucceeded(status, ackRoot);
+                const QString text = ackDisplayText(cmd, ok, reason, message);
+
                 if (cmd == "get_offline_cache_config" ||
                     cmd == "set_offline_cache_config" ||
                     cmd == "clear_offline_cache" ||
                     cmd == "flush_offline_cache") {
-                    handleOfflineCacheAck(cmd, status, reason, ackRoot);
+                    handleOfflineCacheAck(cmd, ok ? "ok" : "failed", reason, ackRoot);
                     return;
                 }
 
-                if (cmd == "add_device" &&
-                    m_pendingAddSlave.active &&
-                    m_pendingAddSlave.seq == seq) {
-                    const bool ok = (status == "ok");
-                    const QString text = !message.isEmpty()
-                        ? message
-                        : (!reason.isEmpty() ? reason : (ok ? "Add success" : "Add failed"));
-
-                    if (m_addSlaveDialog)
-                        m_addSlaveDialog->setResult(ok, ok ? "Add success" : text);
-
-                    if (ok) {
-                        upsertRegisteredSlave(m_pendingAddSlave.masterSlot,
-                                              m_pendingAddSlave.slaveId,
-                                              QString("从站 %1").arg(m_pendingAddSlave.slaveId),
-                                              m_pendingAddSlave.deviceType);
-                        refreshHomeMasterAndSlaveList(m_pendingAddSlave.masterSlot);
+                if (!ok) {
+                    if (cmd == "add_device" && m_pendingAddSlave.active && m_pendingAddSlave.seq == seq) {
+                        if (m_addSlaveDialog)
+                            m_addSlaveDialog->setResult(false, text);
+                        m_pendingAddSlave = PendingAddSlave();
                     }
-
-                    m_pendingAddSlave = PendingAddSlave();
-                    return;
-                }
-
-                if (cmd == "remove_device" &&
-                    m_pendingRemoveSlave.active &&
-                    m_pendingRemoveSlave.seq == seq) {
-                    const bool ok = (status == "ok");
-                    const QString text = !message.isEmpty()
-                        ? message
-                        : (!reason.isEmpty() ? reason : (ok ? "Remove success" : "Remove failed"));
-
-                    if (ok) {
-                        removeRegisteredSlave(m_pendingRemoveSlave.masterSlot,
-                                              m_pendingRemoveSlave.slaveAddr,
-                                              m_pendingRemoveSlave.deviceType);
-                        refreshHomeMasterAndSlaveList(m_pendingRemoveSlave.masterSlot);
-                        (void)sendCommand("get_runtime_state");
-                        if (m_operationOverlay)
-                            m_operationOverlay->showSuccess("从站已删除");
-                    } else if (m_operationOverlay) {
+                    if (cmd == "remove_device" && m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq)
+                        m_pendingRemoveSlave = PendingRemoveSlave();
+                    if (cmd == "set_relay" && m_pendingRelay.active && m_pendingRelay.seq == seq)
+                        m_pendingRelay = PendingRelayCommand();
+                    if (m_operationOverlay)
                         m_operationOverlay->showFailure(text);
-                    }
+                    return;
+                }
 
+                if (cmd == "add_device" && m_pendingAddSlave.active && m_pendingAddSlave.seq == seq) {
+                    if (m_addSlaveDialog)
+                        m_addSlaveDialog->setResult(true, "添加从站完成");
+                    m_pendingAddSlave = PendingAddSlave();
+                    requestRuntimeRefresh();
+                    return;
+                }
+
+                if (cmd == "remove_device" && m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq) {
+                    removeRegisteredSlave(m_pendingRemoveSlave.masterSlot,
+                                          m_pendingRemoveSlave.slaveAddr,
+                                          m_pendingRemoveSlave.deviceType);
+                    refreshHomeMasterAndSlaveList(m_pendingRemoveSlave.masterSlot);
                     m_pendingRemoveSlave = PendingRemoveSlave();
+                    if (m_operationOverlay)
+                        m_operationOverlay->showSuccess("从站已删除");
+                    requestRuntimeRefresh();
                     return;
                 }
 
                 if (cmd == "set_relay" && m_pendingRelay.active && m_pendingRelay.seq == seq) {
-                    const bool ok = (status == "ok");
-                    const QString text = !message.isEmpty() ? message : reason;
-                    if (ok) {
-                        const QString key = relayStateKey(m_pendingRelay.masterSlot, m_pendingRelay.slaveAddr);
-                        const int states = m_pendingRelay.requestedStates;
-                        m_relayStates.insert(key, states);
-                        if (m_pageStatus) {
-                            m_pageStatus->setRelayStates(m_pendingRelay.masterSlot,
-                                                         m_pendingRelay.slaveAddr,
-                                                         (states & 0x01) != 0,
-                                                         (states & 0x02) != 0,
-                                                         (states & 0x04) != 0,
-                                                         QDateTime::currentDateTime().toString("HH:mm:ss"));
-                        }
-                        if (m_operationOverlay)
-                            m_operationOverlay->showSuccess("继电器命令完成");
-                        (void)sendCommand("get_runtime_state");
-                    } else if (m_operationOverlay) {
-                        m_operationOverlay->showFailure(text.isEmpty() ? "继电器命令失败" : text);
+                    const QString key = relayStateKey(m_pendingRelay.masterSlot, m_pendingRelay.slaveAddr);
+                    const int states = m_pendingRelay.requestedStates;
+                    m_relayStates.insert(key, states);
+                    if (m_pageStatus) {
+                        m_pageStatus->setRelayStates(m_pendingRelay.masterSlot,
+                                                     m_pendingRelay.slaveAddr,
+                                                     (states & 0x01) != 0,
+                                                     (states & 0x02) != 0,
+                                                     (states & 0x04) != 0,
+                                                     QDateTime::currentDateTime().toString("HH:mm:ss"));
                     }
                     m_pendingRelay = PendingRelayCommand();
+                    if (m_operationOverlay)
+                        m_operationOverlay->showSuccess("继电器命令完成");
+                    requestRuntimeRefresh();
                     return;
                 }
 
-                if (cmd == "remove_device" && status == "ok") {
-                    handleRemoteRemoveDeviceAck(ackRoot);
-                    (void)sendCommand("get_runtime_state");
+                if (!wasPending)
                     return;
+
+                if (m_operationOverlay && cmd != "scan_ports" && cmd != "get_runtime_state")
+                    m_operationOverlay->showSuccess(text);
+
+                if (cmd == "connect_port" || cmd == "disconnect_port" ||
+                    cmd == "set_device_threshold" || cmd == "add_device" ||
+                    cmd == "remove_device") {
+                    requestRuntimeRefresh();
                 }
-
-                if (!m_operationOverlay)
-                    return;
-
-                if (status != "ok") {
-                    const QString text = !message.isEmpty() ? message : reason;
-                    m_operationOverlay->showFailure(text.isEmpty() ? "Command failed" : text);
-                    return;
-                }
-
-                if (cmd == "connect_port")
-                    m_operationOverlay->showSuccess("连接完成");
-                else if (cmd == "disconnect_port")
-                    m_operationOverlay->showSuccess("断开完成");
-                else if (cmd == "add_device")
-                    m_operationOverlay->showSuccess("添加从站完成");
-                else if (cmd == "remove_device")
-                    m_operationOverlay->showSuccess("删除从站完成");
-                else if (cmd == "set_relay")
-                    m_operationOverlay->showLoading("继电器命令执行中...");
             });
 
     connect(_Myclient,
@@ -674,6 +656,7 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
     m_slaveDevices.clear();
     m_relayStates.clear();
     m_runtimePorts.clear();
+    failAllPendingCommands("IPC 未连接");
     m_pendingAddSlave = PendingAddSlave();
     m_pendingRemoveSlave = PendingRemoveSlave();
     m_activeAlarmCount = 0;
@@ -1120,8 +1103,70 @@ QString Widget::relayStateKey(int masterSlot, int slaveAddr) const
     return QString("%1:%2").arg(masterSlot).arg(slaveAddr);
 }
 
+bool Widget::ackSucceeded(const QString &status, const QJsonObject &ackRoot) const
+{
+    if (ackRoot.contains("ok"))
+        return ackRoot.value("ok").toBool(false);
+    return status == "ok";
+}
+
+QString Widget::ackDisplayText(const QString &cmd,
+                               bool ok,
+                               const QString &reason,
+                               const QString &message) const
+{
+    if (!message.isEmpty())
+        return message;
+    if (!reason.isEmpty())
+        return reason;
+
+    if (!ok)
+        return "命令执行失败";
+    if (cmd == "connect_port")
+        return "连接完成";
+    if (cmd == "disconnect_port")
+        return "断开完成";
+    if (cmd == "add_device")
+        return "添加从站完成";
+    if (cmd == "remove_device")
+        return "删除从站完成";
+    if (cmd == "set_device_threshold")
+        return "阈值已保存";
+    return "命令执行完成";
+}
+
+void Widget::completePendingCommand(quint32 seq)
+{
+    auto it = m_pendingCommands.find(seq);
+    if (it == m_pendingCommands.end())
+        return;
+    if (it->timer) {
+        it->timer->stop();
+        it->timer->deleteLater();
+    }
+    m_pendingCommands.erase(it);
+}
+
+void Widget::failAllPendingCommands(const QString &message)
+{
+    const QList<quint32> seqs = m_pendingCommands.keys();
+    for (quint32 seq : seqs)
+        completePendingCommand(seq);
+    m_pendingAddSlave = PendingAddSlave();
+    m_pendingRemoveSlave = PendingRemoveSlave();
+    m_pendingRelay = PendingRelayCommand();
+    if (m_addSlaveDialog)
+        m_addSlaveDialog->setResult(false, message);
+}
+
 bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOut)
 {
+    if (!_Myclient || !_Myclient->isConnected()) {
+        if (m_operationOverlay)
+            m_operationOverlay->showFailure("后端未连接");
+        return false;
+    }
+
     const quint32 seq = m_nextCommandSeq++;
     if (seqOut)
         *seqOut = seq;
@@ -1137,11 +1182,40 @@ bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOu
                        << "cmd:" << cmd
                        << "json:" << QString::fromUtf8(msg);
 
-    const bool ok = _Myclient && _Myclient->sendMessage(msg);
+    const bool sent = _Myclient->sendMessage(msg);
     qDebug() << "[IPC][sendCommandResult]"
              << "seq:" << seq
              << "cmd:" << cmd
-             << "ok:" << ok;
+             << "ok:" << sent;
 
-    return ok;
+    if (!sent)
+        return false;
+
+    PendingCommand pending;
+    pending.cmd = cmd;
+    pending.startedAt.start();
+    pending.timer = new QTimer(this);
+    pending.timer->setSingleShot(true);
+    pending.timer->setInterval(5000);
+    connect(pending.timer, &QTimer::timeout, this, [this, seq]() {
+        auto it = m_pendingCommands.find(seq);
+        if (it == m_pendingCommands.end())
+            return;
+        const QString timedOutCmd = it->cmd;
+        completePendingCommand(seq);
+        if (m_pendingAddSlave.active && m_pendingAddSlave.seq == seq) {
+            if (m_addSlaveDialog)
+                m_addSlaveDialog->setResult(false, "通信超时，请刷新状态");
+            m_pendingAddSlave = PendingAddSlave();
+        }
+        if (m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq)
+            m_pendingRemoveSlave = PendingRemoveSlave();
+        if (m_pendingRelay.active && m_pendingRelay.seq == seq)
+            m_pendingRelay = PendingRelayCommand();
+        if (m_operationOverlay && timedOutCmd != "get_runtime_state")
+            m_operationOverlay->showFailure("通信超时，请刷新状态");
+    });
+    pending.timer->start();
+    m_pendingCommands.insert(seq, pending);
+    return true;
 }

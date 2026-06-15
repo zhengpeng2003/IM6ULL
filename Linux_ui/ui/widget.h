@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QHash>
 #include <QTimer>
+#include <QElapsedTimer>
 #include "ui/TopStatusBar.h"
 #include "ui/BottomNavBar.h"
 #include "ui/operationoverlaywidget.h"
@@ -56,6 +57,13 @@ private:
                                const QString &status,
                                const QString &reason,
                                const QJsonObject &ackRoot);
+    bool ackSucceeded(const QString &status, const QJsonObject &ackRoot) const;
+    QString ackDisplayText(const QString &cmd,
+                           bool ok,
+                           const QString &reason,
+                           const QString &message) const;
+    void completePendingCommand(quint32 seq);
+    void failAllPendingCommands(const QString &message);
     int slotFromPortId(const QString &portId) const;
     void handleRemoteRemoveDeviceAck(const QJsonObject &ack);
     void upsertRegisteredSlave(int masterSlot,
@@ -103,6 +111,12 @@ private:
         int requestedStates = 0;
     };
 
+    struct PendingCommand {
+        QString cmd;
+        QElapsedTimer startedAt;
+        QTimer *timer = nullptr;
+    };
+
     QStackedWidget *m_stack = nullptr;
     PageStatus *m_pageStatus = nullptr;
     PageTrend *m_pageTrend = nullptr;
@@ -112,6 +126,7 @@ private:
     QList<SlaveDeviceInfo> m_slaveDevices;
     QHash<QString, int> m_relayStates;
     QHash<int, MasterPortInfo> m_runtimePorts;
+    QHash<quint32, PendingCommand> m_pendingCommands;
     QTimer *m_ipcReconnectTimer = nullptr;
     PendingAddSlave m_pendingAddSlave;
     PendingRemoveSlave m_pendingRemoveSlave;

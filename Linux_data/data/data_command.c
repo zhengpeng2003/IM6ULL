@@ -160,19 +160,24 @@ static int handle_disconnect_port(uint32_t seq, struct json_object *root, const 
     if (json_object_object_get_ex(root, "slot", &v))
         slot = json_object_get_int(v);
 
+    char old_port[128] = "";
+    int old_baud = 0;
+    int was_connected = 0;
+    (void)port_manager_get_port_info(slot, old_port, sizeof(old_port), &old_baud, &was_connected);
+
     int ret = port_manager_disconnect(slot, reason, sizeof(reason));
     data_ack_send_port_result(seq,
                               cmd,
                               ret == 0,
                               ret == 0 ? "" : reason,
-                              ret == 0 ? "disconnected" : data_ack_message_from_reason(reason),
+                              ret == 0 ? "port disconnected" : data_ack_message_from_reason(reason),
                               slot,
-                              "",
+                              old_port,
                               "unknown",
-                              0,
+                              old_baud,
                               0);
     if (ret == 0)
-        data_publish_port_register(seq, slot, "", 0, "disconnected");
+        data_publish_port_register(seq, slot, old_port, old_baud, "disconnected");
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -238,11 +243,15 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
                                          threshold_config_ptr,
                                          reason,
                                          sizeof(reason));
-    data_ack_send(seq,
-                  cmd,
-                  ret == 0,
-                  ret == 0 ? "" : reason,
-                  ret == 0 ? "device config added, waiting for first poll" : data_ack_message_from_reason(reason));
+    data_ack_send_device_result(seq,
+                                cmd,
+                                ret == 0,
+                                ret == 0 ? "" : reason,
+                                ret == 0 ? "device added" : data_ack_message_from_reason(reason),
+                                slot,
+                                slave_id,
+                                device_type,
+                                poll_interval_ms);
     if (ret == 0) {
         int publish_ret = data_publish_device_register(seq,
                                                        slot,
@@ -280,11 +289,16 @@ static int handle_set_device_threshold(uint32_t seq, struct json_object *root, c
                                                 &threshold_config,
                                                 reason,
                                                 sizeof(reason));
-    data_ack_send(seq,
-                  cmd,
-                  ret == 0,
-                  ret == 0 ? "" : reason,
-                  ret == 0 ? "device threshold saved" : data_ack_message_from_reason(reason));
+    data_ack_send_threshold_result(seq,
+                                   cmd,
+                                   ret == 0,
+                                   ret == 0 ? "" : reason,
+                                   ret == 0 ? "threshold updated" : data_ack_message_from_reason(reason),
+                                   slot,
+                                   slave_id,
+                                   "sensor_th",
+                                   threshold_config.threshold_enabled,
+                                   &threshold_config);
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -323,12 +337,22 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
     if (slave_id <= 0 && json_object_object_get_ex(root, "deviceId", &v))
         slave_id = json_object_get_int(v);
 
+    const char *device_type = "unknown";
+    if (json_object_object_get_ex(root, "deviceType", &v))
+        device_type = json_object_get_string(v);
+    if (strcmp(device_type, "unknown") == 0 && json_object_object_get_ex(root, "device_type", &v))
+        device_type = json_object_get_string(v);
+
     int ret = port_manager_remove_device(slot, slave_id, reason, sizeof(reason));
-    data_ack_send(seq,
-                  cmd,
-                  ret == 0,
-                  ret == 0 ? "" : reason,
-                  ret == 0 ? "device removed" : data_ack_message_from_reason(reason));
+    data_ack_send_device_result(seq,
+                                cmd,
+                                ret == 0,
+                                ret == 0 ? "" : reason,
+                                ret == 0 ? "device removed" : data_ack_message_from_reason(reason),
+                                slot,
+                                slave_id,
+                                device_type,
+                                0);
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 

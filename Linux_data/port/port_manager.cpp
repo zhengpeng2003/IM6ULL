@@ -1233,6 +1233,22 @@ int PortManager::connectPort(int slot,
     return 0;
 }
 
+int PortManager::getPortInfo(int slot, char *port, size_t port_size, int *baud, int *connected)
+{
+    if (!validSlot(slot))
+        return -1;
+
+    std::lock_guard<std::mutex> guard(impl_->lock);
+    const PortChannel &channel = impl_->channels[slot];
+    if (port && port_size > 0)
+        snprintf(port, port_size, "%s", channel.port.c_str());
+    if (baud)
+        *baud = channel.baud;
+    if (connected)
+        *connected = channel.connected ? 1 : 0;
+    return 0;
+}
+
 int PortManager::disconnectPort(int slot, char *reason, size_t reason_size)
 {
     if (!validSlot(slot)) {
@@ -1772,6 +1788,11 @@ extern "C" int port_manager_connect(int slot,
                                      size_t reason_size)
 {
     return g_manager.connectPort(slot, port, baud, reason, reason_size);
+}
+
+extern "C" int port_manager_get_port_info(int slot, char *port, size_t port_size, int *baud, int *connected)
+{
+    return g_manager.getPortInfo(slot, port, port_size, baud, connected);
 }
 
 extern "C" int port_manager_disconnect(int slot, char *reason, size_t reason_size)
