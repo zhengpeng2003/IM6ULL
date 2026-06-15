@@ -590,7 +590,7 @@ static int process_command_message(uint32_t seq, struct json_object *root, const
     }
 
     char reason[MAX_ACK_MSG_LEN] = "";
-    snprintf(reason, sizeof(reason), "unknown_command");
+    snprintf(reason, sizeof(reason), "unsupported_command");
     data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
     return CMD_PROCESS_ERROR;
 }

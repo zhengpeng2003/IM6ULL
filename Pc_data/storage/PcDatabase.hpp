@@ -51,6 +51,8 @@ struct DbSelectedDevice
 
 struct CommandLogTarget
 {
+    std::string commandId;
+    std::int64_t seq = 0;
     std::string commandType;
     std::string gatewayId;
     std::string portId;
@@ -88,6 +90,7 @@ public:
                                const std::string& message,
                                std::int64_t finishTimeMs);
     bool queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& target);
+    std::vector<CommandLogTarget> collectCommandTimeouts(std::int64_t nowMs, std::int64_t timeoutMs);
     bool updateDeviceOnlineFromTelemetry(const TelemetryPoint& point);
     int markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs);
     int markStaleGateways(std::int64_t nowMs, std::int64_t timeoutMs);

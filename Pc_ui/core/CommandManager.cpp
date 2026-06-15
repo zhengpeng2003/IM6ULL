@@ -65,6 +65,10 @@ void CommandManager::sendRelayCommand(const DeviceNode &device, const QString &c
     obj["commandType"] = rec.command;
     obj["factory_id"] = rec.factoryId;
     obj["area_id"] = rec.areaId;
+    QJsonObject target;
+    target["gatewayId"] = rec.gatewayId;
+    target["portId"] = device.port;
+    obj["target"] = target;
     obj["gatewayId"] = rec.gatewayId;
     obj["portId"] = device.port;
     obj["gateway_id"] = rec.gatewayId;
@@ -189,14 +193,15 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
     if (stage == QStringLiteral("sent") && rec.ok) {
         rec.state = QStringLiteral("running");
         m_pending.insert(cmdId, rec);
-        emit commandStateChanged(cmdId, rec.state);
+        emit commandStateChanged(cmdId, QStringLiteral("已发送，等待设备确认"));
         return;
     }
 
     if (stage == QStringLiteral("done") && !rec.ok) {
         rec.state = QStringLiteral("failed");
         m_pending.insert(cmdId, rec);
-        finishCommand(cmdId, rec.state);
+        const QString message = rec.reason.isEmpty() ? QStringLiteral("failed") : QStringLiteral("failed: ") + rec.reason;
+        finishCommand(cmdId, message);
         return;
     }
 
@@ -218,9 +223,15 @@ void CommandManager::onCommandLogUpdate(const QJsonObject &obj)
     const QString stage = obj.value(QStringLiteral("stage")).toString();
     const QString status = obj.value(QStringLiteral("status")).toString();
     if (stage == QStringLiteral("done") && status == QStringLiteral("success")) {
-        finishCommand(cmdId, QStringLiteral("success"));
+        const CommandRecord rec = m_pending.value(cmdId);
+        if (rec.command == QStringLiteral("set_relay")) {
+            finishCommand(cmdId, QStringLiteral("写入成功，等待状态回读"));
+        } else {
+            finishCommand(cmdId, QStringLiteral("success"));
+        }
     } else if (stage == QStringLiteral("done")) {
-        finishCommand(cmdId, QStringLiteral("failed"));
+        const QString message = obj.value(QStringLiteral("message")).toString(obj.value(QStringLiteral("reason")).toString());
+        finishCommand(cmdId, status == QStringLiteral("timeout") ? QStringLiteral("执行超时，请刷新状态") : QStringLiteral("failed: ") + message);
     }
 }
 
@@ -230,7 +241,7 @@ void CommandManager::startCommandTimeout(const QString &cmdId)
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, this, [this, cmdId]() {
         if (!m_pending.contains(cmdId)) return;
-        finishCommand(cmdId, QStringLiteral("timeout"));
+        finishCommand(cmdId, QStringLiteral("执行超时，请刷新状态"));
         emit commandTimeout(cmdId);
     });
     m_timeoutTimers.insert(cmdId, timer);

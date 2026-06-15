@@ -125,6 +125,9 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
     std::ostringstream oss;
     oss << "{";
     oss << "\"type\":\"command_log_update\",";
+    if (target) {
+        oss << "\"cmd_id\":\"" << jsonEscape(target->commandId) << "\",";
+    }
     oss << "\"seq\":" << seq << ",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"stage\":\"done\",";

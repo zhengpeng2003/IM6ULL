@@ -114,6 +114,18 @@ int main()
                                                                   result.deviceCount));
                     }
                 }
+                const std::vector<CommandLogTarget> commandTimeouts =
+                    database.collectCommandTimeouts(nowMs, 8000);
+                for (const CommandLogTarget& target : commandTimeouts) {
+                    if (ipc.hasClient()) {
+                        ipc.sendMessage(buildCommandLogUpdateJson(target.seq,
+                                                                  target.commandType,
+                                                                  "timeout",
+                                                                  "linux_data_ack_timeout",
+                                                                  "device execution timeout",
+                                                                  &target));
+                    }
+                }
             }
             this_thread::sleep_for(chrono::seconds(1));
         }

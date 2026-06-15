@@ -340,12 +340,14 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
             (commandType == QStringLiteral("add_device") ||
              commandType == QStringLiteral("set_relay") ||
              commandType == QStringLiteral("set_threshold") ||
+             commandType == QStringLiteral("set_device_threshold") ||
              commandType == QStringLiteral("cache") ||
              commandType == QStringLiteral("sync") ||
              commandType == QStringLiteral("get_config"))) {
             requestDevices();
             requestLatestPoints();
             requestPortStatus();
+            requestGatewayStatus();
         }
         if (commandType == QStringLiteral("remove_device")) {
             QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
