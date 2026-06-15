@@ -70,6 +70,7 @@ DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmMana
 void DashboardPage::refreshView()
 {
     const auto devices = m_device->allDevices();
+    const bool serviceOnline = m_data ? m_data->isServiceOnline() : false;
     QSet<QString> gateways, masters;
     QSet<QString> onlineMasters;
     QHash<QString, int> masterDeviceCounts;
@@ -84,7 +85,7 @@ void DashboardPage::refreshView()
         masters.insert(masterKey);
         masterDeviceCounts[masterKey] += 1;
     }
-    m_gatewayCard->setValue(QString::number(gateways.size()));
+    m_gatewayCard->setValue(serviceOnline ? QString::number(gateways.size()) : QStringLiteral("服务离线"));
     m_masterCard->setValue(QString::number(onlineMasters.size()));
     m_slaveCard->setValue(QString::number(onlineSlaveCount));
     m_alarmCard->setValue(QString::number(m_alarm->activeAlarmCount()));
@@ -94,7 +95,7 @@ void DashboardPage::refreshView()
     for (const auto &m : masters) {
         m_masterTable->setItem(row, 0, new QTableWidgetItem(m.section('/', 0, 0)));
         m_masterTable->setItem(row, 1, new QTableWidgetItem("RS485-" + QString::number(m.section('/', 1, 1).toInt() + 1)));
-        m_masterTable->setItem(row, 2, new QTableWidgetItem(onlineMasters.contains(m) ? QStringLiteral("在线") : QStringLiteral("离线")));
+        m_masterTable->setItem(row, 2, new QTableWidgetItem(serviceOnline ? (onlineMasters.contains(m) ? QStringLiteral("在线") : QStringLiteral("离线")) : QStringLiteral("Pc_data 服务离线")));
         m_masterTable->setItem(row, 3, new QTableWidgetItem(QString::number(masterDeviceCounts.value(m))));
         ++row;
     }
@@ -111,7 +112,8 @@ void DashboardPage::refreshView()
     const auto realtimeDevices = m_data->allRealtimeData();
     int errorCount = 0;
     for (const auto &device : realtimeDevices) {
-        if (!device.valid) {
+        if (!device.valid || device.dataState == QStringLiteral("stale") ||
+            device.dataState == QStringLiteral("offline") || device.serviceOffline || device.mock) {
             ++errorCount;
         }
     }
@@ -119,7 +121,8 @@ void DashboardPage::refreshView()
     m_errorTable->setRowCount(errorCount);
     row = 0;
     for (const auto &device : realtimeDevices) {
-        if (device.valid) {
+        if (device.valid && device.dataState != QStringLiteral("stale") &&
+            device.dataState != QStringLiteral("offline") && !device.serviceOffline && !device.mock) {
             continue;
         }
 

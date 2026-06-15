@@ -14,12 +14,14 @@ public slots:
     void setOnlineGatewayCount(int count);
     void setOnlineDeviceCount(int count);
     void setAlarmCount(int count);
+    void setServiceOnline(bool online);
     void updateCurrentTime();
 
 private:
     QLabel *m_gatewayLabel = nullptr;
     QLabel *m_deviceLabel = nullptr;
     QLabel *m_alarmLabel = nullptr;
+    QLabel *m_serviceLabel = nullptr;
     QLabel *m_timeLabel = nullptr;
     QTimer *m_timer = nullptr;
 };

@@ -51,8 +51,10 @@ bool DataParser::parseJson(const QByteArray &json, DataPack &outPack)
 
     QJsonObject root = doc.object();
     outPack.seq  = root.value("seq").toInt();
-    outPack.time = QDateTime::fromSecsSinceEpoch(
-        root.value("time").toVariant().toLongLong());
+    const qint64 rootTimestampMs = root.value("timestampMs").toVariant().toLongLong();
+    outPack.time = rootTimestampMs > 0
+        ? QDateTime::fromMSecsSinceEpoch(rootTimestampMs)
+        : QDateTime::fromSecsSinceEpoch(root.value("time").toVariant().toLongLong());
     outPack.masterSlot = -1;
 
     const QJsonObject site = root.value("site").toObject();
@@ -69,6 +71,13 @@ bool DataParser::parseJson(const QByteArray &json, DataPack &outPack)
         dev.deviceId = o.value("id").toInt();
         dev.valid    = jsonBoolValue(o.value("valid"));
         dev.errorMessage = o.value("errorMessage").toString();
+        dev.timestampMs = o.value("timestampMs").toVariant().toLongLong();
+        if (dev.timestampMs <= 0) {
+            dev.timestampMs = rootTimestampMs;
+        }
+        if (!dev.valid && dev.errorMessage.isEmpty()) {
+            dev.errorMessage = QStringLiteral("数据无效");
+        }
 
         QString typeStr = o.value("type").toString();
 

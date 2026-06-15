@@ -5,6 +5,7 @@
 #include <QMutex>
 #include <QJsonObject>
 #include <QList>
+#include <QString>
 #include "model/TelemetryModel.h"
 
 class DeviceManager;
@@ -16,7 +17,8 @@ class DataManager : public QObject
 public:
     explicit DataManager(DeviceManager *deviceManager, AlarmManager *alarmManager, QObject *parent = nullptr);
 
-    void loadDemoData();
+    void loadDemoData(bool demoMode = false);
+    bool isServiceOnline() const;
     QList<DeviceNode> deviceTreeSnapshot() const;
     RealtimeDeviceData deviceData(const QString &deviceKey) const;
     QList<RealtimeDeviceData> allRealtimeData() const;
@@ -26,7 +28,7 @@ public:
     void forgetRemovedDevice(const QString &gatewayId, const QString &portId, int deviceId);
     void clearRuntimeData();
     void clearAllData();
-    void markAllDevicesOffline();
+    void markAllDevicesOffline(const QString &reason = QStringLiteral("service_offline"));
 
 public slots:
     void onLatestPointsMessage(const QJsonObject &obj);
@@ -60,4 +62,5 @@ private:
     mutable QMutex m_mutex;
     QHash<QString, RealtimeDeviceData> m_realtimeMap;
     QHash<QString, qint64> m_deletedDevices;
+    bool m_serviceOnline = true;
 };

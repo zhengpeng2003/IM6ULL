@@ -20,6 +20,7 @@ TopBar::TopBar(QWidget *parent) : QWidget(parent)
     m_gatewayLabel = new QLabel(QStringLiteral("在线网关: 0"), this);
     m_deviceLabel = new QLabel(QStringLiteral("在线设备: 0"), this);
     m_alarmLabel = new QLabel(QStringLiteral("报警: 0"), this);
+    m_serviceLabel = new QLabel(QStringLiteral("Pc_data 服务离线"), this);
     m_timeLabel = new QLabel(this);
 
     layout->addWidget(title);
@@ -27,6 +28,7 @@ TopBar::TopBar(QWidget *parent) : QWidget(parent)
     layout->addWidget(m_gatewayLabel);
     layout->addWidget(m_deviceLabel);
     layout->addWidget(m_alarmLabel);
+    layout->addWidget(m_serviceLabel);
     layout->addWidget(m_timeLabel);
 
     m_timer = new QTimer(this);
@@ -48,6 +50,12 @@ void TopBar::setOnlineDeviceCount(int count)
 void TopBar::setAlarmCount(int count)
 {
     m_alarmLabel->setText(QStringLiteral("报警: %1").arg(count));
+}
+
+void TopBar::setServiceOnline(bool online)
+{
+    m_serviceLabel->setText(online ? QStringLiteral("Pc_data 服务在线")
+                                   : QStringLiteral("Pc_data 服务离线"));
 }
 
 void TopBar::updateCurrentTime()

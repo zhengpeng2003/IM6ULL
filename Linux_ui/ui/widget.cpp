@@ -665,8 +665,12 @@ void Widget::handleIpcDisconnected(TopStatusBar *topBar,
     if (pageSetting)
         pageSetting->setUnscannedState();
 
+    for (SlaveDeviceInfo &slave : m_slaveDevices) {
+        slave.online = false;
+        if (m_pageStatus)
+            m_pageStatus->updateSlaveOnline(slave.masterSlot, slave.slaveAddr, slave.deviceType, false);
+    }
     m_connectedMasterSlots.clear();
-    m_slaveDevices.clear();
     m_relayStates.clear();
     m_runtimePorts.clear();
     failAllPendingCommands("IPC 未连接");
@@ -981,10 +985,19 @@ void Widget::handleDeviceStatus(const DataPack &pack)
         }
 
         if (!device.valid) {
-            if (device.errorMessage == "device_offline" ||
-                device.errorMessage == "modbus_timeout") {
-                updateSlaveOnline(masterSlot, device.deviceId, deviceType, false);
+            updateSlaveOnline(masterSlot, device.deviceId, deviceType, false);
+            if (m_pageStatus) {
+                const QString reason = device.errorMessage.isEmpty() ? QStringLiteral("数据无效") : device.errorMessage;
+                m_pageStatus->setAlarmText(QStringLiteral("告警：从站 %1 %2").arg(device.deviceId).arg(reason));
             }
+            continue;
+        }
+
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (device.timestampMs > 0 && nowMs - device.timestampMs > 30000) {
+            updateSlaveOnline(masterSlot, device.deviceId, deviceType, false);
+            if (m_pageStatus)
+                m_pageStatus->setAlarmText(QStringLiteral("告警：从站 %1 数据已过期，保留最后值").arg(device.deviceId));
             continue;
         }
 

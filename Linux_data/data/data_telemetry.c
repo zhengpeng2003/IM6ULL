@@ -111,8 +111,9 @@ static struct json_object *pack_device_json(const device_data_t *dev)
     json_object_object_add(obj, "deviceId", json_object_new_int(dev->device_id));
     add_string(obj, "deviceName", device_name);
     add_string(obj, "deviceType", device_type);
+    json_object_object_add(obj, "timestampMs", json_object_new_int64(current_time_ms()));
     json_object_object_add(obj, "valid", json_object_new_boolean(dev->valid));
-    add_string(obj, "errorMessage", dev->error_message);
+    add_string(obj, "errorMessage", dev->valid || dev->error_message[0] != '\0' ? dev->error_message : "数据无效");
 
     /* Keep legacy field aliases for Linux_ui/data/data_parser.cpp. */
     json_object_object_add(obj, "id", json_object_new_int(dev->device_id));

@@ -123,6 +123,9 @@ void MainWindow::initIpc()
         if (m_systemSettingPage) {
             m_systemSettingPage->setIpcConnected(true);
         }
+        if (m_topBar) {
+            m_topBar->setServiceOnline(true);
+        }
         requestGatewayStatus();
         requestPortStatus();
         requestDevices();
@@ -595,6 +598,9 @@ void MainWindow::saveMqttConfig(const QString &host, int port)
 
 void MainWindow::markIpcDataOffline()
 {
+    if (m_topBar) {
+        m_topBar->setServiceOnline(false);
+    }
     if (m_data) {
         m_data->markAllDevicesOffline();
     }
