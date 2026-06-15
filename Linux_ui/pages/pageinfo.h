@@ -24,6 +24,7 @@ public:
 signals:
     void reconnectIpcRequested();
     void offlineCacheConfigChanged(bool cacheEnabled, bool flushEnabled);
+    void offlineCacheRefreshRequested();
     void clearOfflineCacheRequested();
     void flushOfflineCacheRequested();
 
@@ -74,6 +75,8 @@ private:
     QLabel *flushStateLabel = nullptr;
     QLabel *pendingCountLabel = nullptr;
     QPushButton *cacheEnableButton = nullptr;
+    QPushButton *refreshCacheButton = nullptr;
+    QPushButton *saveCacheButton = nullptr;
     QPushButton *flushEnableButton = nullptr;
     QPushButton *clearCacheButton = nullptr;
     QPushButton *flushCacheButton = nullptr;

@@ -13,13 +13,6 @@ void data_ack_send(uint32_t seq,
                    int ok,
                    const char *reason,
                    const char *message);
-void data_ack_send_alarm_config(uint32_t seq,
-                                const char *cmd,
-                                int ok,
-                                const char *reason,
-                                const char *message,
-                                float temp_high,
-                                float humi_high);
 void data_ack_send_ports(uint32_t seq,
                          const char *cmd,
                          const char * const *ports,

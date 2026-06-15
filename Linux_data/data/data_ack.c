@@ -50,32 +50,6 @@ void data_ack_send(uint32_t seq,
     json_object_put(root);
 }
 
-void data_ack_send_alarm_config(uint32_t seq,
-                                const char *cmd,
-                                int ok,
-                                const char *reason,
-                                const char *message,
-                                float temp_high,
-                                float humi_high)
-{
-    struct json_object *root = json_object_new_object();
-    if (!root)
-        return;
-
-    json_object_object_add(root, "type", json_object_new_string("ack"));
-    json_object_object_add(root, "seq", json_object_new_int64(seq));
-    json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
-    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
-    json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
-    json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
-    json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
-    json_object_object_add(root, "temp_high", json_object_new_double(temp_high));
-    json_object_object_add(root, "humi_high", json_object_new_double(humi_high));
-
-    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
-    json_object_put(root);
-}
-
 void data_ack_send_ports(uint32_t seq,
                          const char *cmd,
                          const char * const *ports,

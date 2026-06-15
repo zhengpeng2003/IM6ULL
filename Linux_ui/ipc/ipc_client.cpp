@@ -132,11 +132,6 @@ void IpcClient::onReadyRead()
                 for (const auto &v : root.value("ports").toArray())
                     ports.append(v.toString());
                 emit portsUpdated(ports);
-            } else if ((cmd == "get_alarm_config" || cmd == "set_alarm_config") &&
-                       root.contains("temp_high") &&
-                       root.contains("humi_high")) {
-                emit alarmConfigReceived(root.value("temp_high").toDouble(),
-                                         root.value("humi_high").toDouble());
             }
             continue;
         }
@@ -177,12 +172,6 @@ void IpcClient::onReadyRead()
                                    root.value("baud").toInt(),
                                    root.value("connected").toBool(),
                                    root.value("message").toString());
-            continue;
-        }
-
-        if (msgType == "alarm_config") {
-            emit alarmConfigReceived(root.value("temp_high").toDouble(),
-                                     root.value("humi_high").toDouble());
             continue;
         }
 

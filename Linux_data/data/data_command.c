@@ -1,7 +1,6 @@
 #include "data_command.h"
 
 /* Parses incoming JSON commands and dispatches them to the service/port layer. */
-#include "alarm_config.h"
 #include "data_ack.h"
 #include "data_protocol.h"
 #include "data_publish.h"
@@ -333,50 +332,6 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
-static int handle_get_alarm_config(uint32_t seq, struct json_object *root, const char *cmd)
-{
-    (void)root;
-
-    float temp_high = 0.0f;
-    float humi_high = 0.0f;
-    alarm_config_get(&temp_high, &humi_high);
-    data_ack_send_alarm_config(seq, cmd, 1, "", "", temp_high, humi_high);
-    return CMD_PROCESS_HANDLED;
-}
-
-static int handle_set_alarm_config(uint32_t seq, struct json_object *root, const char *cmd)
-{
-    struct json_object *v;
-    char reason[MAX_ACK_MSG_LEN] = "";
-
-    if (!json_object_object_get_ex(root, "temp_high", &v)) {
-        snprintf(reason, sizeof(reason), "invalid_request");
-        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
-        return CMD_PROCESS_ERROR;
-    }
-    float temp_high = (float)json_object_get_double(v);
-
-    if (!json_object_object_get_ex(root, "humi_high", &v)) {
-        snprintf(reason, sizeof(reason), "invalid_request");
-        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
-        return CMD_PROCESS_ERROR;
-    }
-    float humi_high = (float)json_object_get_double(v);
-
-    int ret = alarm_config_set(temp_high, humi_high, reason, sizeof(reason));
-    if (ret == 0)
-        alarm_config_get(&temp_high, &humi_high);
-    data_ack_send_alarm_config(seq,
-                               cmd,
-                               ret == 0,
-                               ret == 0 ? "" : reason,
-                               ret == 0 ? "alarm config saved" : data_ack_message_from_reason(reason),
-                               temp_high,
-                               humi_high);
-
-    return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
-}
-
 static int handle_set_relay(uint32_t seq, struct json_object *root, const char *cmd)
 {
     char reason[MAX_ACK_MSG_LEN] = "";
@@ -486,16 +441,21 @@ static int handle_set_offline_cache_config(uint32_t seq, struct json_object *roo
     if (json_object_object_get_ex(root, "cache_enabled", &v) ||
         json_object_object_get_ex(root, "cacheEnabled", &v)) {
         cache_enabled = json_object_get_boolean(v) ? 1 : 0;
-        mqtt_set_offline_cache_enabled(cache_enabled);
     }
 
     if (json_object_object_get_ex(root, "flush_enabled", &v) ||
         json_object_object_get_ex(root, "flushEnabled", &v)) {
         flush_enabled = json_object_get_boolean(v) ? 1 : 0;
-        mqtt_set_offline_cache_flush_enabled(flush_enabled);
     }
 
+    if (!cache_enabled)
+        flush_enabled = 0;
+
     const int saved = port_manager_save_offline_cache_config(cache_enabled, flush_enabled) == 0;
+    if (saved) {
+        mqtt_set_offline_cache_enabled(cache_enabled);
+        mqtt_set_offline_cache_flush_enabled(flush_enabled);
+    }
 
     data_ack_send_offline_cache_config(seq,
                                        cmd,
@@ -526,12 +486,20 @@ static int handle_clear_offline_cache(uint32_t seq, struct json_object *root, co
 static int handle_flush_offline_cache(uint32_t seq, struct json_object *root, const char *cmd)
 {
     (void)root;
-    const int ok = mqtt_flush_offline_cache_once() == DATA_SEND_OK;
+    int ret = mqtt_flush_offline_cache_once();
+    const int ok = ret == DATA_SEND_OK;
+    const char *reason = "offline_cache_flush_failed";
+    const char *message = "offline cache flush failed";
+    if (ret == DATA_SEND_MQTT_NOT_READY) {
+        reason = "mqtt_not_connected";
+        message = "mqtt not connected";
+    }
+
     data_ack_send_offline_cache_config(seq,
                                        cmd,
                                        ok,
-                                       ok ? "" : "offline_cache_flush_disabled",
-                                       ok ? "offline cache flush requested" : "offline cache flush disabled",
+                                       ok ? "" : reason,
+                                       ok ? "offline cache flush requested" : message,
                                        mqtt_offline_cache_enabled(),
                                        mqtt_offline_cache_flush_enabled(),
                                        mqtt_offline_cache_pending_count());
@@ -548,8 +516,6 @@ static const command_entry_t command_table[] = {
     {"remove_device", handle_remove_device},
     {"set_relay", handle_set_relay},
     {"get_config", handle_get_config},
-    {"get_alarm_config", handle_get_alarm_config},
-    {"set_alarm_config", handle_set_alarm_config},
     {"get_offline_cache_config", handle_get_offline_cache_config},
     {"set_offline_cache_config", handle_set_offline_cache_config},
     {"clear_offline_cache", handle_clear_offline_cache},
