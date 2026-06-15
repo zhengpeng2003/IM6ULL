@@ -32,7 +32,10 @@ std::string buildDeviceRegisterAckJson(std::uint32_t sequence,
                                        bool ok,
                                        const std::string& reason);
 std::string buildHistoryPointsJson(const std::string& pointId,
-                                   const std::vector<TelemetryPoint>& points);
+                                   const std::vector<TelemetryPoint>& points,
+                                   bool ok = true,
+                                   const std::string& reason = std::string(),
+                                   const std::string& message = std::string());
 std::string buildDeleteDataAckJson(const std::string& action,
                                    bool ok,
                                    const std::string& reason);

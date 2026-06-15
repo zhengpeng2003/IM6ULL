@@ -201,17 +201,37 @@ void IpcMessageHandler::handle(const std::string& msg)
     }
 
     if (parseHistoryQuery(msg, pointId, startMs, endMs, limit)) {
+        bool queryOk = false;
+        std::string reason;
         const std::vector<TelemetryPoint> points =
-            m_database.queryHistoryPoints(pointId, startMs, endMs, limit);
+            m_database.queryHistoryPoints(pointId, startMs, endMs, limit, &queryOk, &reason);
 
-        m_ipc.sendMessage(buildHistoryPointsJson(pointId, points));
+        const std::string message = queryOk ? std::string() : std::string("history query failed");
+        m_ipc.sendMessage(buildHistoryPointsJson(pointId, points, queryOk, reason, message));
 
         std::cout << "send history_points done, pointId: "
                   << pointId
+                  << ", ok: " << (queryOk ? "true" : "false")
+                  << ", reason: " << reason
                   << ", count: "
                   << points.size()
                   << std::endl;
         return;
+    }
+
+    {
+        rapidjson::Document root;
+        root.Parse(msg.c_str());
+        if (!root.HasParseError() && root.IsObject() &&
+            getJsonString(root, "type") == "query_history") {
+            const std::string invalidPointId = getJsonString(root, "pointId");
+            m_ipc.sendMessage(buildHistoryPointsJson(invalidPointId,
+                                                     std::vector<TelemetryPoint>(),
+                                                     false,
+                                                     "invalid_point_id",
+                                                     "pointId is required"));
+            return;
+        }
     }
 
     std::string gatewayId;

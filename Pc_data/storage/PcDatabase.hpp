@@ -101,7 +101,9 @@ public:
     std::vector<TelemetryPoint> queryHistoryPoints(const std::string& pointId,
                                                    std::int64_t startMs,
                                                    std::int64_t endMs,
-                                                   int limit);
+                                                   int limit,
+                                                   bool* ok = nullptr,
+                                                   std::string* reason = nullptr);
     bool deleteDeviceData(const std::string& gatewayId,
                           const std::string& portId,
                           int deviceId);

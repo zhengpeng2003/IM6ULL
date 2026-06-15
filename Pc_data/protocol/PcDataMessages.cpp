@@ -396,12 +396,21 @@ std::string buildDeviceRegisterAckJson(std::uint32_t sequence,
 }
 
 std::string buildHistoryPointsJson(const std::string& pointId,
-                                   const std::vector<TelemetryPoint>& points)
+                                   const std::vector<TelemetryPoint>& points,
+                                   bool ok,
+                                   const std::string& reason,
+                                   const std::string& message)
 {
+    const std::string actualReason = reason.empty() && ok && points.empty() ? "no_data" : reason;
     std::ostringstream oss;
 
     oss << "{";
     oss << "\"type\":\"history_points\",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(actualReason) << "\",";
+    if (!message.empty()) {
+        oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    }
     oss << "\"pointId\":\"" << jsonEscape(pointId) << "\",";
     oss << "\"count\":" << points.size() << ",";
     oss << "\"points\":[";
@@ -561,8 +570,8 @@ bool parseHistoryQuery(const std::string& msg,
     }
 
     pointId = getJsonString(root, "pointId");
-    startMs = getJsonInt64(root, "startMs", 0);
-    endMs = getJsonInt64(root, "endMs", 0);
+    startMs = getJsonInt64(root, "startMs", getJsonInt64(root, "from", 0));
+    endMs = getJsonInt64(root, "endMs", getJsonInt64(root, "to", 0));
     limit = getJsonInt(root, "limit", 1000);
 
     return !pointId.empty();

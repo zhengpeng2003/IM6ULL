@@ -1,5 +1,7 @@
 #include "PointConfigPackParser.hpp"
 
+#include "model/ModelConverter.hpp"
+
 #include <chrono>
 #include <string>
 #include <utility>
@@ -101,12 +103,12 @@ const rapidjson::Value& nestedObject(const rapidjson::Value& obj, const char* ke
 
 std::string buildPointId(const PointConfig& config)
 {
-    return config.factoryId + "." +
-           config.areaId + "." +
-           config.gatewayId + "." +
-           config.portId + "." +
-           std::to_string(config.deviceId) + "." +
-           config.pointKey;
+    return ModelConverter::buildPointId(config.factoryId,
+                                        config.areaId,
+                                        config.gatewayId,
+                                        config.portId,
+                                        config.deviceId,
+                                        config.pointKey);
 }
 
 }
