@@ -4,6 +4,21 @@
 
 namespace {
 
+QString stringValue(const QJsonObject &obj, const char *snakeKey, const char *camelKey = nullptr)
+{
+    QString value = obj.value(QLatin1String(snakeKey)).toString();
+    if (value.isEmpty() && camelKey) {
+        value = obj.value(QLatin1String(camelKey)).toString();
+    }
+    return value;
+}
+
+qint64 int64Value(const QJsonObject &obj, const char *key, qint64 defaultValue = 0)
+{
+    const QJsonValue value = obj.value(QLatin1String(key));
+    return value.isDouble() ? static_cast<qint64>(value.toDouble()) : defaultValue;
+}
+
 int masterSlotFromPortId(const QString &portId)
 {
     static const QRegularExpression re("^(?:port_|rs485-|RS485-)?(\\d+)$");
@@ -38,22 +53,35 @@ int AlarmManager::activeAlarmCount() const
 void AlarmManager::onAlarmMessage(const QJsonObject &obj)
 {
     AlarmRecord a;
-    a.alarmId = obj.value("alarm_id").toString();
-    a.factoryId = obj.value("factory_id").toString();
-    a.areaId = obj.value("area_id").toString();
-    a.areaName = obj.value("area_name").toString();
-    a.gatewayId = obj.value("gateway_id").toString();
-    a.masterSlot = obj.value("master_slot").toInt();
-    a.slaveAddr = obj.value("slave_addr").toInt();
-    a.deviceName = obj.value("device_name").toString();
-    a.deviceType = obj.value("device_type").toString();
-    a.alarmType = obj.value("alarm_type").toString();
-    a.level = obj.value("level").toString();
-    a.message = obj.value("message").toString();
-    a.value = obj.value("value").toDouble();
-    a.threshold = obj.value("threshold").toDouble();
-    a.state = obj.value("state").toString("active");
-    a.startTime = obj.value("timestamp").toVariant().toLongLong();
+    a.alarmId = stringValue(obj, "alarm_id", "alarmId");
+    a.factoryId = stringValue(obj, "factory_id", "factoryId");
+    a.areaId = stringValue(obj, "area_id", "areaId");
+    a.areaName = stringValue(obj, "area_name", "areaName");
+    a.gatewayId = stringValue(obj, "gateway_id", "gatewayId");
+    a.portId = stringValue(obj, "port_id", "portId");
+    a.masterSlot = obj.value("master_slot").toInt(masterSlotFromPortId(a.portId));
+    a.slaveAddr = obj.value("slave_addr").toInt(obj.value("deviceId").toInt(obj.value("device_id").toInt()));
+    a.deviceName = stringValue(obj, "device_name", "deviceName");
+    a.deviceType = stringValue(obj, "device_type", "deviceType");
+    a.pointKey = stringValue(obj, "point_key", "pointKey");
+    a.alarmType = stringValue(obj, "alarm_type", "alarmType");
+    a.level = obj.value("level").toString(obj.value("alarm_level").toString("warning"));
+    a.message = obj.value("message").toString(obj.value("alarm_message").toString());
+    a.value = obj.value("value").toDouble(obj.value("trigger_value").toDouble());
+    a.threshold = obj.value("threshold").toDouble(obj.value("threshold_value").toDouble());
+    a.state = obj.value("state").toString(obj.value("status").toString("active"));
+    if (a.state == "acked") {
+        a.state = "acknowledged";
+    }
+    a.startTime = int64Value(obj, "timestampMs", int64Value(obj, "timestamp", QDateTime::currentMSecsSinceEpoch()));
+    if (a.alarmId.isEmpty()) {
+        a.alarmId = QStringLiteral("%1.%2.%3.%4.%5")
+            .arg(a.gatewayId.isEmpty() ? QStringLiteral("unknown_gateway") : a.gatewayId,
+                 a.portId.isEmpty() ? QStringLiteral("unknown_port") : a.portId)
+            .arg(a.slaveAddr)
+            .arg(a.pointKey.isEmpty() ? QStringLiteral("unknown") : a.pointKey,
+                 a.alarmType.isEmpty() ? QStringLiteral("emergency") : a.alarmType);
+    }
 
     const bool existed = m_alarms.contains(a.alarmId);
     m_alarms.insert(a.alarmId, a);

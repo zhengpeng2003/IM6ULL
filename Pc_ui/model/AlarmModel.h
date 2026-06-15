@@ -9,10 +9,12 @@ struct AlarmRecord
     QString areaId;
     QString areaName;
     QString gatewayId;
+    QString portId;
     int masterSlot = 0;
     int slaveAddr = 0;
     QString deviceName;
     QString deviceType;
+    QString pointKey;
     QString alarmType;
     QString level;
     QString message;

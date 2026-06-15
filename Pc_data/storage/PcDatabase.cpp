@@ -7,6 +7,7 @@
 #include <set>
 
 #include "DatabaseSchema.hpp"
+#include "common/JsonUtils.hpp"
 #include "sqlite3.h"
 
 static void bindText(sqlite3_stmt* stmt, int index, const std::string& value);
@@ -913,6 +914,113 @@ bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
               << std::endl;
 
     return ok;
+}
+
+
+bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
+{
+    if (!m_db || event.alarmId.empty() || event.gatewayId.empty()) {
+        return false;
+    }
+
+    const std::string pointId = event.alarmId;
+    const std::string state = event.state.empty() ? "active" : event.state;
+    const bool recovered = state == "recovered";
+    const std::int64_t nowMs = event.timestampMs > 0 ? event.timestampMs : currentTimeMs();
+
+    static const char* updateSql =
+        "UPDATE alarm_event SET "
+        "factory_id=?,factory_name=?,area_id=?,area_name=?,gateway_id=?,gateway_name=?,"
+        "port_id=?,port_name=?,device_id=?,device_name=?,device_type=?,point_key=?,point_name=?,"
+        "alarm_level=?,alarm_message=?,recover_time_ms=?,status=?,trigger_value=?,threshold_value=?,error_message=? "
+        "WHERE point_id=? AND alarm_type=? AND status IN ('active','acked','acknowledged');";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, updateSql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare alarm update failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    int i = 1;
+    bindText(stmt, i++, event.factoryId);
+    bindText(stmt, i++, event.factoryName);
+    bindText(stmt, i++, event.areaId);
+    bindText(stmt, i++, event.areaName);
+    bindText(stmt, i++, event.gatewayId);
+    bindText(stmt, i++, event.gatewayName);
+    bindText(stmt, i++, event.portId);
+    bindText(stmt, i++, event.portName);
+    sqlite3_bind_int(stmt, i++, event.deviceId);
+    bindText(stmt, i++, event.deviceName);
+    bindText(stmt, i++, event.deviceType);
+    bindText(stmt, i++, event.pointKey);
+    bindText(stmt, i++, event.pointName);
+    bindText(stmt, i++, event.level.empty() ? "warning" : event.level);
+    bindText(stmt, i++, event.message);
+    if (recovered) sqlite3_bind_int64(stmt, i++, nowMs); else sqlite3_bind_null(stmt, i++);
+    bindText(stmt, i++, state);
+    sqlite3_bind_double(stmt, i++, event.value);
+    sqlite3_bind_double(stmt, i++, event.threshold);
+    bindText(stmt, i++, event.alarmId);
+    bindText(stmt, i++, pointId);
+    bindText(stmt, i++, event.alarmType.empty() ? "emergency" : event.alarmType);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Update alarm event failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    if (sqlite3_changes(m_db) > 0) {
+        return true;
+    }
+
+    static const char* insertSql =
+        "INSERT INTO alarm_event ("
+        "point_id,factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,port_id,port_name,"
+        "device_id,device_name,device_type,point_key,point_name,alarm_type,alarm_level,alarm_message,"
+        "start_time_ms,recover_time_ms,status,trigger_value,threshold_value,error_message"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+
+    rc = sqlite3_prepare_v2(m_db, insertSql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare alarm insert failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    i = 1;
+    bindText(stmt, i++, pointId);
+    bindText(stmt, i++, event.factoryId);
+    bindText(stmt, i++, event.factoryName);
+    bindText(stmt, i++, event.areaId);
+    bindText(stmt, i++, event.areaName);
+    bindText(stmt, i++, event.gatewayId);
+    bindText(stmt, i++, event.gatewayName);
+    bindText(stmt, i++, event.portId);
+    bindText(stmt, i++, event.portName);
+    sqlite3_bind_int(stmt, i++, event.deviceId);
+    bindText(stmt, i++, event.deviceName);
+    bindText(stmt, i++, event.deviceType);
+    bindText(stmt, i++, event.pointKey);
+    bindText(stmt, i++, event.pointName);
+    bindText(stmt, i++, event.alarmType.empty() ? "emergency" : event.alarmType);
+    bindText(stmt, i++, event.level.empty() ? "warning" : event.level);
+    bindText(stmt, i++, event.message);
+    sqlite3_bind_int64(stmt, i++, nowMs);
+    if (recovered) sqlite3_bind_int64(stmt, i++, nowMs); else sqlite3_bind_null(stmt, i++);
+    bindText(stmt, i++, state);
+    sqlite3_bind_double(stmt, i++, event.value);
+    sqlite3_bind_double(stmt, i++, event.threshold);
+    bindText(stmt, i++, event.alarmId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Insert alarm event failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    return true;
 }
 
 bool PcDatabase::clearRecoveredAlarms()

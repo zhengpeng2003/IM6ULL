@@ -218,11 +218,16 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
             alarm_message TEXT,
 
             start_time_ms INTEGER NOT NULL,
+            timestamp_ms INTEGER,
             recover_time_ms INTEGER,
+            ack_time_ms INTEGER,
 
             status TEXT NOT NULL,
+            state TEXT,
+            acked INTEGER DEFAULT 0,
 
             trigger_value REAL,
+            value REAL,
             threshold_value REAL,
 
             error_message TEXT
