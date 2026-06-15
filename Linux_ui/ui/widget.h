@@ -94,6 +94,15 @@ private:
         QString deviceType;
     };
 
+    struct PendingRelayCommand {
+        bool active = false;
+        quint32 seq = 0;
+        int masterSlot = 0;
+        int slaveAddr = 0;
+        int oldStates = 0;
+        int requestedStates = 0;
+    };
+
     QStackedWidget *m_stack = nullptr;
     PageStatus *m_pageStatus = nullptr;
     PageTrend *m_pageTrend = nullptr;
@@ -106,6 +115,7 @@ private:
     QTimer *m_ipcReconnectTimer = nullptr;
     PendingAddSlave m_pendingAddSlave;
     PendingRemoveSlave m_pendingRemoveSlave;
+    PendingRelayCommand m_pendingRelay;
     int m_activeAlarmCount = 0;
     quint32 m_nextCommandSeq = 1;
     Ui::Widget *ui = nullptr;

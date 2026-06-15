@@ -6,6 +6,7 @@ struct CommandRecord
 {
     QString cmdId;
     qint64 timestamp = 0;
+    qint64 seq = 0;
     QString factoryId;
     QString areaId;
     QString gatewayId;

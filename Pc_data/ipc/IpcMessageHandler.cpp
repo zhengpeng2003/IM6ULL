@@ -346,6 +346,9 @@ void IpcMessageHandler::handle(const std::string& msg)
         if (commandType.empty() && root.IsObject()) {
             commandType = getJsonString(root, "cmd");
         }
+        if (commandType.empty() && root.IsObject()) {
+            commandType = getJsonString(root, "command");
+        }
         std::string gatewayId;
         std::string portId;
         if (root.IsObject() && root.HasMember("target") && root["target"].IsObject()) {
@@ -354,6 +357,9 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
         if (gatewayId.empty() && root.IsObject()) {
             gatewayId = getJsonString(root, "gatewayId");
+        }
+        if (gatewayId.empty() && root.IsObject()) {
+            gatewayId = getJsonString(root, "gateway_id");
         }
         if (portId.empty() && root.IsObject()) {
             portId = getJsonString(root, "portId");
@@ -373,7 +379,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             }
 
             if (seq <= 0) {
-                m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_argument"));
+                m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_argument", seq, commandType, "done", "invalid argument"));
                 std::cout << commandType << " rejected, missing seq" << std::endl;
                 return;
             }
@@ -399,7 +405,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                                                      "gateway port is not connected",
                                                      currentTimeMs());
                 }
-                m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "port_not_found"));
+                m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "port_not_found", seq, commandType, "done", "gateway port is not connected"));
                 std::cout << commandType << " rejected, port not connected, gateway: "
                           << gatewayId << ", port: " << portId << std::endl;
                 return;
@@ -414,7 +420,13 @@ void IpcMessageHandler::handle(const std::string& msg)
                                                  publishOk ? "command sent" : "mqtt publish failed",
                                                  currentTimeMs());
             }
-            m_ipc.sendMessage(buildCommandAckJson(cmdId, publishOk, publishOk ? "sent" : "mqtt_publish_failed"));
+            m_ipc.sendMessage(buildCommandAckJson(cmdId,
+                                               publishOk,
+                                               publishOk ? "" : "mqtt_publish_failed",
+                                               seq,
+                                               commandType,
+                                               publishOk ? "sent" : "done",
+                                               publishOk ? "command published to gateway" : "MQTT publish failed"));
             std::cout << commandType << " publish "
                       << (publishOk ? "ok" : "failed")
                       << ", topic: " << topic
@@ -422,8 +434,23 @@ void IpcMessageHandler::handle(const std::string& msg)
             return;
         }
 
-        m_ipc.sendMessage(buildCommandAckJson(cmdId, true, ""));
-        std::cout << "send command_ack done, cmd_id: " << cmdId << std::endl;
+        const std::int64_t seq = root.IsObject() ? getJsonInt64(root, "seq", 0) : 0;
+        if (gatewayId.empty()) {
+            m_ipc.sendMessage(buildCommandAckJson(cmdId, false, "invalid_argument", seq, commandType, "done", "gateway id is required"));
+            std::cout << "command rejected, missing gateway, cmd_id: " << cmdId << std::endl;
+            return;
+        }
+        const std::string topic = "cmd/" + gatewayId;
+        const bool publishOk = m_mqtt.publish(topic, msg);
+        m_ipc.sendMessage(buildCommandAckJson(cmdId,
+                                               publishOk,
+                                               publishOk ? "" : "mqtt_publish_failed",
+                                               seq,
+                                               commandType,
+                                               publishOk ? "sent" : "done",
+                                               publishOk ? "command published to gateway" : "MQTT publish failed"));
+        std::cout << commandType << " publish " << (publishOk ? "ok" : "failed")
+                  << ", topic: " << topic << ", cmd_id: " << cmdId << std::endl;
     } else {
         m_ipc.sendMessage(R"({"type":"ack","cmd":"unknown","status":"ok","message":"Pc_data received"})");
 
