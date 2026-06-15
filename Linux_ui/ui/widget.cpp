@@ -204,7 +204,7 @@ void Widget::initUI()
 
                 if (QMessageBox::question(this,
                                           "断开端口",
-                                          "确认断开当前端口通信？该操作不一定删除端口和从站配置。",
+                                          "确定断开当前端口通信吗？端口配置会保留，重启后可能自动恢复。",
                                           QMessageBox::Yes | QMessageBox::No,
                                           QMessageBox::No) != QMessageBox::Yes)
                     return;
@@ -1206,7 +1206,7 @@ QString Widget::ackDisplayText(const QString &cmd,
     if (cmd == "connect_port")
         return "连接完成";
     if (cmd == "disconnect_port")
-        return "断开完成";
+        return "端口通信已断开，配置已保留";
     if (cmd == "add_device")
         return "添加从站完成";
     if (cmd == "remove_device")
