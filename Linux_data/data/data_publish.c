@@ -165,6 +165,8 @@ static const char *send_code_message(int code)
         return "mqtt queue full";
     case DATA_SEND_PARTIAL_FAILED:
         return "partial send failed";
+    case DATA_SEND_OFFLINE_CACHE_DISABLED:
+        return "offline cache flush is disabled";
     default:
         return "send failed";
     }

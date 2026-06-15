@@ -20,6 +20,7 @@ public:
     void setIpcConnected(bool connected);
     void updateOfflineCacheStatus(bool cacheEnabled, bool flushEnabled, int pendingCount);
     void setOfflineCacheUnsupported();
+    void setOfflineCacheBusy(bool busy);
 
 signals:
     void reconnectIpcRequested();
@@ -85,9 +86,10 @@ private:
     QVector<RuntimeRowWidget> runtimeRows;
     QDateTime lastSyncTime;
     bool m_ipcConnected = false;
-    bool m_cacheEnabled = false;
+    bool m_cacheEnabled = bool();
     bool m_flushEnabled = false;
     bool m_cacheSupported = true;
+    bool m_cacheBusy = false;
     int m_pendingCount = 0;
 };
 
