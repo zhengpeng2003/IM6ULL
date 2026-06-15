@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,153 @@ void appendThresholdPointConfig(std::vector<PointConfig>& configs,
     }
     config.pointId = buildSnapshotPointId(device, pointKey);
     configs.push_back(config);
+}
+
+
+std::string getJsonStringCompat(const rapidjson::Value& obj, const char* snakeKey, const char* camelKey)
+{
+    std::string value = getJsonString(obj, snakeKey);
+    return value.empty() && camelKey ? getJsonString(obj, camelKey) : value;
+}
+
+double getJsonDoubleCompat(const rapidjson::Value& obj, const char* key, double defaultValue)
+{
+    if (obj.IsObject() && obj.HasMember(key) && obj[key].IsNumber()) {
+        return obj[key].GetDouble();
+    }
+    return defaultValue;
+}
+
+std::string buildStableAlarmId(const AlarmEvent& event)
+{
+    std::ostringstream out;
+    out << (event.gatewayId.empty() ? "unknown_gateway" : event.gatewayId) << '.'
+        << (event.portId.empty() ? "unknown_port" : event.portId) << '.'
+        << event.deviceId << '.'
+        << (event.pointKey.empty() ? "unknown" : event.pointKey) << '.'
+        << (event.alarmType.empty() ? "emergency" : event.alarmType);
+    return out.str();
+}
+
+bool fillAlarmEventFromObject(const rapidjson::Value& root, AlarmEvent& event, std::string& reason)
+{
+    if (!root.IsObject()) {
+        reason = "payload_not_object";
+        return false;
+    }
+
+    event.timestampMs = getJsonInt64(root, "timestampMs", getJsonInt64(root, "timestamp", currentTimeMs()));
+    event.factoryId = getJsonStringCompat(root, "factory_id", "factoryId");
+    event.factoryName = getJsonStringCompat(root, "factory_name", "factoryName");
+    event.areaId = getJsonStringCompat(root, "area_id", "areaId");
+    event.areaName = getJsonStringCompat(root, "area_name", "areaName");
+    event.gatewayId = getJsonStringCompat(root, "gateway_id", "gatewayId");
+    event.gatewayName = getJsonStringCompat(root, "gateway_name", "gatewayName");
+    event.portId = getJsonStringCompat(root, "port_id", "portId");
+    event.portName = getJsonStringCompat(root, "port_name", "portName");
+    event.deviceId = getJsonInt(root, "deviceId", getJsonInt(root, "device_id", getJsonInt(root, "slave_addr", 0)));
+    event.deviceName = getJsonStringCompat(root, "device_name", "deviceName");
+    event.deviceType = getJsonStringCompat(root, "device_type", "deviceType");
+    event.pointKey = getJsonStringCompat(root, "point_key", "pointKey");
+    event.pointName = getJsonStringCompat(root, "point_name", "pointName");
+    event.alarmType = getJsonStringCompat(root, "alarm_type", "alarmType");
+    event.level = getJsonString(root, "level");
+    if (event.level.empty()) event.level = getJsonString(root, "alarm_level");
+    event.state = getJsonString(root, "state");
+    if (event.state.empty()) event.state = getJsonString(root, "status");
+    if (event.state == "acknowledged") event.state = "acked";
+    if (event.state.empty()) event.state = "active";
+    event.value = getJsonDoubleCompat(root, "value", getJsonDoubleCompat(root, "trigger_value", 0.0));
+    event.threshold = getJsonDoubleCompat(root, "threshold", getJsonDoubleCompat(root, "threshold_value", 0.0));
+    event.message = getJsonString(root, "message");
+    if (event.message.empty()) event.message = getJsonString(root, "alarm_message");
+
+    event.alarmId = getJsonString(root, "alarm_id");
+    if (event.alarmId.empty()) event.alarmId = getJsonString(root, "alarmId");
+    if (event.alarmType.empty()) event.alarmType = "emergency";
+    if (event.pointKey.empty()) event.pointKey = "unknown";
+    if (event.level.empty()) event.level = "warning";
+    if (event.message.empty()) event.message = "emergency alarm";
+    if (event.alarmId.empty()) event.alarmId = buildStableAlarmId(event);
+
+    if (event.gatewayId.empty()) {
+        reason = "gateway_id_missing";
+        return false;
+    }
+    return true;
+}
+
+bool parseAlarmEventPayload(const std::string& payload, AlarmEvent& event, std::string& reason)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+    if (root.HasParseError() || !root.IsObject()) {
+        reason = "json_parse_failed";
+        return false;
+    }
+
+    const std::string type = getJsonString(root, "type");
+    const std::string cmd = getJsonString(root, "cmd");
+    if (type == "alarm_event") {
+        return fillAlarmEventFromObject(root, event, reason);
+    }
+    if (type != "command" || cmd != "emergency") {
+        reason = "not_alarm_payload";
+        return false;
+    }
+
+    if (!fillAlarmEventFromObject(root, event, reason) && reason != "gateway_id_missing") {
+        return false;
+    }
+
+    const double temp = getJsonDoubleCompat(root, "temperature", 0.0);
+    const double tempHigh = getJsonDoubleCompat(root, "temp_high", getJsonDoubleCompat(root, "temperatureHigh", 0.0));
+    const double humi = getJsonDoubleCompat(root, "humidity", 0.0);
+    const double humiHigh = getJsonDoubleCompat(root, "humi_high", getJsonDoubleCompat(root, "humidityHigh", 0.0));
+    if (event.pointKey == "unknown" && tempHigh > 0.0 && temp > tempHigh) {
+        event.pointKey = "temperature";
+        event.alarmType = "threshold_high";
+        event.value = temp;
+        event.threshold = tempHigh;
+        event.message = event.message == "emergency alarm" ? "temperature high" : event.message;
+    } else if (event.pointKey == "unknown" && humiHigh > 0.0 && humi > humiHigh) {
+        event.pointKey = "humidity";
+        event.alarmType = "threshold_high";
+        event.value = humi;
+        event.threshold = humiHigh;
+        event.message = event.message == "emergency alarm" ? "humidity high" : event.message;
+    }
+    event.alarmId = buildStableAlarmId(event);
+    return !event.gatewayId.empty();
+}
+
+std::string buildAlarmEventJson(const AlarmEvent& event)
+{
+    std::ostringstream out;
+    out << "{\"type\":\"alarm_event\""
+        << ",\"alarm_id\":\"" << jsonEscape(event.alarmId) << "\""
+        << ",\"alarmId\":\"" << jsonEscape(event.alarmId) << "\""
+        << ",\"timestampMs\":" << event.timestampMs
+        << ",\"gatewayId\":\"" << jsonEscape(event.gatewayId) << "\""
+        << ",\"gateway_id\":\"" << jsonEscape(event.gatewayId) << "\""
+        << ",\"portId\":\"" << jsonEscape(event.portId) << "\""
+        << ",\"port_id\":\"" << jsonEscape(event.portId) << "\""
+        << ",\"deviceId\":" << event.deviceId
+        << ",\"device_id\":" << event.deviceId
+        << ",\"deviceType\":\"" << jsonEscape(event.deviceType) << "\""
+        << ",\"device_type\":\"" << jsonEscape(event.deviceType) << "\""
+        << ",\"pointKey\":\"" << jsonEscape(event.pointKey) << "\""
+        << ",\"point_key\":\"" << jsonEscape(event.pointKey) << "\""
+        << ",\"alarmType\":\"" << jsonEscape(event.alarmType) << "\""
+        << ",\"alarm_type\":\"" << jsonEscape(event.alarmType) << "\""
+        << ",\"level\":\"" << jsonEscape(event.level) << "\""
+        << ",\"value\":" << event.value
+        << ",\"threshold\":" << event.threshold
+        << ",\"state\":\"" << jsonEscape(event.state) << "\""
+        << ",\"status\":\"" << jsonEscape(event.state) << "\""
+        << ",\"message\":\"" << jsonEscape(event.message) << "\"}"
+        ;
+    return out.str();
 }
 
 bool parseConfigSnapshot(const std::string& payload,
@@ -245,6 +393,28 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     std::cout << "[MQTT RX] payload: " << payload << std::endl;
 
     const std::string messageType = extractJsonStringValue(payload, "type");
+
+    if (messageType == "alarm_event" ||
+        (messageType == "command" && extractJsonStringValue(payload, "cmd") == "emergency")) {
+        AlarmEvent event;
+        std::string reason;
+        if (!parseAlarmEventPayload(payload, event, reason)) {
+            std::cout << "[MQTT RX] alarm_event parse failed: " << reason << std::endl;
+            return;
+        }
+
+        const bool dbOk = m_database.isOpen() && m_database.saveAlarmEvent(event);
+        std::cout << "[MQTT RX] alarm_event " << (dbOk ? "ok" : "failed")
+                  << ", alarmId: " << event.alarmId
+                  << ", legacy: " << (messageType == "command") << std::endl;
+        if (dbOk && m_ipc.hasClient()) {
+            m_ipc.sendMessage(buildAlarmEventJson(event));
+        } else if (!m_ipc.hasClient()) {
+            std::cout << "[MQTT RX] Pc_ui not connected, alarm_event stored only" << std::endl;
+        }
+        return;
+    }
+
     if (messageType == "gateway_register") {
         GatewayStatus gateway;
         if (!parseGatewayRegister(payload, gateway)) {

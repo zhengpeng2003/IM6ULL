@@ -223,6 +223,17 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+
+    if (type == "alarm_event") {
+        if (m_alarm) {
+            m_alarm->onAlarmMessage(root);
+        }
+        if (m_alarmLogPage) {
+            m_alarmLogPage->refreshTable();
+        }
+        return;
+    }
+
     if (type == "latest_points") {
         m_lastLatestPointsMs = QDateTime::currentMSecsSinceEpoch();
         m_data->onLatestPointsMessage(root);

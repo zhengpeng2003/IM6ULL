@@ -49,6 +49,32 @@ struct DbSelectedDevice
     int deviceId = 0;
 };
 
+
+struct AlarmEvent
+{
+    std::string alarmId;
+    std::int64_t timestampMs = 0;
+    std::string factoryId;
+    std::string factoryName;
+    std::string areaId;
+    std::string areaName;
+    std::string gatewayId;
+    std::string gatewayName;
+    std::string portId;
+    std::string portName;
+    int deviceId = 0;
+    std::string deviceName;
+    std::string deviceType;
+    std::string pointKey;
+    std::string pointName;
+    std::string alarmType;
+    std::string level;
+    std::string state;
+    double value = 0.0;
+    double threshold = 0.0;
+    std::string message;
+};
+
 struct CommandLogTarget
 {
     std::string commandId;
@@ -112,6 +138,7 @@ public:
     bool clearRuntimeData();
     bool clearAllData();
     bool clearRecoveredAlarms();
+    bool saveAlarmEvent(const AlarmEvent& event);
     bool replaceSelectedDeviceConfig(const std::string& gatewayId,
                                      const std::vector<DbSelectedDevice>& selectedDevices,
                                      const std::vector<GatewayPort>& ports,

@@ -59,7 +59,7 @@ QString displayState(const QString &state)
     if (state == "active") {
         return QStringLiteral("未确认");
     }
-    if (state == "acknowledged") {
+    if (state == "acked" || state == "acknowledged") {
         return QStringLiteral("已确认");
     }
     if (state == "recovered") {
