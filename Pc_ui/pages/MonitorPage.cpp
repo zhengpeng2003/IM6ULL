@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
+#include <QDateTime>
 #include <algorithm>
 
 namespace {
@@ -130,9 +131,10 @@ void MonitorPage::refreshDetail()
         .arg(n.factoryId, n.areaName, n.gatewayId)
         .arg(n.masterSlot + 1).arg(n.masterName)
         .arg(n.slaveAddr).arg(n.deviceName, n.deviceType)
-        .arg(n.online ? QStringLiteral("在线") : QStringLiteral("离线"))
-        .arg(d.timestamp);
+        .arg(d.serviceOffline ? QStringLiteral("服务离线") : (n.online ? QStringLiteral("在线") : QStringLiteral("离线")))
+        .arg(QDateTime::fromMSecsSinceEpoch(d.timestamp).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
 
+    text += QStringLiteral("数据状态: %1\n").arg(d.dataState.isEmpty() ? QStringLiteral("未知") : d.dataState);
     text += QStringLiteral("解析状态: %1\n").arg(d.statusText.isEmpty() ? QStringLiteral("未知") : d.statusText);
     text += QStringLiteral("状态等级: %1\n").arg(d.statusLevel.isEmpty() ? QStringLiteral("unknown") : d.statusLevel);
     text += QStringLiteral("数据有效: %1\n").arg(d.valid ? QStringLiteral("是") : QStringLiteral("否"));
@@ -162,6 +164,10 @@ void MonitorPage::refreshDetail()
     }
 
     setDetailText(text);
+    const bool controlsEnabled = d.node.deviceType == QStringLiteral("relay") && !d.serviceOffline &&
+        d.node.online && d.dataState == QStringLiteral("normal");
+    m_fanOn->setEnabled(controlsEnabled);
+    m_fanOff->setEnabled(controlsEnabled);
 }
 
 void MonitorPage::sendFanCommand(bool on)
@@ -169,6 +175,7 @@ void MonitorPage::sendFanCommand(bool on)
     if (m_currentKey.isEmpty()) return;
     const auto d = m_data->deviceData(m_currentKey);
     if (d.node.deviceType != "relay") return;
+    if (d.serviceOffline || !d.node.online || d.dataState != QStringLiteral("normal")) return;
     m_command->sendRelayCommand(d.node, "fan", on, d.relay.channels);
 }
 

@@ -7,8 +7,11 @@
 #include <QMutexLocker>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QDebug>
 
 static const qint64 kDeletedDeviceIgnoreMs = 30000;
+static const qint64 kRealtimeFreshMs = 30000;
+static const qint64 kRealtimeOfflineMs = 90000;
 
 static int masterSlotFromPortId(const QString &portId)
 {
@@ -41,8 +44,12 @@ DataManager::DataManager(DeviceManager *deviceManager, AlarmManager *alarmManage
 {
 }
 
-void DataManager::loadDemoData()
+void DataManager::loadDemoData(bool demoMode)
 {
+    if (!demoMode) {
+        qWarning("DataManager::loadDemoData skipped: demoMode is false");
+        return;
+    }
     QList<DeviceNode> list;
 
     DeviceNode th;
@@ -82,7 +89,11 @@ void DataManager::loadDemoData()
         RealtimeDeviceData data;
         data.node = node;
         data.valid = true;
-        data.timestamp = QDateTime::currentSecsSinceEpoch();
+        data.mock = true;
+        data.dataState = QStringLiteral("mock");
+        data.statusLevel = QStringLiteral("mock");
+        data.statusText = QStringLiteral("演示数据");
+        data.timestamp = QDateTime::currentMSecsSinceEpoch();
         data.sensorTh.temperature = 26.5;
         data.sensorTh.humidity = 60.2;
         data.relay.led = true;
@@ -137,8 +148,13 @@ void DataManager::refreshOfflineStates(qint64 timeoutMs)
             RealtimeDeviceData data = m_realtimeMap.value(device.key());
             data.node.online = online;
             if (!online) {
-                data.statusLevel = QStringLiteral("offline");
-                data.statusText = QStringLiteral("设备离线");
+                const qint64 ageMs = data.timestamp > 0 ? now - data.timestamp : timeoutMs + 1;
+                data.dataState = ageMs > kRealtimeOfflineMs ? QStringLiteral("offline") : QStringLiteral("stale");
+                data.statusLevel = data.dataState;
+                data.statusText = data.dataState == QStringLiteral("offline")
+                    ? QStringLiteral("设备离线，保留最后值")
+                    : QStringLiteral("旧数据 / 数据过期");
+                data.valid = false;
             }
             m_realtimeMap.insert(device.key(), data);
         }
@@ -221,17 +237,43 @@ void DataManager::clearAllData()
     clearRuntimeData();
 }
 
-void DataManager::markAllDevicesOffline()
+bool DataManager::isServiceOnline() const
 {
-    const QList<DeviceNode> devices = m_deviceManager->allDevices();
-    for (const auto &device : devices) {
-        m_deviceManager->updateDeviceOnline(device.key(), false);
+    QMutexLocker locker(&m_mutex);
+    return m_serviceOnline;
+}
+
+void DataManager::markAllDevicesOffline(const QString &reason)
+{
+    {
+        QMutexLocker locker(&m_mutex);
+        m_serviceOnline = false;
+    }
+    QList<DeviceNode> devices = m_deviceManager ? m_deviceManager->allDevices() : QList<DeviceNode>();
+    for (DeviceNode &device : devices) {
+        device.online = false;
+        device.status = reason;
+        device.statusReason = reason;
+    }
+    if (m_deviceManager) {
+        m_deviceManager->setDevices(devices);
     }
 
     {
         QMutexLocker locker(&m_mutex);
         for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ++it) {
             it->node.online = false;
+            it->node.status = reason;
+            it->serviceOffline = true;
+            it->dataState = QStringLiteral("offline");
+            it->statusLevel = QStringLiteral("offline");
+            it->statusText = reason == QStringLiteral("service_offline")
+                ? QStringLiteral("Pc_data 服务离线，保留最后值")
+                : QStringLiteral("设备离线，保留最后值");
+            it->valid = false;
+            if (it->errorMessage.isEmpty()) {
+                it->errorMessage = reason;
+            }
         }
     }
 
@@ -241,6 +283,10 @@ void DataManager::markAllDevicesOffline()
 
 void DataManager::onLatestPointsMessage(const QJsonObject &obj)
 {
+    {
+        QMutexLocker locker(&m_mutex);
+        m_serviceOnline = true;
+    }
     const QList<RealtimeDeviceData> parsedDevices = parseLatestPoints(obj);
     {
         QMutexLocker locker(&m_mutex);
@@ -267,6 +313,10 @@ void DataManager::onLatestPointsMessage(const QJsonObject &obj)
 
 void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
 {
+    {
+        QMutexLocker locker(&m_mutex);
+        m_serviceOnline = true;
+    }
     QList<DeviceNode> devices = parseDevicesSnapshot(obj);
     QSet<QString> snapshotDeviceKeys;
     for (const DeviceNode &device : devices) {
@@ -324,17 +374,21 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
             if (node.status == QStringLiteral("offline")) {
                 data.statusText = QStringLiteral("设备离线");
                 data.statusLevel = QStringLiteral("offline");
+                data.dataState = QStringLiteral("offline");
             } else if (node.status == QStringLiteral("online")) {
                 data.statusText = QStringLiteral("正常");
                 data.statusLevel = QStringLiteral("normal");
+                data.dataState = QStringLiteral("normal");
             } else if (node.status == QStringLiteral("error")) {
                 data.statusText = node.statusReason.isEmpty()
                     ? QStringLiteral("设备异常")
                     : node.statusReason;
                 data.statusLevel = QStringLiteral("error");
+                data.dataState = QStringLiteral("invalid");
             } else {
                 data.statusText = QStringLiteral("未知");
                 data.statusLevel = QStringLiteral("unknown");
+                data.dataState = QStringLiteral("unknown");
             }
             data.timestamp = node.lastUpdateTime;
             m_realtimeMap.insert(node.key(), data);
@@ -442,6 +496,10 @@ TelemetryPointData DataManager::parseTelemetryPoint(const QJsonObject &obj) cons
     point.textValue = obj.value("textValue").toString();
     point.valid = obj.value("valid").toBool(true);
     point.errorMessage = obj.value("errorMessage").toString();
+    if (!point.valid && point.errorMessage.isEmpty()) {
+        point.errorMessage = QStringLiteral("数据无效");
+    }
+    point.lastUpdateTime = QDateTime::currentMSecsSinceEpoch();
     return point;
 }
 
@@ -495,9 +553,11 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
                                 data.node.deviceType != QStringLiteral("led");
     data.node.online = true;
     data.node.status = QStringLiteral("online");
+    data.serviceOffline = false;
     data.node.lastUpdateTime = first.timestampMs;
     data.timestamp = first.timestampMs;
     data.valid = true;
+    data.dataState = QStringLiteral("normal");
     data.points = points;
 
     for (const TelemetryPointData &point : points) {
@@ -520,7 +580,31 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
 {
     data.statusLevel = QStringLiteral("normal");
     data.statusText = QStringLiteral("正常");
+    data.dataState = QStringLiteral("normal");
     data.node.online = true;
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 ageMs = data.timestamp > 0 ? now - data.timestamp : kRealtimeOfflineMs + 1;
+    if (data.mock) {
+        data.statusLevel = QStringLiteral("mock");
+        data.statusText = QStringLiteral("演示数据");
+        data.dataState = QStringLiteral("mock");
+        return;
+    }
+    if (ageMs > kRealtimeOfflineMs) {
+        data.statusLevel = QStringLiteral("offline");
+        data.statusText = QStringLiteral("设备离线，保留最后值");
+        data.dataState = QStringLiteral("offline");
+        data.node.online = false;
+        return;
+    }
+    if (ageMs > kRealtimeFreshMs) {
+        data.statusLevel = QStringLiteral("stale");
+        data.statusText = QStringLiteral("旧数据 / 数据过期");
+        data.dataState = QStringLiteral("stale");
+        data.node.online = false;
+        return;
+    }
 
     if (data.node.deviceType == "unknown") {
         data.statusLevel = QStringLiteral("warning");
@@ -532,6 +616,7 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
 
     if (!data.valid) {
         data.statusLevel = QStringLiteral("error");
+        data.dataState = QStringLiteral("invalid");
         const QString reason = data.errorMessage;
         if (reason == "modbus_timeout") {
             data.statusText = QStringLiteral("通信超时");
@@ -545,6 +630,7 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
             data.statusText = QStringLiteral("设备离线");
             data.node.online = false;
             data.statusLevel = QStringLiteral("offline");
+            data.dataState = QStringLiteral("offline");
         } else if (reason == "unknown_device_type") {
             data.statusText = QStringLiteral("未知设备类型");
         } else {
@@ -604,7 +690,7 @@ void DataManager::applyPointToTypedFields(RealtimeDeviceData &data, const Teleme
         } else if (point.pointKey == "energy") {
             data.meter.energy = point.numberValue;
         }
-    } else if (data.node.deviceType == "relay" && point.pointKey.startsWith("relay_")) {
+    } else if (data.node.deviceType == "relay" && (point.pointKey.startsWith("relay_") || point.pointKey.startsWith("relay.ch"))) {
         const bool on = point.numberValue != 0.0;
         data.relay.channels.insert(point.pointKey, on);
         if (point.pointKey == "relay_1") {

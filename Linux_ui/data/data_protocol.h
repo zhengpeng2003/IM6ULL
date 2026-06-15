@@ -28,6 +28,7 @@ struct DeviceData
     DeviceType type = DEV_SENSOR_TH;
     bool valid = false;
     QString errorMessage;
+    qint64 timestampMs = 0;
 
     // 温湿度
     double temperature = 0.0;

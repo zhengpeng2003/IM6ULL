@@ -184,9 +184,18 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
         DeviceData device;
         device.deviceId = getInt(item, "deviceId", 0);
         device.deviceName = getString(item, "deviceName");
-        device.type = parseDeviceType(getString(item, "deviceType", "unknown"));
+        const std::string deviceTypeText = getString(item, "deviceType", getString(item, "type", "unknown"));
+        device.type = parseDeviceType(deviceTypeText);
         device.valid = getBool(item, "valid", true);
         device.errorMessage = getString(item, "errorMessage");
+        if (device.deviceId <= 0) {
+            device.valid = false;
+            device.errorMessage = device.errorMessage.empty() ? "missing_deviceId" : device.errorMessage;
+        }
+        if (device.type == DeviceType::Unknown) {
+            device.valid = false;
+            device.errorMessage = device.errorMessage.empty() ? "unknown_device_type" : device.errorMessage;
+        }
 
         const rapidjson::Value& th = nestedObject(item, "th");
         const rapidjson::Value& meter = nestedObject(item, "meter");
@@ -209,7 +218,18 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
 
         device.relay.channelCount = getInt(item, "channelCount", getInt(relay, "channelCount", 16));
         device.relay.relayStates = static_cast<std::uint16_t>(
-            getInt(item, "relayStates", getInt(relay, "relayStates", 0)));
+            getInt(item, "relayStates", getInt(item, "states", getInt(relay, "relayStates", 0))));
+
+        if (device.valid && device.type == DeviceType::SensorTH &&
+            (!item.HasMember("temperature") && !(th.IsObject() && th.HasMember("temperature")))) {
+            device.valid = false;
+            device.errorMessage = "missing_temperature";
+        }
+        if (device.valid && device.type == DeviceType::Relay &&
+            !item.HasMember("relayStates") && !item.HasMember("states") && !(relay.IsObject() && relay.HasMember("relayStates"))) {
+            device.valid = false;
+            device.errorMessage = "missing_relayStates";
+        }
 
         device.sys.kernel = getString(item, "kernel", getString(sys, "kernel"));
         device.sys.arch = getString(item, "arch", getString(sys, "arch"));

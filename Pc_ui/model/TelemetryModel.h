@@ -28,6 +28,8 @@ struct TelemetryPointData
     QString textValue;
     bool valid = false;
     QString errorMessage;
+    QString dataState;
+    qint64 lastUpdateTime = 0;
 };
 
 struct SensorThData
@@ -62,6 +64,9 @@ struct RealtimeDeviceData
     QString errorMessage;
     QString statusText;
     QString statusLevel;
+    QString dataState;
+    bool serviceOffline = false;
+    bool mock = false;
     bool valid = false;
     qint64 timestamp = 0;
 };

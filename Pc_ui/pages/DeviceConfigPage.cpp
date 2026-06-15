@@ -276,6 +276,9 @@ QString DeviceConfigPage::statusText(const QString &status) const
     if (status == QStringLiteral("offline")) {
         return QStringLiteral("离线");
     }
+    if (status == QStringLiteral("service_offline")) {
+        return QStringLiteral("服务离线，禁止配置操作");
+    }
     return QStringLiteral("未知");
 }
 
@@ -313,6 +316,26 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
 {
     auto *button = new QPushButton(QStringLiteral("删除"), table);
     button->setProperty("danger", true);
+    bool serviceOffline = false;
+    if (m_device) {
+        const QList<DeviceNode> devices = m_device->allDevices();
+        for (const DeviceNode &node : devices) {
+            if (node.gatewayId != gatewayId || (!portId.isEmpty() && node.port != portId)) {
+                continue;
+            }
+            if (!master && node.deviceId != deviceId) {
+                continue;
+            }
+            if (node.status == QStringLiteral("service_offline")) {
+                serviceOffline = true;
+                break;
+            }
+        }
+    }
+    if (serviceOffline) {
+        button->setEnabled(false);
+        button->setToolTip(QStringLiteral("服务离线，禁止配置操作"));
+    }
     connect(button, &QPushButton::clicked, this, [this, master, gatewayId, portId, deviceId]() {
         const QString target = master
             ? QStringLiteral("该主站及其下所有从站数据")
