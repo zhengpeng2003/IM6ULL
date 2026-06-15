@@ -1143,7 +1143,7 @@ bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& tar
     }
 
     static const char* sql =
-        "SELECT command_type,gateway_id,port_id,device_id "
+        "SELECT command_id,command_type,gateway_id,port_id,device_id "
         "FROM command_log WHERE seq=? LIMIT 1;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -1157,18 +1157,62 @@ bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& tar
 
     bool found = false;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        const unsigned char* commandType = sqlite3_column_text(stmt, 0);
-        const unsigned char* gatewayId = sqlite3_column_text(stmt, 1);
-        const unsigned char* portId = sqlite3_column_text(stmt, 2);
+        const unsigned char* commandId = sqlite3_column_text(stmt, 0);
+        const unsigned char* commandType = sqlite3_column_text(stmt, 1);
+        const unsigned char* gatewayId = sqlite3_column_text(stmt, 2);
+        const unsigned char* portId = sqlite3_column_text(stmt, 3);
+        target.commandId = commandId ? reinterpret_cast<const char*>(commandId) : "";
         target.commandType = commandType ? reinterpret_cast<const char*>(commandType) : "";
         target.gatewayId = gatewayId ? reinterpret_cast<const char*>(gatewayId) : "";
         target.portId = portId ? reinterpret_cast<const char*>(portId) : "";
-        target.deviceId = sqlite3_column_int(stmt, 3);
+        target.deviceId = sqlite3_column_int(stmt, 4);
         found = true;
     }
 
     sqlite3_finalize(stmt);
     return found;
+}
+
+std::vector<CommandLogTarget> PcDatabase::collectCommandTimeouts(std::int64_t nowMs, std::int64_t timeoutMs)
+{
+    std::vector<CommandLogTarget> results;
+    if (!m_db) {
+        return results;
+    }
+
+    static const char* sql =
+        "SELECT command_id,seq,command_type,gateway_id,port_id,device_id "
+        "FROM command_log WHERE status='sent' AND send_time_ms>0 AND ?-send_time_ms>=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare collect command timeouts failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return results;
+    }
+    sqlite3_bind_int64(stmt, 1, nowMs);
+    sqlite3_bind_int64(stmt, 2, timeoutMs);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        CommandLogTarget target;
+        const unsigned char* commandId = sqlite3_column_text(stmt, 0);
+        target.commandId = commandId ? reinterpret_cast<const char*>(commandId) : "";
+        target.seq = sqlite3_column_int64(stmt, 1);
+        target.deviceId = sqlite3_column_int(stmt, 5);
+        const unsigned char* commandType = sqlite3_column_text(stmt, 2);
+        const unsigned char* gatewayId = sqlite3_column_text(stmt, 3);
+        const unsigned char* portId = sqlite3_column_text(stmt, 4);
+        target.commandType = commandType ? reinterpret_cast<const char*>(commandType) : "";
+        target.gatewayId = gatewayId ? reinterpret_cast<const char*>(gatewayId) : "";
+        target.portId = portId ? reinterpret_cast<const char*>(portId) : "";
+        results.push_back(target);
+    }
+    sqlite3_finalize(stmt);
+
+    for (const CommandLogTarget& target : results) {
+        updateCommandLogBySeq(target.seq, "timeout", "linux_data_ack_timeout", "device execution timeout", nowMs);
+    }
+    return results;
 }
 
 void PcDatabase::close()
