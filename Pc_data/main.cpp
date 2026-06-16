@@ -87,19 +87,27 @@ int main()
         cout << "MQTT broker: " << mqttConfig.host << ":" << mqttConfig.port << endl;
         cout << "MQTT subscribe topic: pc_data/telemetry/test" << endl;
 
+        bool pendingStartupConfigRequest = true;
         if (!mqtt.connectToBroker(mqttConfig.host, mqttConfig.port, mqttConfig.clientId, mqttConfig.topics)) {
             cout << "MQTT connectToBroker call failed" << endl;
         } else {
-            const std::int64_t seq = currentTimeMs();
-            const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":") +
-                std::to_string(seq) + ",\"target\":{\"gatewayId\":\"gateway_001\"}}";
-            const bool requestOk = mqtt.publish("cmd/gateway_001", payload);
-            cout << "Pc_data startup request_config_snapshot " << (requestOk ? "ok" : "failed") << endl;
+            cout << "MQTT not connected, defer request_config_snapshot gateway=gateway_001" << endl;
         }
 
         std::int64_t lastOfflineScanMs = 0;
         while (true) {
             const std::int64_t nowMs = currentTimeMs();
+            if (pendingStartupConfigRequest && mqtt.status() == "connected") {
+                cout << "MQTT connected, flush pending request_config_snapshot gateway=gateway_001" << endl;
+                const std::int64_t seq = currentTimeMs();
+                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":") +
+                    std::to_string(seq) + ",\"target\":{\"gatewayId\":\"gateway_001\"}}";
+                const bool requestOk = mqtt.publish("cmd/gateway_001", payload);
+                cout << "request_config_snapshot publish " << (requestOk ? "ok" : "failed")
+                     << ", gateway=gateway_001" << endl;
+                pendingStartupConfigRequest = !requestOk;
+            }
+
             if (database.isOpen() && nowMs - lastOfflineScanMs >= 1000) {
                 lastOfflineScanMs = nowMs;
                 const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
