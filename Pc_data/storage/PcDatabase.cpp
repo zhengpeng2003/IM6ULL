@@ -271,11 +271,14 @@ bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
     device.enabled = true;
     device.status = point.valid ? "online" :
         (point.errorMessage == "device_offline" ? "offline" : "error");
-    device.lastSeenMs = point.timestampMs;
-    device.lastOfflineMs = device.status == "offline" ? point.timestampMs : 0;
+    const std::int64_t receiveTimeMs = currentTimeMs();
+    // point.timestampMs is board collection time for latest/history charts.
+    // PC receive time must drive lastSeen/update/offline timeout decisions.
+    device.lastSeenMs = receiveTimeMs;
+    device.lastOfflineMs = device.status == "offline" ? receiveTimeMs : 0;
     device.statusReason = point.valid ? "" : point.errorMessage;
-    device.createTimeMs = point.timestampMs;
-    device.updateTimeMs = point.timestampMs;
+    device.createTimeMs = receiveTimeMs;
+    device.updateTimeMs = receiveTimeMs;
 
     static const char* sql =
         "INSERT INTO device ("
@@ -953,6 +956,48 @@ bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
 }
 
 
+bool PcDatabase::upsertGatewayConfigSnapshot(const std::string& gatewayId,
+                                             const std::vector<GatewayPort>& ports,
+                                             const std::vector<ConfigSnapshotDevice>& devices,
+                                             const std::vector<PointConfig>& pointConfigs,
+                                             bool fullSnapshot)
+{
+    if (!m_db || gatewayId.empty()) {
+        return false;
+    }
+
+    bool ok = true;
+    if (fullSnapshot) {
+        // Protocol-compatible conservative behavior: full snapshots currently upsert all
+        // provided rows but do not delete rows unless a future payload supplies an
+        // explicit deletion contract. This avoids accidental data loss.
+        std::cout << "Config snapshot fullSnapshot received; using safe upsert-only mode, gateway: "
+                  << gatewayId << std::endl;
+    }
+
+    for (const GatewayPort& port : ports) {
+        if (port.gatewayId == gatewayId && !port.portId.empty()) {
+            ok = upsertGatewayPort(port) && ok;
+        }
+    }
+    for (const ConfigSnapshotDevice& snapshotDevice : devices) {
+        const DeviceRecord& device = snapshotDevice.device;
+        if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
+            ok = upsertDevice(device) && ok;
+        }
+    }
+    if (!pointConfigs.empty()) {
+        ok = savePointConfigs(pointConfigs) && ok;
+    }
+
+    std::cout << "Upsert config snapshot " << (ok ? "ok" : "failed")
+              << ", gateway: " << gatewayId
+              << ", ports: " << ports.size()
+              << ", devices: " << devices.size()
+              << std::endl;
+    return ok;
+}
+
 bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
 {
     if (!m_db || event.alarmId.empty() || event.gatewayId.empty()) {
@@ -1135,12 +1180,15 @@ bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)
 }
 
 bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
-                                        std::int64_t heartbeatTimeMs,
+                                        std::int64_t /*heartbeatTimeMs*/,
                                         const std::string& status)
 {
     if (!m_db || gatewayId.empty()) {
         return false;
     }
+
+    const std::int64_t receiveTimeMs = currentTimeMs();
+    // Heartbeat payload timestampMs may be board time. Store PC receive time for stale checks.
 
     static const char* sql =
         "INSERT INTO gateway_status ("
@@ -1161,8 +1209,8 @@ bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
     bindText(stmt, 1, gatewayId);
     bindText(stmt, 2, status.empty() ? std::string("online") : status);
     sqlite3_bind_int64(stmt, 3, 0);
-    sqlite3_bind_int64(stmt, 4, heartbeatTimeMs);
-    sqlite3_bind_int64(stmt, 5, heartbeatTimeMs);
+    sqlite3_bind_int64(stmt, 4, receiveTimeMs);
+    sqlite3_bind_int64(stmt, 5, receiveTimeMs);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
