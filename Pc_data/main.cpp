@@ -103,7 +103,7 @@ int main()
             if (pendingStartupConfigRequest && mqtt.status() == "connected") {
                 cout << "MQTT connected, flush pending request_config_snapshot gateway=gateway_001" << endl;
                 const std::int64_t seq = currentTimeMs();
-                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":") +
+                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"request_config_snapshot\",\"seq\":") +
                     std::to_string(seq) + ",\"target\":{\"gatewayId\":\"gateway_001\"}}";
                 const bool requestOk = mqtt.publish("cmd/gateway_001", payload);
                 cout << "request_config_snapshot publish " << (requestOk ? "ok" : "failed")

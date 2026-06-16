@@ -129,7 +129,7 @@ std::string buildRequestConfigSnapshotJson(const std::string& gatewayId)
 {
     const std::int64_t seq = currentTimeMs();
     std::ostringstream payload;
-    payload << "{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":" << seq
+    payload << "{\"type\":\"command\",\"cmd\":\"request_config_snapshot\",\"seq\":" << seq
             << ",\"target\":{\"gatewayId\":\"" << jsonEscape(gatewayId) << "\"}}";
     return payload.str();
 }

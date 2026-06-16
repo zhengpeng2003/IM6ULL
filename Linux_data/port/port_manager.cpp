@@ -1747,6 +1747,8 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
 
                 json_object_object_add(dev, "deviceId", json_object_new_int(device.sensor->slaveId()));
                 json_object_object_add(dev, "slave_id", json_object_new_int(device.sensor->slaveId()));
+                addString(dev, "gatewayId", effective_gateway_id);
+                addString(dev, "portId", portIdForSlot(slot));
                 addString(dev, "deviceType", device.sensor->deviceTypeName());
                 json_object_object_add(dev, "pollIntervalMs", json_object_new_int(device.sensor->pollIntervalMs()));
                 json_object_object_add(dev, "poll_interval_ms", json_object_new_int(device.sensor->pollIntervalMs()));
@@ -1756,8 +1758,10 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                 if (device.sensor->thresholdConfig(&config)) {
                     json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
                     json_object *threshold = thresholdConfigToJson(config);
-                    if (threshold)
+                    if (threshold) {
                         json_object_object_add(dev, "thresholdConfig", threshold);
+                        json_object_object_add(dev, "threshold_config", thresholdConfigToJson(config));
+                    }
                 } else {
                     json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(false));
                 }
@@ -1856,6 +1860,8 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                     continue;
                 json_object_object_add(dev, "deviceId", json_object_new_int(slave_id));
                 json_object_object_add(dev, "slave_id", json_object_new_int(slave_id));
+                addString(dev, "gatewayId", effective_gateway_id);
+                addString(dev, "portId", portIdForSlot(slot));
                 addString(dev, "deviceType", device_type);
                 json_object_object_add(dev, "pollIntervalMs", json_object_new_int(poll_interval_ms));
                 json_object_object_add(dev, "poll_interval_ms", json_object_new_int(poll_interval_ms));
@@ -1867,8 +1873,10 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                     thresholdConfigFromJson(threshold, &config);
                     json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(config.threshold_enabled));
                     json_object *threshold_copy = thresholdConfigToJson(config);
-                    if (threshold_copy)
+                    if (threshold_copy) {
                         json_object_object_add(dev, "thresholdConfig", threshold_copy);
+                        json_object_object_add(dev, "threshold_config", thresholdConfigToJson(config));
+                    }
                 } else {
                     json_object_object_add(dev, "thresholdEnabled", json_object_new_boolean(false));
                 }
