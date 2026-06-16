@@ -99,7 +99,7 @@ bool IpcClient::sendMessage(const QByteArray &msg)
 
     m_socket->flush();
 
-    qDebug() << "IpcClient send:" << frame;
+    qDebug() << "IpcClient send bytes:" << frame.size();
 
     return true;
 }
@@ -133,7 +133,7 @@ void IpcClient::onReadyRead()
         return;
     }
 
-    qDebug() << "IpcClient recv raw:" << data;
+    qDebug() << "IpcClient recv raw bytes:" << data.size();
 
     processReceivedData(data);
 }
@@ -179,7 +179,7 @@ void IpcClient::processReceivedData(const QByteArray &data)
             continue;
         }
 
-        qDebug() << "IpcClient recv frame:" << frame;
+        qDebug() << "IpcClient recv frame bytes:" << frame.size();
 
         emit messageReceived(frame);
     }

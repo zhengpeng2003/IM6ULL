@@ -127,7 +127,14 @@ void MainWindow::initIpc()
         if (m_topBar) {
             m_topBar->setServiceOnline(true);
         }
-        requestFullSnapshot();
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        m_lastIpcMessageMs = now;
+        m_lastLatestPointsMs = now;
+        QTimer::singleShot(200, this, [this]() {
+            if (m_ipcClient && m_ipcClient->isConnected()) {
+                requestFullSnapshot();
+            }
+        });
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
@@ -174,13 +181,13 @@ void MainWindow::initIpc()
             m_data->refreshOfflineStates(30000);
         }
 
-        if (m_lastLatestPointsMs <= 0) {
+        if (!m_ipcClient || !m_ipcClient->isConnected()) {
             markIpcDataOffline();
             return;
         }
 
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        if (now - m_lastLatestPointsMs > 6000) {
+        if (m_lastIpcMessageMs <= 0 || now - m_lastIpcMessageMs > 45000) {
             markIpcDataOffline();
         }
     });
@@ -217,7 +224,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
 
     if (error.error != QJsonParseError::NoError) {
         qDebug() << "IPC JSON parse error:" << error.errorString()
-                 << "frame:" << frame;
+                 << "bytes:" << frame.size();
         return;
     }
 
@@ -228,7 +235,12 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
 
     const QJsonObject root = doc.object();
     const QString type = root.value("type").toString();
-    qDebug() << "IPC message type:" << (type.isEmpty() ? QStringLiteral("<missing>") : type);
+    m_lastIpcMessageMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_topBar) {
+        m_topBar->setServiceOnline(true);
+    }
+    qDebug() << "IPC message type:" << (type.isEmpty() ? QStringLiteral("<missing>") : type)
+             << "bytes:" << frame.size();
 
     if (type == "hello") {
         qDebug() << "Pc_data hello:" << root.value("message").toString();
@@ -398,7 +410,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
     }
 
     qDebug() << "unknown IPC message type:" << type
-             << "frame:" << frame;
+             << "bytes:" << frame.size();
 }
 
 void MainWindow::requestLatestPoints()

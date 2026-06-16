@@ -23,6 +23,14 @@ bool MqttClient::connectToBroker(const std::string& host,
     m_topics = topics;
     setStatus("connecting");
 
+    std::cout << "MQTTAsync_create begin, address=" << m_address
+              << ", clientId=" << m_clientId
+              << ", topicCount=" << m_topics.size()
+              << std::endl;
+    for (const std::string& topic : m_topics) {
+        std::cout << "MQTT will subscribe topic: " << topic << std::endl;
+    }
+
     int rc = MQTTAsync_create(
         &m_client,
         m_address.c_str(),
@@ -32,11 +40,18 @@ bool MqttClient::connectToBroker(const std::string& host,
         );
 
     if (rc != MQTTASYNC_SUCCESS) {
-        std::cerr << "MQTTAsync_create failed, rc=" << rc << std::endl;
+        std::cerr << "MQTTAsync_create failed, rc=" << rc
+                  << ", address=" << m_address
+                  << ", clientId=" << m_clientId
+                  << std::endl;
         m_client = nullptr;
         setStatus("failed");
         return false;
     }
+
+    std::cout << "MQTTAsync_create ok, address=" << m_address
+              << ", clientId=" << m_clientId
+              << std::endl;
 
     rc = MQTTAsync_setCallbacks(
         m_client,
@@ -47,12 +62,19 @@ bool MqttClient::connectToBroker(const std::string& host,
         );
 
     if (rc != MQTTASYNC_SUCCESS) {
-        std::cerr << "MQTTAsync_setCallbacks failed, rc=" << rc << std::endl;
+        std::cerr << "MQTTAsync_setCallbacks failed, rc=" << rc
+                  << ", address=" << m_address
+                  << ", clientId=" << m_clientId
+                  << std::endl;
         MQTTAsync_destroy(&m_client);
         m_client = nullptr;
         setStatus("failed");
         return false;
     }
+
+    std::cout << "MQTTAsync_setCallbacks ok, address=" << m_address
+              << ", clientId=" << m_clientId
+              << std::endl;
 
     MQTTAsync_connectOptions connOpts = MQTTAsync_connectOptions_initializer;
     connOpts.keepAliveInterval = 20;
@@ -66,14 +88,21 @@ bool MqttClient::connectToBroker(const std::string& host,
     rc = MQTTAsync_connect(m_client, &connOpts);
 
     if (rc != MQTTASYNC_SUCCESS) {
-        std::cerr << "MQTTAsync_connect failed, rc=" << rc << std::endl;
+        std::cerr << "MQTTAsync_connect failed, rc=" << rc
+                  << ", address=" << m_address
+                  << ", clientId=" << m_clientId
+                  << std::endl;
         MQTTAsync_destroy(&m_client);
         m_client = nullptr;
         setStatus("failed");
         return false;
     }
 
-    std::cout << "MQTT connecting to " << m_address << std::endl;
+    std::cout << "MQTTAsync_connect request sent, rc=" << rc
+              << ", address=" << m_address
+              << ", clientId=" << m_clientId
+              << ", status=" << status()
+              << std::endl;
     return true;
 }
 
@@ -96,6 +125,10 @@ void MqttClient::disconnect()
 bool MqttClient::publish(const std::string& topic, const std::string& payload, int qos)
 {
     if (!m_client || topic.empty()) {
+        std::cerr << "MQTT publish skipped, clientReady=" << (m_client ? "true" : "false")
+                  << ", topic=" << topic
+                  << ", status=" << status()
+                  << std::endl;
         return false;
     }
 
@@ -111,9 +144,19 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload, i
                   << topic
                   << ", rc="
                   << rc
+                  << ", status="
+                  << status()
+                  << ", payload bytes="
+                  << payload.size()
                   << std::endl;
         return false;
     }
+
+    std::cout << "MQTT publish requested, topic=" << topic
+              << ", qos=" << qos
+              << ", payload bytes=" << payload.size()
+              << ", status=" << status()
+              << std::endl;
 
     return true;
 }
@@ -183,9 +226,11 @@ int MqttClient::onMessageArrived(void* context,
             );
     }
 
-    std::cout << "MQTT message arrived." << std::endl;
-    std::cout << "Topic: " << topic << std::endl;
-    std::cout << "Payload: " << payload << std::endl;
+    std::cout << "MQTT message arrived. topic="
+              << topic
+              << ", payload bytes="
+              << payload.size()
+              << std::endl;
 
     if (self && self->m_messageCallback) {
         self->m_messageCallback(topic, payload);
@@ -201,11 +246,15 @@ void MqttClient::onConnectSuccess(void* context, MQTTAsync_successData* response
 {
     auto* self = static_cast<MqttClient*>(context);
 
-    std::cout << "MQTT connected." << std::endl;
-
     if (self) {
         self->setStatus("connected");
+        std::cout << "MQTT connected, address=" << self->m_address
+                  << ", clientId=" << self->m_clientId
+                  << ", topicCount=" << self->m_topics.size()
+                  << std::endl;
         self->subscribeTopics();
+    } else {
+        std::cout << "MQTT connected." << std::endl;
     }
 
     (void)response;
@@ -234,6 +283,9 @@ void MqttClient::onConnectFailure(void* context, MQTTAsync_failureData* response
 bool MqttClient::subscribeTopics()
 {
     if (!m_client) {
+        std::cerr << "MQTT subscribe skipped, client is null, status="
+                  << status()
+                  << std::endl;
         return false;
     }
 
@@ -254,10 +306,26 @@ bool MqttClient::subscribeTopics()
                       << topic
                       << ", rc="
                       << rc
+                      << ", address="
+                      << m_address
+                      << ", clientId="
+                      << m_clientId
+                      << ", status="
+                      << status()
                       << std::endl;
             ok = false;
         } else {
-            std::cout << "MQTT subscribed: " << topic << std::endl;
+            std::cout << "MQTT subscribe requested, topic="
+                      << topic
+                      << ", qos="
+                      << qos
+                      << ", address="
+                      << m_address
+                      << ", clientId="
+                      << m_clientId
+                      << ", status="
+                      << status()
+                      << std::endl;
         }
     }
 

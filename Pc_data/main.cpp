@@ -39,10 +39,20 @@ int main()
         cout << "IpcServer created" << endl;
 
         MqttClient mqtt;
+        cout << "MqttClient created" << endl;
+
         MqttConfig mqttConfig = loadMqttConfig();
+        cout << "MqttConfig loaded: broker=" << mqttConfig.host << ":" << mqttConfig.port
+             << ", clientId=" << mqttConfig.clientId
+             << ", commandGatewayId=" << mqttConfig.commandGatewayId
+             << ", topicCount=" << mqttConfig.topics.size()
+             << endl;
 
         MqttMessageHandler mqttHandler(database, dataService, ipc, mqtt);
+        cout << "MqttMessageHandler created" << endl;
+
         IpcMessageHandler ipcHandler(database, dataService, ipc, mqtt, mqttConfig);
+        cout << "IpcMessageHandler created" << endl;
 
         mqtt.setMessageCallback([&](const std::string& topic,
                                     const std::string& payload) {
@@ -60,11 +70,6 @@ int main()
             ipc.sendMessage(R"({"type":"hello","message":"hello pc_ui"})");
 
             cout << "send hello done" << endl;
-
-            sendLatestPoints(ipc, dataService, database);
-            sendGatewayStatusSnapshot(ipc, database);
-            sendPortStatusSnapshot(ipc, database);
-            sendDevicesSnapshot(ipc, database);
         });
 
         ipc.setClientDisconnectedCallback([]() {
@@ -74,6 +79,7 @@ int main()
         ipc.setMessageCallback([&](const std::string& msg) {
             ipcHandler.handle(msg);
         });
+        cout << "callbacks installed" << endl;
 
         cout << "Before ipc.start" << endl;
 
@@ -82,19 +88,27 @@ int main()
             return -1;
         }
 
+        cout << "After ipc.start" << endl;
         cout << "Pc_data IPC server running..." << endl;
 
         cout << "MQTT broker: " << mqttConfig.host << ":" << mqttConfig.port << endl;
-        cout << "MQTT subscribe topic: pc_data/telemetry/test" << endl;
+        for (const std::string& topic : mqttConfig.topics) {
+            cout << "MQTT subscribe topic: " << topic << endl;
+        }
 
         bool pendingStartupConfigRequest = database.isOpen() && database.deviceCount() == 0;
         if (pendingStartupConfigRequest) {
             cout << "Pc_data device table empty, need_config_sync=true" << endl;
         }
+
+        cout << "Before mqtt.connectToBroker" << endl;
         if (!mqtt.connectToBroker(mqttConfig.host, mqttConfig.port, mqttConfig.clientId, mqttConfig.topics)) {
             cout << "MQTT connectToBroker call failed" << endl;
-        } else if (pendingStartupConfigRequest) {
-            cout << "MQTT not connected, defer request_config_snapshot gateway=gateway_001" << endl;
+        } else {
+            cout << "MQTT async connect request sent, status=" << mqtt.status() << endl;
+            if (pendingStartupConfigRequest) {
+                cout << "MQTT not connected yet, defer request_config_snapshot gateway=gateway_001" << endl;
+            }
         }
 
         std::int64_t lastOfflineScanMs = 0;

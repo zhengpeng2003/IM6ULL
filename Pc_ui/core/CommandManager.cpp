@@ -221,7 +221,11 @@ void CommandManager::sendRemoveDeviceCommand(const QString &gatewayId, const QSt
 
 void CommandManager::onCommandAck(const QJsonObject &obj)
 {
-    const QString cmdId = obj.value("cmd_id").toString();
+    QString cmdId = obj.value("cmd_id").toString();
+    if (cmdId.isEmpty()) {
+        const qint64 seq = int64Any(obj, {"seq", "sequence"});
+        cmdId = m_seqToCmdId.value(seq);
+    }
     if (!m_pending.contains(cmdId)) return;
 
     CommandRecord rec = m_pending.value(cmdId);
@@ -272,7 +276,10 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
 void CommandManager::onCommandLogUpdate(const QJsonObject &obj)
 {
     const qint64 seq = int64Any(obj, {"seq", "sequence"});
-    const QString cmdId = m_seqToCmdId.value(seq);
+    QString cmdId = obj.value(QStringLiteral("cmd_id")).toString();
+    if (cmdId.isEmpty()) {
+        cmdId = m_seqToCmdId.value(seq);
+    }
     if (cmdId.isEmpty() || !m_pending.contains(cmdId)) return;
 
     const QString stage = obj.value(QStringLiteral("stage")).toString();

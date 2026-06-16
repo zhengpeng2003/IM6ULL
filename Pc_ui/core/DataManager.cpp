@@ -480,7 +480,7 @@ TelemetryPointData DataManager::parseTelemetryPoint(const QJsonObject &obj) cons
         point.errorMessage = QStringLiteral("数据无效");
     }
     point.receiveTimeMs = QDateTime::currentMSecsSinceEpoch();
-    point.lastUpdateTime = point.timestampMs;
+    point.lastUpdateTime = point.receiveTimeMs;
     return point;
 }
 
@@ -535,7 +535,7 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
     data.node.online = false;
     data.node.status = QStringLiteral("unknown");
     data.serviceOffline = false;
-    data.node.lastUpdateTime = first.timestampMs;
+    data.node.lastUpdateTime = first.receiveTimeMs;
     data.timestamp = first.timestampMs;
     data.valid = true;
     data.dataState = QStringLiteral("normal");
@@ -548,7 +548,9 @@ RealtimeDeviceData DataManager::buildRealtimeDeviceData(const QList<TelemetryPoi
         }
         if (point.timestampMs > data.timestamp) {
             data.timestamp = point.timestampMs;
-            data.node.lastUpdateTime = point.timestampMs;
+        }
+        if (point.receiveTimeMs > data.node.lastUpdateTime) {
+            data.node.lastUpdateTime = point.receiveTimeMs;
         }
         applyPointToTypedFields(data, point);
     }
@@ -565,7 +567,7 @@ void DataManager::evaluateDeviceStatus(RealtimeDeviceData &data) const
     data.node.online = false;
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const qint64 ageMs = data.timestamp > 0 ? now - data.timestamp : kRealtimeOfflineMs + 1;
+    const qint64 ageMs = data.node.lastUpdateTime > 0 ? now - data.node.lastUpdateTime : kRealtimeOfflineMs + 1;
     if (data.mock) {
         data.statusLevel = QStringLiteral("mock");
         data.statusText = QStringLiteral("演示数据");
@@ -714,9 +716,13 @@ void DataManager::upsertRealtimeData(const RealtimeDeviceData &data)
 
     QMutexLocker locker(&m_mutex);
     const RealtimeDeviceData old = m_realtimeMap.value(data.node.key());
-    if (old.timestamp > 0 && data.timestamp > 0 && data.timestamp < old.timestamp) {
+    if (old.node.lastUpdateTime > 0 && data.node.lastUpdateTime > 0 &&
+        data.node.lastUpdateTime < old.node.lastUpdateTime) {
         qDebug() << "latest_points stale dropped in UI" << data.node.key()
-                 << "oldTs" << old.timestamp << "newTs" << data.timestamp;
+                 << "oldRecvTs" << old.node.lastUpdateTime
+                 << "newRecvTs" << data.node.lastUpdateTime
+                 << "oldDataTs" << old.timestamp
+                 << "newDataTs" << data.timestamp;
         return;
     }
     m_realtimeMap.insert(data.node.key(), data);

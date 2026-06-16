@@ -49,6 +49,7 @@ enum class PointValueType
 struct TelemetryPoint
 {
     std::int64_t timestampMs = 0;
+    std::int64_t receiveTimeMs = 0;
 
     // 现场上下文
     std::string factoryId;

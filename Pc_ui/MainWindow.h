@@ -79,6 +79,7 @@ private:
     QTimer *m_ipcTimer = nullptr;
     QTimer *m_ipcWatchdogTimer = nullptr;
     QTimer *m_snapshotFallbackTimer = nullptr;
+    qint64 m_lastIpcMessageMs = 0;
     qint64 m_lastLatestPointsMs = 0;
     QString m_pendingDeleteAction;
     QString m_pendingDeleteGatewayId;

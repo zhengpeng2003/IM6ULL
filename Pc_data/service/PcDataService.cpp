@@ -21,11 +21,13 @@ PcDataService::PcDataService()
 void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
 {
     std::vector<TelemetryPoint> points = ModelConverter::toTelemetryPoints(pack);
+    const std::int64_t receiveTimeMs = currentTimeMs();
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    pruneExpiredRemovedDevicesLocked(currentTimeMs());
+    pruneExpiredRemovedDevicesLocked(receiveTimeMs);
 
-    for (const auto& point : points) {
+    for (auto point : points) {
+        point.receiveTimeMs = receiveTimeMs;
         if (point.pointId.empty()) {
             continue;
         }
@@ -39,16 +41,21 @@ void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
         }
 
         auto old = m_snapshot.find(point.pointId);
-        if (old == m_snapshot.end() || point.timestampMs >= old->second.timestampMs) {
+        if (old == m_snapshot.end() || point.receiveTimeMs >= old->second.receiveTimeMs) {
             const std::int64_t oldTs = old == m_snapshot.end() ? 0 : old->second.timestampMs;
+            const std::int64_t oldReceiveTs = old == m_snapshot.end() ? 0 : old->second.receiveTimeMs;
             m_snapshot[point.pointId] = point;
             std::cout << "snapshot updated: pointId=" << point.pointId
                       << " oldTs=" << oldTs
-                      << " newTs=" << point.timestampMs << std::endl;
+                      << " newTs=" << point.timestampMs
+                      << " oldReceiveTs=" << oldReceiveTs
+                      << " newReceiveTs=" << point.receiveTimeMs << std::endl;
         } else {
             std::cout << "snapshot stale dropped: pointId=" << point.pointId
                       << " oldTs=" << old->second.timestampMs
-                      << " newTs=" << point.timestampMs << std::endl;
+                      << " newTs=" << point.timestampMs
+                      << " oldReceiveTs=" << old->second.receiveTimeMs
+                      << " newReceiveTs=" << point.receiveTimeMs << std::endl;
         }
     }
 }

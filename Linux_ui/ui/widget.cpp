@@ -524,12 +524,11 @@ void Widget::initUI()
                     return;
                 }
 
-                if (cmd == "remove_device" && m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq) {
-                    removeRegisteredSlave(m_pendingRemoveSlave.masterSlot,
-                                          m_pendingRemoveSlave.slaveAddr,
-                                          m_pendingRemoveSlave.deviceType);
-                    refreshHomeMasterAndSlaveList(m_pendingRemoveSlave.masterSlot);
-                    m_pendingRemoveSlave = PendingRemoveSlave();
+                if (cmd == "remove_device") {
+                    handleRemoteRemoveDeviceAck(ackRoot);
+                    if (m_pendingRemoveSlave.active && m_pendingRemoveSlave.seq == seq) {
+                        m_pendingRemoveSlave = PendingRemoveSlave();
+                    }
                     if (m_operationOverlay)
                         m_operationOverlay->showSuccess("从站已删除");
                     requestRuntimeRefresh();
@@ -927,12 +926,18 @@ void Widget::handleRemoteRemoveDeviceAck(const QJsonObject &ack)
 {
     int masterSlot = ack.value("slot").toInt(-1);
     int slaveAddr = ack.value("slave_id").toInt(ack.value("deviceId").toInt(0));
+    const QString deviceType = ack.value("deviceType").toString(ack.value("device_type").toString());
 
     const QJsonObject target = ack.value("target").toObject();
     if (masterSlot < 0 && !target.isEmpty())
         masterSlot = slotFromPortId(target.value("portId").toString());
     if (slaveAddr <= 0)
         slaveAddr = target.value("deviceId").toInt(target.value("slave_id").toInt(0));
+    if (masterSlot < 0 && m_pendingRemoveSlave.active)
+        masterSlot = m_pendingRemoveSlave.masterSlot;
+    if (slaveAddr <= 0 && m_pendingRemoveSlave.active)
+        slaveAddr = m_pendingRemoveSlave.slaveAddr;
+    Q_UNUSED(deviceType);
 
     if (masterSlot < 0 || slaveAddr <= 0)
         return;

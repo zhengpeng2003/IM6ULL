@@ -457,7 +457,7 @@ std::string buildDeleteDataAckJson(const std::string& action,
     oss << "\"action\":\"" << jsonEscape(action) << "\",";
     oss << "\"ok\":" << (ok ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
-    oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    //oss << "\"message\":\"" << jsonEscape(message) << "\",";
     oss << "\"timestamp\":" << currentTimeMs();
     oss << "}";
 

@@ -21,8 +21,17 @@ MqttConfig loadMqttConfig()
     MqttConfig config;
     std::ifstream file(kMqttConfigPath, std::ios::binary);
     if (!file.is_open()) {
+        std::cout << "MQTT config file not found: " << kMqttConfigPath
+                  << ", use defaults host=" << config.host
+                  << ", port=" << config.port
+                  << ", clientId=" << config.clientId
+                  << ", commandGatewayId=" << config.commandGatewayId
+                  << ", topicCount=" << config.topics.size()
+                  << std::endl;
         return config;
     }
+
+    std::cout << "MQTT config file opened: " << kMqttConfigPath << std::endl;
 
     std::stringstream buffer;
     buffer << file.rdbuf();
@@ -31,18 +40,37 @@ MqttConfig loadMqttConfig()
     root.Parse(buffer.str().c_str());
 
     if (root.HasParseError() || !root.IsObject()) {
-        std::cout << "MQTT config parse failed, use defaults" << std::endl;
+        std::cout << "MQTT config parse failed, use defaults host=" << config.host
+                  << ", port=" << config.port
+                  << ", clientId=" << config.clientId
+                  << ", commandGatewayId=" << config.commandGatewayId
+                  << ", topicCount=" << config.topics.size()
+                  << std::endl;
         return config;
     }
 
     const std::string host = getJsonString(root, "host");
     const int port = getJsonInt(root, "port", config.port);
+    const std::string commandGatewayId = getJsonString(root, "commandGatewayId");
 
     if (!host.empty()) {
         config.host = host;
     }
     if (port >= 1 && port <= 65535) {
         config.port = port;
+    }
+    if (!commandGatewayId.empty()) {
+        config.commandGatewayId = commandGatewayId;
+    }
+
+    std::cout << "MQTT config loaded from file: host=" << config.host
+              << ", port=" << config.port
+              << ", clientId=" << config.clientId
+              << ", commandGatewayId=" << config.commandGatewayId
+              << ", topicCount=" << config.topics.size()
+              << std::endl;
+    for (const std::string& topic : config.topics) {
+        std::cout << "MQTT config topic: " << topic << std::endl;
     }
 
     return config;
@@ -68,6 +96,8 @@ bool saveMqttConfigFile(const MqttConfig& config)
     writer.String(config.host.c_str());
     writer.Key("port");
     writer.Int(config.port);
+    writer.Key("commandGatewayId");
+    writer.String(config.commandGatewayId.c_str());
     writer.EndObject();
 
     std::ofstream file(kMqttConfigPath, std::ios::binary | std::ios::trunc);

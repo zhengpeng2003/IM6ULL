@@ -106,6 +106,13 @@ std::int64_t sequenceFrom(const rapidjson::Value& root)
     return getJsonInt64Any(root, {"seq", "sequence"}, 0);
 }
 
+std::int64_t linuxDataSeqFrom(std::int64_t seq)
+{
+    constexpr std::int64_t maxLinuxDataSeq = 0x7fffffff;
+    seq &= maxLinuxDataSeq;
+    return seq > 0 ? seq : 1;
+}
+
 int deviceIdFrom(const rapidjson::Value& root)
 {
     return getJsonIntAny(root, {"deviceId", "slave_id", "slaveAddress", "device_id", "slave_addr"}, 0);
@@ -137,7 +144,8 @@ std::string jsonValueToString(const rapidjson::Value& value)
     return buffer.GetString();
 }
 
-std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
+std::string buildGetConfigCommandJson(const SyncGatewayPending& pending,
+                                      const std::string& boardGatewayId)
 {
     std::ostringstream oss;
     oss << "{";
@@ -145,7 +153,7 @@ std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
     oss << "\"cmd\":\"get_config\",";
     oss << "\"seq\":" << pending.seq << ",";
     oss << "\"target\":{";
-    oss << "\"gatewayId\":\"" << jsonEscape(pending.gatewayId) << "\",";
+    oss << "\"gatewayId\":\"" << jsonEscape(boardGatewayId) << "\",";
     oss << "\"devices\":[";
     for (size_t i = 0; i < pending.devices.size(); ++i) {
         const SyncSelectedDevice& device = pending.devices[i];
@@ -161,6 +169,16 @@ std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
     oss << "}";
     oss << "}";
     return oss.str();
+}
+
+std::string boardCommandGatewayId(const MqttConfig& config)
+{
+    return config.commandGatewayId.empty() ? std::string("gateway_001") : config.commandGatewayId;
+}
+
+std::string boardCommandTopic(const MqttConfig& config)
+{
+    return "cmd/" + boardCommandGatewayId(config);
 }
 
 } // namespace
@@ -184,8 +202,9 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         for (const SyncGatewayPending& pending : pendingList) {
-            const std::string topic = "cmd/" + pending.gatewayId;
-            const std::string command = buildGetConfigCommandJson(pending);
+            const std::string topic = boardCommandTopic(m_mqttConfig);
+            const std::string command =
+                buildGetConfigCommandJson(pending, boardCommandGatewayId(m_mqttConfig));
             const bool publishOk = m_mqtt.publish(topic, command);
             std::cout << "sync_config get_config publish "
                       << (publishOk ? "ok" : "failed")
@@ -478,7 +497,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             }
             payload << "]}";
 
-            const std::string topic = "cmd/" + gatewayId;
+            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
                 m_database.updateCommandLogBySeq(seq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
@@ -527,7 +546,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                 payload << ",\"thresholdConfig\":" << jsonValueToString(root["thresholdConfig"]);
             }
             payload << "}";
-            const std::string topic = "cmd/" + gatewayId;
+            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
                 m_database.updateCommandLogBySeq(seq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
@@ -537,7 +556,8 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         if (commandType == "add_device" || commandType == "remove_device") {
-            const std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
+            const std::int64_t uiSeq = root.IsObject() ? sequenceFrom(root) : 0;
+            const std::int64_t seq = linuxDataSeqFrom(uiSeq);
             int deviceId = 0;
             if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
                 deviceId = deviceIdFrom(root["device"]);
@@ -609,7 +629,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                 }
             }
             payload << "}";
-            const std::string topic = "cmd/" + gatewayId;
+            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
                 m_database.updateCommandLogBySeq(seq,
@@ -638,7 +658,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::cout << "command rejected, missing gateway, cmd_id: " << cmdId << std::endl;
             return;
         }
-        const std::string topic = "cmd/" + gatewayId;
+        const std::string topic = boardCommandTopic(m_mqttConfig);
         const bool publishOk = m_mqtt.publish(topic, msg);
         m_ipc.sendMessage(buildCommandAckJson(commandIdForAck,
                                                publishOk,

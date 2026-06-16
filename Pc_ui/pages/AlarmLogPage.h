@@ -13,11 +13,10 @@ class AlarmLogPage : public QWidget
 public:
     explicit AlarmLogPage(AlarmManager *alarm, QWidget *parent = nullptr);
 
-private slots:
+public slots:
     void refreshTable();
     void acknowledgeVisibleActiveAlarms();
     void clearRecoveredAlarms();
-
 signals:
     void clearRecoveredAlarmsRequested();
 

@@ -9,6 +9,7 @@ struct MqttConfig
     std::string host = "127.0.0.1";
     int port = 1883;
     std::string clientId = "pc_data_001";
+    std::string commandGatewayId = "gateway_001";
     std::vector<std::string> topics = {"pc_data/telemetry/test"};
 };
 

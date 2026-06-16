@@ -80,6 +80,37 @@ DeviceRecord deviceRecordFromAddDeviceAck(const rapidjson::Value& root)
     return device;
 }
 
+DeviceRecord deviceRecordFromTelemetry(const TelemetryPack& pack, const DeviceData& telemetryDevice)
+{
+    DeviceRecord device;
+    const std::int64_t nowMs = currentTimeMs();
+
+    device.factoryId = pack.site.factoryId.empty() ? "factory_001" : pack.site.factoryId;
+    device.factoryName = pack.site.factoryName.empty() ? "工厂" : pack.site.factoryName;
+    device.areaId = pack.site.areaId.empty() ? "area_001" : pack.site.areaId;
+    device.areaName = pack.site.areaName.empty() ? "车间" : pack.site.areaName;
+    device.gatewayId = pack.site.gatewayId;
+    device.gatewayName = pack.site.gatewayName.empty() ? "IMX6ULL Gateway" : pack.site.gatewayName;
+    device.portId = pack.site.portId;
+    device.portName = pack.site.portName;
+    device.deviceId = telemetryDevice.deviceId;
+    device.deviceName = telemetryDevice.deviceName.empty()
+        ? "Device " + std::to_string(telemetryDevice.deviceId)
+        : telemetryDevice.deviceName;
+    device.deviceType = deviceTypeToString(telemetryDevice.type);
+    device.pollIntervalMs = 1000;
+    device.expectTelemetry = device.deviceType != "relay";
+    device.enabled = true;
+    device.status = telemetryDevice.valid ? "online" :
+        (telemetryDevice.errorMessage == "device_offline" ? "offline" : "error");
+    device.lastSeenMs = nowMs;
+    device.lastOfflineMs = device.status == "offline" ? nowMs : 0;
+    device.statusReason = telemetryDevice.valid ? "" : telemetryDevice.errorMessage;
+    device.createTimeMs = nowMs;
+    device.updateTimeMs = nowMs;
+    return device;
+}
+
 std::string buildSnapshotPointId(const DeviceRecord& device,
                                  const std::string& pointKey)
 {
@@ -189,16 +220,23 @@ std::string buildRequestConfigSnapshotJson(const std::string& gatewayId)
     return payload.str();
 }
 
+std::string boardCommandGatewayId()
+{
+    return "gateway_001";
+}
+
 bool publishConfigSnapshotRequest(MqttClient& mqtt, const std::string& gatewayId, const std::string& reason)
 {
     if (gatewayId.empty()) {
         return false;
     }
-    const std::string topic = "cmd/" + gatewayId;
-    const std::string payload = buildRequestConfigSnapshotJson(gatewayId);
+    const std::string boardGatewayId = boardCommandGatewayId();
+    const std::string topic = "cmd/" + boardGatewayId;
+    const std::string payload = buildRequestConfigSnapshotJson(boardGatewayId);
     const bool ok = mqtt.publish(topic, payload);
     std::cout << "[MQTT TX] request_config_snapshot " << (ok ? "ok" : "failed")
-              << ", gateway: " << gatewayId
+              << ", uiGateway: " << gatewayId
+              << ", boardGateway: " << boardGatewayId
               << ", reason: " << reason << std::endl;
     return ok;
 }
@@ -473,7 +511,7 @@ MqttMessageHandler::MqttMessageHandler(PcDatabase& database,
 void MqttMessageHandler::handle(const std::string& topic, const std::string& payload)
 {
     std::cout << "[MQTT RX] topic: " << topic << std::endl;
-    std::cout << "[MQTT RX] payload: " << payload << std::endl;
+    std::cout << "[MQTT RX] payload bytes: " << payload.size() << std::endl;
 
     const std::string messageType = extractJsonStringValue(payload, "type");
 
@@ -856,6 +894,9 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
 
         if (m_ipc.hasClient()) {
             sendDevicesSnapshot(m_ipc, m_database);
+            sendPortStatusSnapshot(m_ipc, m_database);
+            sendGatewayStatusSnapshot(m_ipc, m_database);
+            sendLatestPoints(m_ipc, m_dataService, m_database);
         }
         return;
     }
@@ -904,14 +945,36 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << pack.devices.size()
               << std::endl;
 
+    bool deviceCatalogChanged = false;
     if (m_database.isOpen()) {
         for (const DeviceData& device : pack.devices) {
-            if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0 ||
-                !m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
-                std::cout << "[MQTT RX] unknown device telemetry, request config snapshot, gateway: "
+            if (!pack.site.gatewayId.empty() && !pack.site.portId.empty() && device.deviceId > 0 &&
+                m_dataService.isRemovedDevice(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
+                std::cout << "[MQTT RX] deleted device telemetry ignored before auto register, gateway: "
                           << pack.site.gatewayId
                           << ", port: " << pack.site.portId
                           << ", device: " << device.deviceId << std::endl;
+                continue;
+            }
+            if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0 ||
+                !m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
+                std::cout << "[MQTT RX] unknown device telemetry, auto register and request config snapshot, gateway: "
+                          << pack.site.gatewayId
+                          << ", port: " << pack.site.portId
+                          << ", device: " << device.deviceId << std::endl;
+                if (!pack.site.gatewayId.empty() && !pack.site.portId.empty() && device.deviceId > 0) {
+                    const DeviceRecord record = deviceRecordFromTelemetry(pack, device);
+                    if (m_database.upsertDevice(record)) {
+                        deviceCatalogChanged = true;
+                        std::cout << "[MQTT RX] unknown telemetry device auto registered, gateway: "
+                                  << record.gatewayId
+                                  << ", port: " << record.portId
+                                  << ", device: " << record.deviceId
+                                  << ", type: " << record.deviceType << std::endl;
+                    } else {
+                        std::cout << "[MQTT RX] unknown telemetry device auto register failed" << std::endl;
+                    }
+                }
                 const std::string requestKey = pack.site.gatewayId.empty()
                     ? std::string("unknown_gateway")
                     : pack.site.gatewayId;
@@ -929,7 +992,6 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                               << (kUnknownTelemetryConfigRequestIntervalMs - (nowMs - lastIt->second))
                               << std::endl;
                 }
-                return;
             }
         }
     }
@@ -941,7 +1003,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << receivedPoints.size()
               << std::endl;
 
-    // Update in-memory snapshot only with non-deleted and timestamp-newer data.
+    // Update in-memory snapshot with non-deleted telemetry in PC receive order.
     m_dataService.handleTelemetryPack(pack);
 
     std::vector<TelemetryPoint> points = m_dataService.getLatestPoints();
@@ -957,6 +1019,11 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     }
 
     if (m_ipc.hasClient()) {
+        if (deviceCatalogChanged) {
+            sendDevicesSnapshot(m_ipc, m_database);
+            sendPortStatusSnapshot(m_ipc, m_database);
+            sendGatewayStatusSnapshot(m_ipc, m_database);
+        }
         std::string json = buildLatestPointsJson(points);
         std::cout << "[MQTT RX] send latest_points to Pc_ui, size: "
                   << json.size()

@@ -31,7 +31,10 @@ bool PcDatabase::openDatabase(const std::string& dbPath)
         return false;
     }
 
-    int rc = sqlite3_open(dbPath.c_str(), &m_db);
+    int rc = sqlite3_open_v2(dbPath.c_str(),
+                             &m_db,
+                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+                             nullptr);
 
     if (rc != SQLITE_OK) {
         std::cerr << "Open database failed: "
@@ -44,8 +47,10 @@ bool PcDatabase::openDatabase(const std::string& dbPath)
 
     std::cout << "Database opened: " << dbPath << std::endl;
 
+    sqlite3_busy_timeout(m_db, 3000);
     execSql("PRAGMA foreign_keys = ON;");
     execSql("PRAGMA journal_mode = WAL;");
+    execSql("PRAGMA synchronous = NORMAL;");
 
     return true;
 }
@@ -1501,8 +1506,7 @@ bool PcDatabase::saveLatestPoint(const TelemetryPoint& point)
         "point_key=excluded.point_key,point_name=excluded.point_name,"
         "unit=excluded.unit,value_type=excluded.value_type,"
         "number_value=excluded.number_value,text_value=excluded.text_value,"
-        "valid=excluded.valid,error_message=excluded.error_message "
-        "WHERE excluded.timestamp_ms >= latest_point.timestamp_ms;";
+        "valid=excluded.valid,error_message=excluded.error_message;";
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
