@@ -719,6 +719,7 @@ static const command_entry_t command_table[] = {
     {"remove_device", handle_remove_device},
     {"set_relay", handle_set_relay},
     {"get_config", handle_get_config},
+    {"request_config_snapshot", handle_get_config},
     {"get_offline_cache_config", handle_get_offline_cache_config},
     {"set_offline_cache_config", handle_set_offline_cache_config},
     {"clear_offline_cache", handle_clear_offline_cache},
