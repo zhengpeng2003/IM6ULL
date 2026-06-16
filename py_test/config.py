@@ -1,0 +1,31 @@
+# config.py
+# -*- coding: utf-8 -*-
+
+MQTT_HOST = "127.0.0.1"
+MQTT_PORT = 1883
+
+MQTT_USERNAME = None
+MQTT_PASSWORD = None
+
+GATEWAY_ID = "gateway_001"
+GATEWAY_NAME = "Mock i.MX6ULL"
+
+FACTORY_ID = "factory_001"
+FACTORY_NAME = "默认工厂"
+
+AREA_ID = "area_001"
+AREA_NAME = "默认区域"
+
+PORT_ID = "port_001"
+PORT_NAME = "RS485-1"
+PORT_SLOT = 0
+PORT_PATH = "/dev/ttymxc2"
+PORT_BAUD = 38400
+
+REGISTER_TOPIC = "gateway/register"
+UP_TOPIC = f"gateway/{GATEWAY_ID}/up"
+CMD_TOPIC = f"cmd/{GATEWAY_ID}"
+BROADCAST_DOWN_TOPIC = "gateway/broadcast/down"
+
+TELEMETRY_INTERVAL_SEC = 2.0
+HEARTBEAT_INTERVAL_SEC = 10.0
