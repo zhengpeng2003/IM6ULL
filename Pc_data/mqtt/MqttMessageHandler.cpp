@@ -23,6 +23,7 @@
 
 namespace {
 const char* kDeviceRegisterAckTopic = "imx6ull/device/data";
+const std::int64_t kUnknownTelemetryConfigRequestIntervalMs = 5000;
 
 std::string buildSnapshotPointId(const DeviceRecord& device,
                                  const std::string& pointKey)
@@ -133,7 +134,7 @@ std::string buildRequestConfigSnapshotJson(const std::string& gatewayId)
     return payload.str();
 }
 
-bool requestConfigSnapshot(MqttClient& mqtt, const std::string& gatewayId, const std::string& reason)
+bool publishConfigSnapshotRequest(MqttClient& mqtt, const std::string& gatewayId, const std::string& reason)
 {
     if (gatewayId.empty()) {
         return false;
@@ -590,6 +591,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             m_dataService.forgetRemovedDevice(target.gatewayId,
                                               target.portId,
                                               target.deviceId);
+            publishConfigSnapshotRequest(m_mqtt, target.gatewayId, "add_device_success");
             if (m_ipc.hasClient()) {
                 sendDevicesSnapshot(m_ipc, m_database);
                 sendLatestPoints(m_ipc, m_dataService, m_database);
@@ -628,9 +630,8 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                 gatewayId = getJsonString(site, "gatewayId");
             }
             if (seq > 0) {
-                std::cout << "[MQTT RX] config_snapshot ignored: no pending sync request, seq="
+                std::cout << "[MQTT RX] config_snapshot accepted without pending sync request, seq="
                           << seq << ", gateway=" << gatewayId << std::endl;
-                return;
             }
             pending.gatewayId = gatewayId;
         }
@@ -825,7 +826,23 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                           << pack.site.gatewayId
                           << ", port: " << pack.site.portId
                           << ", device: " << device.deviceId << std::endl;
-                requestConfigSnapshot(m_mqtt, pack.site.gatewayId, "unknown_device_telemetry");
+                const std::string requestKey = pack.site.gatewayId.empty()
+                    ? std::string("unknown_gateway")
+                    : pack.site.gatewayId;
+                const std::int64_t nowMs = currentTimeMs();
+                const auto lastIt = m_lastConfigRequestMs.find(requestKey);
+                if (lastIt == m_lastConfigRequestMs.end() ||
+                    nowMs - lastIt->second >= kUnknownTelemetryConfigRequestIntervalMs) {
+                    if (publishConfigSnapshotRequest(m_mqtt, pack.site.gatewayId, "unknown_device_telemetry")) {
+                        m_lastConfigRequestMs[requestKey] = nowMs;
+                    }
+                } else {
+                    std::cout << "[MQTT RX] unknown telemetry config request throttled, gateway: "
+                              << pack.site.gatewayId
+                              << ", remain_ms: "
+                              << (kUnknownTelemetryConfigRequestIntervalMs - (nowMs - lastIt->second))
+                              << std::endl;
+                }
                 return;
             }
         }

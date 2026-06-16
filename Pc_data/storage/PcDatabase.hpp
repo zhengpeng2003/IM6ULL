@@ -136,6 +136,7 @@ public:
     bool deviceExists(const std::string& gatewayId,
                       const std::string& portId,
                       int deviceId) const;
+    int deviceCount() const;
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);
     bool clearRuntimeData();

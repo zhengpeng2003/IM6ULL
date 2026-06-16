@@ -87,10 +87,13 @@ int main()
         cout << "MQTT broker: " << mqttConfig.host << ":" << mqttConfig.port << endl;
         cout << "MQTT subscribe topic: pc_data/telemetry/test" << endl;
 
-        bool pendingStartupConfigRequest = true;
+        bool pendingStartupConfigRequest = database.isOpen() && database.deviceCount() == 0;
+        if (pendingStartupConfigRequest) {
+            cout << "Pc_data device table empty, need_config_sync=true" << endl;
+        }
         if (!mqtt.connectToBroker(mqttConfig.host, mqttConfig.port, mqttConfig.clientId, mqttConfig.topics)) {
             cout << "MQTT connectToBroker call failed" << endl;
-        } else {
+        } else if (pendingStartupConfigRequest) {
             cout << "MQTT not connected, defer request_config_snapshot gateway=gateway_001" << endl;
         }
 

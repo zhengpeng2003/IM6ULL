@@ -257,7 +257,14 @@ void data_ack_send_device_result(uint32_t seq,
         json_object_object_add(root, "poll_interval_ms", json_object_new_int(poll_interval_ms));
     }
 
-    ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    ipc_server_send(payload);
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.priority = 3;
+    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
     json_object_put(root);
 }
 
