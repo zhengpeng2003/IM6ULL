@@ -228,6 +228,7 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
 
     const QJsonObject root = doc.object();
     const QString type = root.value("type").toString();
+    qDebug() << "IPC message type:" << (type.isEmpty() ? QStringLiteral("<missing>") : type);
 
     if (type == "hello") {
         qDebug() << "Pc_data hello:" << root.value("message").toString();

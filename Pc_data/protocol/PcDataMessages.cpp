@@ -264,7 +264,8 @@ bool parseGatewayRegister(const std::string& payload, GatewayStatus& gateway)
         return false;
     }
 
-    const std::int64_t nowMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    const std::int64_t nowMs = currentTimeMs();
+    // timestampMs is the gateway collection/report time; PC receive time drives online/stale checks.
     gateway.gatewayId = getJsonString(root, "gatewayId");
     gateway.gatewayName = getJsonString(root, "gatewayName");
     gateway.factoryId = getJsonString(root, "factoryId");
@@ -290,6 +291,7 @@ bool parseGatewayHeartbeat(const std::string& payload,
 
     gatewayId = getJsonString(root, "gatewayId");
     timestampMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    // Caller must not use timestampMs for PC-side stale checks; it may be board time.
     status = getJsonString(root, "status");
     if (status.empty()) {
         status = "online";
@@ -306,7 +308,8 @@ bool parsePortRegister(const std::string& payload, GatewayPort& port)
         return false;
     }
 
-    const std::int64_t nowMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    const std::int64_t nowMs = currentTimeMs();
+    // timestampMs is board/register time only; port online state uses PC receive time.
     port.gatewayId = getJsonString(root, "gatewayId");
     port.portId = getJsonString(root, "portId");
     port.portName = getJsonString(root, "portName");
@@ -340,7 +343,8 @@ bool parseDeviceRegister(const std::string& payload,
     }
 
     sequence = static_cast<std::uint32_t>(getJsonInt(root, "sequence", getJsonInt(root, "seq", 0)));
-    const std::int64_t timestampMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    const std::int64_t receiveTimeMs = currentTimeMs();
+    // timestampMs from the board is collection/register time; receiveTimeMs is used for timeout checks.
     const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject()
         ? root["site"]
         : root;
@@ -360,10 +364,10 @@ bool parseDeviceRegister(const std::string& payload,
     device.expectTelemetry = getJsonBool(root, "expectTelemetry", device.deviceType != "relay");
     device.enabled = true;
     device.status = "online";
-    device.lastSeenMs = timestampMs;
+    device.lastSeenMs = receiveTimeMs;
     device.statusReason.clear();
-    device.createTimeMs = timestampMs;
-    device.updateTimeMs = timestampMs;
+    device.createTimeMs = receiveTimeMs;
+    device.updateTimeMs = receiveTimeMs;
 
     if (device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0 ||
         device.deviceType.empty()) {

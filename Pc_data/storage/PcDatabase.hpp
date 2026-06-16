@@ -147,6 +147,11 @@ public:
                                      const std::vector<GatewayPort>& ports,
                                      const std::vector<ConfigSnapshotDevice>& devices,
                                      const std::vector<PointConfig>& pointConfigs);
+    bool upsertGatewayConfigSnapshot(const std::string& gatewayId,
+                                     const std::vector<GatewayPort>& ports,
+                                     const std::vector<ConfigSnapshotDevice>& devices,
+                                     const std::vector<PointConfig>& pointConfigs,
+                                     bool fullSnapshot);
 
     bool isOpen() const;
     void close();

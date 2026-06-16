@@ -304,6 +304,8 @@ bool parseConfigSnapshot(const std::string& payload,
     }
 
     const std::int64_t timestampMs = getJsonInt64(root, "timestampMs", currentTimeMs());
+    const std::int64_t receiveTimeMs = currentTimeMs();
+    // timestampMs is board snapshot/config time for point configs; receiveTimeMs is used for PC online/timeout fields.
     for (const rapidjson::Value& portValue : root["ports"].GetArray()) {
         if (!portValue.IsObject()) {
             continue;
@@ -317,8 +319,8 @@ bool parseConfigSnapshot(const std::string& payload,
         port.devicePath = getJsonString(portValue, "port");
         port.baud = getJsonInt(portValue, "baud", 0);
         port.status = getJsonBool(portValue, "connected", false) ? "connected" : "disconnected";
-        port.lastRegisterTimeMs = timestampMs;
-        port.updateTimeMs = timestampMs;
+        port.lastRegisterTimeMs = receiveTimeMs;
+        port.updateTimeMs = receiveTimeMs;
 
         if (!port.portId.empty()) {
             ports.push_back(port);
@@ -354,9 +356,9 @@ bool parseConfigSnapshot(const std::string& payload,
             device.expectTelemetry = device.deviceType != "relay";
             device.enabled = true;
             device.status = port.status == "connected" ? "online" : "unknown";
-            device.lastSeenMs = port.status == "connected" ? timestampMs : 0;
-            device.createTimeMs = timestampMs;
-            device.updateTimeMs = timestampMs;
+            device.lastSeenMs = port.status == "connected" ? receiveTimeMs : 0;
+            device.createTimeMs = receiveTimeMs;
+            device.updateTimeMs = receiveTimeMs;
             device.deviceName = "Device " + std::to_string(deviceId);
             snapshotDevice.thresholdEnabled = getJsonBoolAny(deviceValue, {"threshold_enabled", "thresholdEnabled"}, false);
 
@@ -618,11 +620,29 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
 
         const std::int64_t seq = getJsonInt64(root, "seq", 0);
         SyncGatewayPending pending;
-        if (!m_dataService.findSyncPending(seq, pending)) {
-            pending.gatewayId = getJsonString(root, "gatewayId");
-            pending.gatewayName = getJsonString(root, "gatewayName");
-            std::cout << "[MQTT RX] config_snapshot accepts unsolicited seq: " << seq
-                      << ", gateway: " << pending.gatewayId << std::endl;
+        const bool hasPending = m_dataService.findSyncPending(seq, pending);
+        if (!hasPending) {
+            const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject() ? root["site"] : root;
+            std::string gatewayId = getJsonString(root, "gatewayId");
+            if (gatewayId.empty()) {
+                gatewayId = getJsonString(site, "gatewayId");
+            }
+            if (seq > 0) {
+                std::cout << "[MQTT RX] config_snapshot ignored: no pending sync request, seq="
+                          << seq << ", gateway=" << gatewayId << std::endl;
+                return;
+            }
+            pending.gatewayId = gatewayId;
+        }
+
+        if (pending.gatewayId.empty()) {
+            std::cout << "[MQTT RX] config_snapshot ignored: empty gatewayId, seq=" << seq << std::endl;
+            return;
+        }
+        if (hasPending && pending.devices.empty()) {
+            std::cout << "[MQTT RX] config_snapshot ignored: pending devices empty, seq="
+                      << seq << ", gateway=" << pending.gatewayId << std::endl;
+            return;
         }
 
         std::vector<GatewayPort> ports;
@@ -633,18 +653,27 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         bool ok = parseConfigSnapshot(payload, pending, ports, devices, pointConfigs, portCount, deviceCount);
 
         if (ok && m_database.isOpen()) {
-            std::vector<DbSelectedDevice> selectedDevices;
-            for (const SyncSelectedDevice& selected : pending.devices) {
-                DbSelectedDevice dbSelected;
-                dbSelected.portId = selected.portId;
-                dbSelected.deviceId = selected.deviceId;
-                selectedDevices.push_back(dbSelected);
+            if (hasPending) {
+                std::vector<DbSelectedDevice> selectedDevices;
+                for (const SyncSelectedDevice& selected : pending.devices) {
+                    DbSelectedDevice dbSelected;
+                    dbSelected.portId = selected.portId;
+                    dbSelected.deviceId = selected.deviceId;
+                    selectedDevices.push_back(dbSelected);
+                }
+                ok = m_database.replaceSelectedDeviceConfig(pending.gatewayId,
+                                                            selectedDevices,
+                                                            ports,
+                                                            devices,
+                                                            pointConfigs);
+            } else {
+                const bool fullSnapshot = getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false));
+                ok = m_database.upsertGatewayConfigSnapshot(pending.gatewayId,
+                                                            ports,
+                                                            devices,
+                                                            pointConfigs,
+                                                            fullSnapshot);
             }
-            ok = m_database.replaceSelectedDeviceConfig(pending.gatewayId,
-                                                        selectedDevices,
-                                                        ports,
-                                                        devices,
-                                                        pointConfigs);
             if (ok) {
                 for (const ConfigSnapshotDevice& snapshotDevice : devices) {
                     m_dataService.forgetRemovedDevice(snapshotDevice.device.gatewayId,
@@ -654,6 +683,22 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             }
         } else if (ok) {
             ok = false;
+            std::cout << "[MQTT RX] config_snapshot save failed: database not open, seq="
+                      << seq << ", gateway=" << pending.gatewayId << std::endl;
+        }
+
+        if (!hasPending) {
+            std::cout << "[MQTT RX] unsolicited config_snapshot " << (ok ? "saved" : "save failed")
+                      << ", gateway: " << pending.gatewayId
+                      << ", ports: " << portCount
+                      << ", devices: " << deviceCount << std::endl;
+            if (ok && m_ipc.hasClient()) {
+                sendGatewayStatusSnapshot(m_ipc, m_database);
+                sendPortStatusSnapshot(m_ipc, m_database);
+                sendDevicesSnapshot(m_ipc, m_database);
+                sendLatestPoints(m_ipc, m_dataService, m_database);
+            }
+            return;
         }
 
         SyncConfigResult result;
