@@ -25,6 +25,61 @@ namespace {
 const char* kDeviceRegisterAckTopic = "imx6ull/device/data";
 const std::int64_t kUnknownTelemetryConfigRequestIntervalMs = 5000;
 
+std::string portIdFromSlot(int slot)
+{
+    if (slot < 0) {
+        slot = 0;
+    }
+
+    std::ostringstream oss;
+    oss << "port_";
+    if (slot + 1 < 10) {
+        oss << "00";
+    } else if (slot + 1 < 100) {
+        oss << "0";
+    }
+    oss << (slot + 1);
+    return oss.str();
+}
+
+std::string portNameFromSlot(int slot)
+{
+    if (slot < 0) {
+        slot = 0;
+    }
+
+    std::ostringstream oss;
+    oss << "RS485-" << (slot + 1);
+    return oss.str();
+}
+
+DeviceRecord deviceRecordFromAddDeviceAck(const rapidjson::Value& root)
+{
+    DeviceRecord device;
+    const int slot = getJsonInt(root, "slot", getJsonInt(root, "master_slot", 0));
+    const std::int64_t nowMs = currentTimeMs();
+
+    device.factoryId = "factory_001";
+    device.factoryName = "工厂";
+    device.areaId = "area_001";
+    device.areaName = "车间";
+    device.gatewayId = "gateway_001";
+    device.gatewayName = "IMX6ULL Gateway";
+    device.portId = portIdFromSlot(slot);
+    device.portName = portNameFromSlot(slot);
+    device.deviceId = getJsonIntAny(root, {"deviceId", "slave_id", "slaveAddress", "device_id", "slave_addr"}, 0);
+    device.deviceName = "Device " + std::to_string(device.deviceId);
+    device.deviceType = getJsonStringAny(root, {"deviceType", "device_type"});
+    device.pollIntervalMs = getJsonInt(root, "pollIntervalMs", getJsonInt(root, "poll_interval_ms", 1000));
+    device.expectTelemetry = device.deviceType != "relay";
+    device.enabled = true;
+    device.status = "online";
+    device.lastSeenMs = nowMs;
+    device.createTimeMs = nowMs;
+    device.updateTimeMs = nowMs;
+    return device;
+}
+
 std::string buildSnapshotPointId(const DeviceRecord& device,
                                  const std::string& pointKey)
 {
@@ -580,6 +635,37 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                       << ", dbOk: " << deleteOk
                       << ", snapshotRemoved: " << snapshotRemoved
                       << std::endl;
+        }
+        if (logStatus == "success" &&
+            commandType == "add_device" &&
+            !hasTarget &&
+            m_database.isOpen()) {
+            DeviceRecord device = deviceRecordFromAddDeviceAck(root);
+            if (device.deviceId > 0 && !device.deviceType.empty()) {
+                const bool saveOk = m_database.upsertDevice(device);
+                if (saveOk) {
+                    m_dataService.forgetRemovedDevice(device.gatewayId,
+                                                      device.portId,
+                                                      device.deviceId);
+                    if (m_ipc.hasClient()) {
+                        sendDevicesSnapshot(m_ipc, m_database);
+                        sendLatestPoints(m_ipc, m_dataService, m_database);
+                        sendPortStatusSnapshot(m_ipc, m_database);
+                    }
+                } else {
+                    logStatus = "failed";
+                    reason = "device_db_save_failed";
+                    if (message.empty()) {
+                        message = "gateway added device, but Pc_data database save failed";
+                    }
+                }
+                std::cout << "[MQTT RX] add_device ack db sync without command log "
+                          << (saveOk ? "ok" : "failed")
+                          << ", gateway: " << device.gatewayId
+                          << ", port: " << device.portId
+                          << ", device: " << device.deviceId
+                          << std::endl;
+            }
         }
         if (m_database.isOpen()) {
             m_database.updateCommandLogBySeq(seq, logStatus, reason, message, currentTimeMs());
