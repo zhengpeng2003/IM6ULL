@@ -492,10 +492,10 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
         char snapshot[65536];
         if (port_manager_export_config_snapshot(seq, DEFAULT_GATEWAY_ID, "", snapshot, sizeof(snapshot)) == 0) {
             int pub_ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, snapshot);
-            printf("device_config_snapshot after remove_device publish=%d slot=%d slave_id=%d\n",
+            printf("config_snapshot after remove_device publish=%d slot=%d slave_id=%d\n",
                    pub_ret, slot, slave_id);
         } else {
-            printf("device_config_snapshot after remove_device export failed slot=%d slave_id=%d\n",
+            printf("config_snapshot after remove_device export failed slot=%d slave_id=%d\n",
                    slot, slave_id);
         }
     }

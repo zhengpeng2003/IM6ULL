@@ -91,7 +91,8 @@ bool isSyncConfigRequest(const std::string& msg)
 bool isRemoteCommandAllowed(const std::string& commandType)
 {
     static const std::set<std::string> allowed = {
-        "add_device", "remove_device", "set_relay", "set_device_threshold", "get_config"
+        "add_device", "remove_device", "set_relay", "set_device_threshold",
+        "get_config", "request_config_snapshot"
     };
     return allowed.find(commandType) != allowed.end();
 }
@@ -111,6 +112,27 @@ std::int64_t linuxDataSeqFrom(std::int64_t seq)
     constexpr std::int64_t maxLinuxDataSeq = 0x7fffffff;
     seq &= maxLinuxDataSeq;
     return seq > 0 ? seq : 1;
+}
+
+void rememberPendingCommand(PcDataService& dataService,
+                            const std::string& commandId,
+                            std::int64_t uiSeq,
+                            std::int64_t boardSeq,
+                            const std::string& commandType,
+                            const std::string& gatewayId,
+                            const std::string& portId,
+                            int deviceId)
+{
+    PendingCommandTarget target;
+    target.commandId = commandId;
+    target.uiSeq = uiSeq;
+    target.boardSeq = boardSeq;
+    target.commandType = commandType;
+    target.gatewayId = gatewayId;
+    target.portId = portId;
+    target.deviceId = deviceId;
+    target.requestTimeMs = currentTimeMs();
+    dataService.rememberPendingCommand(target);
 }
 
 int deviceIdFrom(const rapidjson::Value& root)
@@ -144,8 +166,7 @@ std::string jsonValueToString(const rapidjson::Value& value)
     return buffer.GetString();
 }
 
-std::string buildGetConfigCommandJson(const SyncGatewayPending& pending,
-                                      const std::string& boardGatewayId)
+std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
 {
     std::ostringstream oss;
     oss << "{";
@@ -153,7 +174,7 @@ std::string buildGetConfigCommandJson(const SyncGatewayPending& pending,
     oss << "\"cmd\":\"get_config\",";
     oss << "\"seq\":" << pending.seq << ",";
     oss << "\"target\":{";
-    oss << "\"gatewayId\":\"" << jsonEscape(boardGatewayId) << "\",";
+    oss << "\"gatewayId\":\"" << jsonEscape(pending.gatewayId) << "\",";
     oss << "\"devices\":[";
     for (size_t i = 0; i < pending.devices.size(); ++i) {
         const SyncSelectedDevice& device = pending.devices[i];
@@ -171,14 +192,53 @@ std::string buildGetConfigCommandJson(const SyncGatewayPending& pending,
     return oss.str();
 }
 
-std::string boardCommandGatewayId(const MqttConfig& config)
+std::string queryRegisteredCmdTopic(PcDatabase& database, const std::string& gatewayId)
 {
-    return config.commandGatewayId.empty() ? std::string("gateway_001") : config.commandGatewayId;
+    if (!database.isOpen() || gatewayId.empty()) {
+        return std::string();
+    }
+    return database.queryGatewayCmdTopic(gatewayId);
 }
 
-std::string boardCommandTopic(const MqttConfig& config)
+void failGatewayNotRegistered(IpcServer& ipc,
+                              PcDatabase& database,
+                              const std::string& commandId,
+                              std::int64_t uiSeq,
+                              std::int64_t boardSeq,
+                              const std::string& commandType,
+                              const std::string& gatewayId,
+                              const std::string& portId,
+                              int deviceId)
 {
-    return "cmd/" + boardCommandGatewayId(config);
+    const std::int64_t nowMs = currentTimeMs();
+    if (database.isOpen()) {
+        if (!commandId.empty() && boardSeq > 0) {
+            database.createCommandLog(commandId,
+                                      boardSeq,
+                                      commandType,
+                                      gatewayId,
+                                      portId,
+                                      deviceId,
+                                      nowMs);
+            database.updateCommandLogBySeq(boardSeq,
+                                           "failed",
+                                           "gateway_not_registered",
+                                           "gateway is not registered",
+                                           nowMs);
+        }
+    }
+    ipc.sendMessage(buildCommandAckJson(commandId,
+                                        false,
+                                        "gateway_not_registered",
+                                        uiSeq,
+                                        commandType,
+                                        "done",
+                                        "gateway is not registered",
+                                        boardSeq));
+    std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+              << " topic=<unregistered> cmd=" << commandType
+              << " seq=" << boardSeq
+              << " failed=gateway_not_registered" << std::endl;
 }
 
 } // namespace
@@ -202,15 +262,35 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         for (const SyncGatewayPending& pending : pendingList) {
-            const std::string topic = boardCommandTopic(m_mqttConfig);
-            const std::string command =
-                buildGetConfigCommandJson(pending, boardCommandGatewayId(m_mqttConfig));
+            const std::string topic = queryRegisteredCmdTopic(m_database, pending.gatewayId);
+            if (topic.empty()) {
+                SyncConfigResult result;
+                if (m_dataService.completeSyncConfig(pending.seq,
+                                                     false,
+                                                     "gateway_not_registered",
+                                                     0,
+                                                     0,
+                                                     result)) {
+                    m_ipc.sendMessage(buildSyncConfigResultJson(result.success,
+                                                                result.message,
+                                                                result.portCount,
+                                                                result.deviceCount));
+                }
+                std::cout << "[MQTT TX CMD] gatewayId=" << pending.gatewayId
+                          << " topic=<unregistered> cmd=get_config seq=" << pending.seq
+                          << " failed=gateway_not_registered" << std::endl;
+                continue;
+            }
+            const std::string command = buildGetConfigCommandJson(pending);
             const bool publishOk = m_mqtt.publish(topic, command);
             std::cout << "sync_config get_config publish "
                       << (publishOk ? "ok" : "failed")
                       << ", topic: " << topic
                       << ", seq: " << pending.seq
                       << std::endl;
+            std::cout << "[MQTT TX CMD] gatewayId=" << pending.gatewayId
+                      << " topic=" << topic
+                      << " cmd=get_config seq=" << pending.seq << std::endl;
 
             if (!publishOk) {
                 SyncConfigResult result;
@@ -465,30 +545,35 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         if (commandType == "set_relay") {
-            std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
-            const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(seq) : cmdId;
+            const std::int64_t uiSeq = root.IsObject() ? sequenceFrom(root) : 0;
+            const std::int64_t boardSeq = linuxDataSeqFrom(uiSeq);
+            const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(uiSeq) : cmdId;
             const int slot = root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1;
             const int slaveId = root.IsObject() ? deviceIdFrom(root) : 0;
-            if (seq <= 0 || gatewayId.empty() || portId.empty() || slot < 0 || slaveId <= 0 ||
+            if (uiSeq <= 0 || gatewayId.empty() || portId.empty() || slot < 0 || slaveId <= 0 ||
                 !root.IsObject() || !root.HasMember("states") || !root["states"].IsArray() || root["states"].Empty()) {
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", seq, commandType, "done", "invalid relay command"));
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", uiSeq, commandType, "done", "invalid relay command", boardSeq));
                 std::cout << "set_relay rejected, invalid relay command" << std::endl;
                 return;
             }
 
-            if (m_database.isOpen()) {
-                m_database.createCommandLog(commandId, seq, commandType, gatewayId, portId, slaveId, currentTimeMs());
+            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            if (topic.empty()) {
+                failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
+                                         commandType, gatewayId, portId, slaveId);
+                return;
             }
-            if (!m_database.isOpen() || !m_database.isGatewayPortConnected(gatewayId, portId)) {
-                if (m_database.isOpen()) {
-                    m_database.updateCommandLogBySeq(seq, "failed", "port_not_connected", "gateway port is not connected", currentTimeMs());
-                }
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", seq, commandType, "done", "gateway port is not connected"));
+            if (m_database.isOpen()) {
+                m_database.createCommandLog(commandId, boardSeq, commandType, gatewayId, portId, slaveId, currentTimeMs());
+            }
+            if (m_database.isOpen() && !m_database.isGatewayPortConnected(gatewayId, portId)) {
+                m_database.updateCommandLogBySeq(boardSeq, "failed", "port_not_connected", "gateway port is not connected", currentTimeMs());
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", uiSeq, commandType, "done", "gateway port is not connected", boardSeq));
                 return;
             }
 
             std::ostringstream payload;
-            payload << "{\"type\":\"command\",\"cmd\":\"set_relay\",\"seq\":" << seq
+            payload << "{\"type\":\"command\",\"cmd\":\"set_relay\",\"seq\":" << boardSeq
                     << ",\"slot\":" << slot << ",\"slave_id\":" << slaveId << ",\"device_id\":" << slaveId << ",\"states\":[";
             const rapidjson::Value& states = root["states"];
             for (rapidjson::SizeType i = 0; i < states.Size(); ++i) {
@@ -497,19 +582,26 @@ void IpcMessageHandler::handle(const std::string& msg)
             }
             payload << "]}";
 
-            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
-                m_database.updateCommandLogBySeq(seq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
+                m_database.updateCommandLogBySeq(boardSeq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
             }
-            m_ipc.sendMessage(buildCommandAckJson(commandId, publishOk, publishOk ? "" : "mqtt_publish_failed", seq, commandType, publishOk ? "sent" : "done", publishOk ? "command published to gateway" : "MQTT publish failed"));
+            if (publishOk) {
+                rememberPendingCommand(m_dataService, commandId, uiSeq, boardSeq, commandType, gatewayId, portId, slaveId);
+            }
+            m_ipc.sendMessage(buildCommandAckJson(commandId, publishOk, publishOk ? "" : "mqtt_publish_failed", uiSeq, commandType, publishOk ? "sent" : "done", publishOk ? "command published to gateway" : "MQTT publish failed", boardSeq));
             std::cout << "set_relay publish " << (publishOk ? "ok" : "failed") << ", topic: " << topic << ", cmd_id: " << commandId << std::endl;
+            std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+                      << " topic=" << topic
+                      << " cmd=" << commandType
+                      << " seq=" << boardSeq << std::endl;
             return;
         }
 
         if (commandType == "set_device_threshold") {
-            const std::int64_t seq = root.IsObject() ? sequenceFrom(root) : 0;
-            const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(seq) : cmdId;
+            const std::int64_t uiSeq = root.IsObject() ? sequenceFrom(root) : 0;
+            const std::int64_t boardSeq = linuxDataSeqFrom(uiSeq);
+            const std::string commandId = cmdId.empty() ? std::string("CMD") + std::to_string(uiSeq) : cmdId;
             const int slot = slotFromPortId(portId, root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1);
             int slaveId = root.IsObject() ? deviceIdFrom(root) : 0;
             if (slaveId <= 0 && root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
@@ -519,23 +611,27 @@ void IpcMessageHandler::handle(const std::string& msg)
                 ((root.HasMember("thresholds") && root["thresholds"].IsObject()) ||
                  (root.HasMember("threshold_config") && root["threshold_config"].IsObject()) ||
                  (root.HasMember("thresholdConfig") && root["thresholdConfig"].IsObject()));
-            if (slot < 0 || slaveId <= 0 || !hasThresholds) {
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", seq, commandType, "done", "slot, slave_id and thresholds are required"));
+            if (uiSeq <= 0 || slot < 0 || slaveId <= 0 || !hasThresholds) {
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", uiSeq, commandType, "done", "slot, slave_id and thresholds are required", boardSeq));
                 std::cout << "set_device_threshold rejected, invalid request" << std::endl;
                 return;
             }
-            if (m_database.isOpen()) {
-                m_database.createCommandLog(commandId, seq, commandType, gatewayId, portId, slaveId, currentTimeMs());
+            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            if (topic.empty()) {
+                failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
+                                         commandType, gatewayId, portId, slaveId);
+                return;
             }
-            if (!m_database.isOpen() || !m_database.isGatewayPortConnected(gatewayId, portId)) {
-                if (m_database.isOpen()) {
-                    m_database.updateCommandLogBySeq(seq, "failed", "port_not_connected", "gateway port is not connected", currentTimeMs());
-                }
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", seq, commandType, "done", "gateway port is not connected"));
+            if (m_database.isOpen()) {
+                m_database.createCommandLog(commandId, boardSeq, commandType, gatewayId, portId, slaveId, currentTimeMs());
+            }
+            if (m_database.isOpen() && !m_database.isGatewayPortConnected(gatewayId, portId)) {
+                m_database.updateCommandLogBySeq(boardSeq, "failed", "port_not_connected", "gateway port is not connected", currentTimeMs());
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", uiSeq, commandType, "done", "gateway port is not connected", boardSeq));
                 return;
             }
             std::ostringstream payload;
-            payload << "{\"type\":\"command\",\"cmd\":\"set_device_threshold\",\"seq\":" << seq
+            payload << "{\"type\":\"command\",\"cmd\":\"set_device_threshold\",\"seq\":" << boardSeq
                     << ",\"slot\":" << slot << ",\"slave_id\":" << slaveId
                     << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false");
             if (root.HasMember("thresholds") && root["thresholds"].IsObject()) {
@@ -546,18 +642,24 @@ void IpcMessageHandler::handle(const std::string& msg)
                 payload << ",\"thresholdConfig\":" << jsonValueToString(root["thresholdConfig"]);
             }
             payload << "}";
-            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
-                m_database.updateCommandLogBySeq(seq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
+                m_database.updateCommandLogBySeq(boardSeq, publishOk ? "sent" : "failed", publishOk ? "" : "mqtt_publish_failed", publishOk ? "command sent" : "mqtt publish failed", currentTimeMs());
             }
-            m_ipc.sendMessage(buildCommandAckJson(commandId, publishOk, publishOk ? "" : "mqtt_publish_failed", seq, commandType, publishOk ? "sent" : "done", publishOk ? "command published to gateway" : "MQTT publish failed"));
+            if (publishOk) {
+                rememberPendingCommand(m_dataService, commandId, uiSeq, boardSeq, commandType, gatewayId, portId, slaveId);
+            }
+            m_ipc.sendMessage(buildCommandAckJson(commandId, publishOk, publishOk ? "" : "mqtt_publish_failed", uiSeq, commandType, publishOk ? "sent" : "done", publishOk ? "command published to gateway" : "MQTT publish failed", boardSeq));
+            std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+                      << " topic=" << topic
+                      << " cmd=" << commandType
+                      << " seq=" << boardSeq << std::endl;
             return;
         }
 
         if (commandType == "add_device" || commandType == "remove_device") {
             const std::int64_t uiSeq = root.IsObject() ? sequenceFrom(root) : 0;
-            const std::int64_t seq = linuxDataSeqFrom(uiSeq);
+            const std::int64_t boardSeq = linuxDataSeqFrom(uiSeq);
             int deviceId = 0;
             if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
                 deviceId = deviceIdFrom(root["device"]);
@@ -567,16 +669,22 @@ void IpcMessageHandler::handle(const std::string& msg)
             }
 
             const std::string commandId = cmdId.empty()
-                ? std::string("CMD") + std::to_string(seq)
+                ? std::string("CMD") + std::to_string(uiSeq)
                 : cmdId;
-            if (deviceId <= 0) {
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", seq, commandType, "done", "deviceId or slave_id is required"));
+            if (uiSeq <= 0 || deviceId <= 0) {
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "invalid_request", uiSeq, commandType, "done", "deviceId or slave_id is required", boardSeq));
                 std::cout << commandType << " rejected, missing device id" << std::endl;
+                return;
+            }
+            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            if (topic.empty()) {
+                failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
+                                         commandType, gatewayId, portId, deviceId);
                 return;
             }
             if (m_database.isOpen()) {
                 m_database.createCommandLog(commandId,
-                                            seq,
+                                            boardSeq,
                                             commandType,
                                             gatewayId,
                                             portId,
@@ -584,15 +692,13 @@ void IpcMessageHandler::handle(const std::string& msg)
                                             currentTimeMs());
             }
 
-            if (!m_database.isOpen() || !m_database.isGatewayPortConnected(gatewayId, portId)) {
-                if (m_database.isOpen()) {
-                    m_database.updateCommandLogBySeq(seq,
-                                                     "failed",
-                                                     "port_not_connected",
-                                                     "gateway port is not connected",
-                                                     currentTimeMs());
-                }
-                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", seq, commandType, "done", "gateway port is not connected"));
+            if (m_database.isOpen() && !m_database.isGatewayPortConnected(gatewayId, portId)) {
+                m_database.updateCommandLogBySeq(boardSeq,
+                                                 "failed",
+                                                 "port_not_connected",
+                                                 "gateway port is not connected",
+                                                 currentTimeMs());
+                m_ipc.sendMessage(buildCommandAckJson(commandId, false, "port_not_connected", uiSeq, commandType, "done", "gateway port is not connected", boardSeq));
                 std::cout << commandType << " rejected, port not connected, gateway: "
                           << gatewayId << ", port: " << portId << std::endl;
                 return;
@@ -600,7 +706,7 @@ void IpcMessageHandler::handle(const std::string& msg)
 
             const int slot = slotFromPortId(portId, root.IsObject() ? getJsonInt(root, "slot", getJsonInt(root, "master_slot", -1)) : -1);
             std::ostringstream payload;
-            payload << "{\"type\":\"command\",\"cmd\":\"" << commandType << "\",\"seq\":" << seq
+            payload << "{\"type\":\"command\",\"cmd\":\"" << commandType << "\",\"seq\":" << boardSeq
                     << ",\"slot\":" << slot << ",\"slave_id\":" << deviceId;
             if (commandType == "add_device") {
                 std::string deviceType;
@@ -629,26 +735,33 @@ void IpcMessageHandler::handle(const std::string& msg)
                 }
             }
             payload << "}";
-            const std::string topic = boardCommandTopic(m_mqttConfig);
             const bool publishOk = m_mqtt.publish(topic, payload.str());
             if (m_database.isOpen()) {
-                m_database.updateCommandLogBySeq(seq,
+                m_database.updateCommandLogBySeq(boardSeq,
                                                  publishOk ? "sent" : "failed",
                                                  publishOk ? "" : "mqtt_publish_failed",
                                                  publishOk ? "command sent" : "mqtt publish failed",
                                                  currentTimeMs());
             }
+            if (publishOk) {
+                rememberPendingCommand(m_dataService, commandId, uiSeq, boardSeq, commandType, gatewayId, portId, deviceId);
+            }
             m_ipc.sendMessage(buildCommandAckJson(commandId,
                                                publishOk,
                                                publishOk ? "" : "mqtt_publish_failed",
-                                               seq,
+                                               uiSeq,
                                                commandType,
                                                publishOk ? "sent" : "done",
-                                               publishOk ? "command published to gateway" : "MQTT publish failed"));
+                                               publishOk ? "command published to gateway" : "MQTT publish failed",
+                                               boardSeq));
             std::cout << commandType << " publish "
                       << (publishOk ? "ok" : "failed")
                       << ", topic: " << topic
                       << ", cmd_id: " << commandId << std::endl;
+            std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+                      << " topic=" << topic
+                      << " cmd=" << commandType
+                      << " seq=" << boardSeq << std::endl;
             return;
         }
 
@@ -658,7 +771,13 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::cout << "command rejected, missing gateway, cmd_id: " << cmdId << std::endl;
             return;
         }
-        const std::string topic = boardCommandTopic(m_mqttConfig);
+        const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+        if (topic.empty()) {
+            const std::int64_t boardSeq = linuxDataSeqFrom(seq);
+            failGatewayNotRegistered(m_ipc, m_database, commandIdForAck, seq, boardSeq,
+                                     commandType, gatewayId, portId, 0);
+            return;
+        }
         const bool publishOk = m_mqtt.publish(topic, msg);
         m_ipc.sendMessage(buildCommandAckJson(commandIdForAck,
                                                publishOk,
@@ -669,6 +788,10 @@ void IpcMessageHandler::handle(const std::string& msg)
                                                publishOk ? "command published to gateway" : "MQTT publish failed"));
         std::cout << commandType << " publish " << (publishOk ? "ok" : "failed")
                   << ", topic: " << topic << ", cmd_id: " << commandIdForAck << std::endl;
+        std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+                  << " topic=" << topic
+                  << " cmd=" << commandType
+                  << " seq=" << seq << std::endl;
     } else {
         m_ipc.sendMessage(R"({"type":"ack","cmd":"unknown","status":"ok","message":"Pc_data received"})");
 

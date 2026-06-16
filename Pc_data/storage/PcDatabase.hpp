@@ -23,6 +23,19 @@ struct GatewayStatus
     std::int64_t updateTimeMs = 0;
 };
 
+struct GatewayRegistry
+{
+    std::string gatewayId;
+    std::string gatewayName;
+    std::string status;
+    std::string upTopic;
+    std::string cmdTopic;
+    std::string broadcastTopic;
+    std::int64_t lastRegisterTimeMs = 0;
+    std::int64_t lastHeartbeatTimeMs = 0;
+    std::int64_t updateTimeMs = 0;
+};
+
 struct GatewayPort
 {
     std::string gatewayId;
@@ -97,6 +110,14 @@ public:
     bool savePointConfigs(const std::vector<PointConfig>& configs);
     bool upsertDevice(const DeviceRecord& device);
     bool upsertGatewayStatus(const GatewayStatus& gateway);
+    bool upsertGatewayRegistry(const GatewayRegistry& registry);
+    std::string queryGatewayCmdTopic(const std::string& gatewayId);
+    std::string queryGatewayUpTopic(const std::string& gatewayId);
+    bool queryGatewayRegistry(const std::string& gatewayId, GatewayRegistry& registry);
+    std::vector<GatewayRegistry> getAllGatewayRegistry();
+    bool updateGatewayRegistryHeartbeat(const std::string& gatewayId,
+                                        std::int64_t heartbeatTimeMs,
+                                        const std::string& status);
     bool updateGatewayHeartbeat(const std::string& gatewayId,
                                 std::int64_t heartbeatTimeMs,
                                 const std::string& status);

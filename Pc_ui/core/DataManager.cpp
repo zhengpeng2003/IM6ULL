@@ -479,7 +479,10 @@ TelemetryPointData DataManager::parseTelemetryPoint(const QJsonObject &obj) cons
     if (!point.valid && point.errorMessage.isEmpty()) {
         point.errorMessage = QStringLiteral("数据无效");
     }
-    point.receiveTimeMs = QDateTime::currentMSecsSinceEpoch();
+    point.receiveTimeMs = obj.value("receiveTimeMs").toVariant().toLongLong();
+    if (point.receiveTimeMs <= 0) {
+        point.receiveTimeMs = point.timestampMs;
+    }
     point.lastUpdateTime = point.receiveTimeMs;
     return point;
 }

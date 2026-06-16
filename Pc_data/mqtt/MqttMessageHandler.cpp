@@ -58,14 +58,25 @@ DeviceRecord deviceRecordFromAddDeviceAck(const rapidjson::Value& root)
     DeviceRecord device;
     const int slot = getJsonInt(root, "slot", getJsonInt(root, "master_slot", 0));
     const std::int64_t nowMs = currentTimeMs();
+    const rapidjson::Value& target = root.HasMember("target") && root["target"].IsObject()
+        ? root["target"]
+        : root;
 
-    device.factoryId = "factory_001";
-    device.factoryName = "工厂";
-    device.areaId = "area_001";
-    device.areaName = "车间";
-    device.gatewayId = "gateway_001";
-    device.gatewayName = "IMX6ULL Gateway";
-    device.portId = portIdFromSlot(slot);
+    device.factoryId = getJsonStringAny(root, {"factoryId", "factory_id"});
+    if (device.factoryId.empty()) device.factoryId = "factory_001";
+    device.factoryName = getJsonStringAny(root, {"factoryName", "factory_name"});
+    if (device.factoryName.empty()) device.factoryName = "工厂";
+    device.areaId = getJsonStringAny(root, {"areaId", "area_id"});
+    if (device.areaId.empty()) device.areaId = "area_001";
+    device.areaName = getJsonStringAny(root, {"areaName", "area_name"});
+    if (device.areaName.empty()) device.areaName = "车间";
+    device.gatewayId = getJsonString(target, "gatewayId");
+    if (device.gatewayId.empty()) device.gatewayId = getJsonStringAny(root, {"gatewayId", "gateway_id"});
+    device.gatewayName = getJsonStringAny(root, {"gatewayName", "gateway_name"});
+    if (device.gatewayName.empty()) device.gatewayName = "IMX6ULL Gateway";
+    device.portId = getJsonString(target, "portId");
+    if (device.portId.empty()) device.portId = getJsonStringAny(root, {"portId", "port_id"});
+    if (device.portId.empty()) device.portId = portIdFromSlot(slot);
     device.portName = portNameFromSlot(slot);
     device.deviceId = getJsonIntAny(root, {"deviceId", "slave_id", "slaveAddress", "device_id", "slave_addr"}, 0);
     device.deviceName = "Device " + std::to_string(device.deviceId);
@@ -220,25 +231,117 @@ std::string buildRequestConfigSnapshotJson(const std::string& gatewayId)
     return payload.str();
 }
 
-std::string boardCommandGatewayId()
+std::string defaultUpTopic(const std::string& gatewayId)
 {
-    return "gateway_001";
+    return gatewayId.empty() ? std::string() : "gateway/" + gatewayId + "/up";
 }
 
-bool publishConfigSnapshotRequest(MqttClient& mqtt, const std::string& gatewayId, const std::string& reason)
+std::string defaultCmdTopic(const std::string& gatewayId)
+{
+    return gatewayId.empty() ? std::string() : "cmd/" + gatewayId;
+}
+
+bool publishConfigSnapshotRequest(MqttClient& mqtt,
+                                  PcDatabase& database,
+                                  const std::string& gatewayId,
+                                  const std::string& reason)
 {
     if (gatewayId.empty()) {
         return false;
     }
-    const std::string boardGatewayId = boardCommandGatewayId();
-    const std::string topic = "cmd/" + boardGatewayId;
-    const std::string payload = buildRequestConfigSnapshotJson(boardGatewayId);
+    const std::string topic = database.isOpen() ? database.queryGatewayCmdTopic(gatewayId) : std::string();
+    if (topic.empty()) {
+        std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+                  << " topic=<unregistered> cmd=request_config_snapshot seq=0 failed=gateway_not_registered"
+                  << " reason=" << reason << std::endl;
+        return false;
+    }
+    const std::string payload = buildRequestConfigSnapshotJson(gatewayId);
     const bool ok = mqtt.publish(topic, payload);
-    std::cout << "[MQTT TX] request_config_snapshot " << (ok ? "ok" : "failed")
-              << ", uiGateway: " << gatewayId
-              << ", boardGateway: " << boardGatewayId
-              << ", reason: " << reason << std::endl;
+    std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
+              << " topic=" << topic
+              << " cmd=request_config_snapshot seq=0"
+              << " reason=" << reason
+              << " status=" << (ok ? "sent" : "failed") << std::endl;
     return ok;
+}
+
+bool parseGatewayRegisterDetails(const std::string& payload,
+                                 GatewayStatus& gateway,
+                                 GatewayRegistry& registry,
+                                 std::vector<GatewayPort>& ports)
+{
+    rapidjson::Document root;
+    root.Parse(payload.c_str());
+    if (root.HasParseError() || !root.IsObject() ||
+        getJsonString(root, "type") != "gateway_register") {
+        return false;
+    }
+
+    const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject()
+        ? root["site"]
+        : root;
+    const std::int64_t nowMs = currentTimeMs();
+    gateway.gatewayId = getJsonStringAny(root, {"gatewayId", "gateway_id"});
+    if (gateway.gatewayId.empty()) gateway.gatewayId = getJsonString(site, "gatewayId");
+    gateway.gatewayName = getJsonStringAny(root, {"gatewayName", "gateway_name"});
+    if (gateway.gatewayName.empty()) gateway.gatewayName = getJsonString(site, "gatewayName");
+    gateway.factoryId = getJsonStringAny(root, {"factoryId", "factory_id"});
+    if (gateway.factoryId.empty()) gateway.factoryId = getJsonString(site, "factoryId");
+    gateway.areaId = getJsonStringAny(root, {"areaId", "area_id"});
+    if (gateway.areaId.empty()) gateway.areaId = getJsonString(site, "areaId");
+    gateway.status = getJsonString(root, "status");
+    if (gateway.status.empty()) gateway.status = "online";
+    gateway.lastRegisterTimeMs = nowMs;
+    gateway.lastHeartbeatTimeMs = nowMs;
+    gateway.updateTimeMs = nowMs;
+
+    if (gateway.gatewayId.empty()) {
+        return false;
+    }
+
+    registry.gatewayId = gateway.gatewayId;
+    registry.gatewayName = gateway.gatewayName;
+    registry.status = gateway.status;
+    registry.upTopic = getJsonString(root, "upTopic");
+    if (registry.upTopic.empty()) registry.upTopic = defaultUpTopic(gateway.gatewayId);
+    registry.cmdTopic = getJsonString(root, "cmdTopic");
+    if (registry.cmdTopic.empty()) registry.cmdTopic = defaultCmdTopic(gateway.gatewayId);
+    registry.broadcastTopic = getJsonString(root, "broadcastTopic");
+    if (registry.broadcastTopic.empty()) registry.broadcastTopic = "gateway/broadcast/down";
+    registry.lastRegisterTimeMs = nowMs;
+    registry.lastHeartbeatTimeMs = nowMs;
+    registry.updateTimeMs = nowMs;
+
+    if (root.HasMember("ports") && root["ports"].IsArray()) {
+        for (const rapidjson::Value& portValue : root["ports"].GetArray()) {
+            if (!portValue.IsObject()) {
+                continue;
+            }
+            GatewayPort port;
+            port.gatewayId = gateway.gatewayId;
+            port.portId = getJsonString(portValue, "portId");
+            port.portName = getJsonString(portValue, "portName");
+            port.slot = getJsonInt(portValue, "slot", 0);
+            port.devicePath = getJsonString(portValue, "port");
+            if (port.devicePath.empty()) port.devicePath = getJsonString(portValue, "devicePath");
+            if (port.devicePath.empty()) port.devicePath = getJsonString(portValue, "path");
+            port.baud = getJsonInt(portValue, "baud", 0);
+            if (portValue.HasMember("connected")) {
+                port.status = getJsonBool(portValue, "connected", false) ? "connected" : "disconnected";
+            } else {
+                port.status = getJsonString(portValue, "status");
+                if (port.status.empty()) port.status = "connected";
+            }
+            port.lastRegisterTimeMs = nowMs;
+            port.updateTimeMs = nowMs;
+            if (!port.portId.empty()) {
+                ports.push_back(port);
+            }
+        }
+    }
+
+    return true;
 }
 
 bool fillAlarmEventFromObject(const rapidjson::Value& root, AlarmEvent& event, std::string& reason)
@@ -538,18 +641,30 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
 
     if (messageType == "gateway_register") {
         GatewayStatus gateway;
-        if (!parseGatewayRegister(payload, gateway)) {
+        GatewayRegistry registry;
+        std::vector<GatewayPort> ports;
+        if (!parseGatewayRegisterDetails(payload, gateway, registry, ports)) {
             std::cout << "[MQTT RX] gateway_register parse failed" << std::endl;
             return;
         }
 
-        const bool ok = m_database.isOpen() && m_database.upsertGatewayStatus(gateway);
-        std::cout << "[MQTT RX] gateway_register "
-                  << (ok ? "ok" : "failed")
-                  << ", gateway: " << gateway.gatewayId << std::endl;
+        bool ok = m_database.isOpen() &&
+            m_database.upsertGatewayRegistry(registry) &&
+            m_database.upsertGatewayStatus(gateway);
+        if (ok) {
+            for (const GatewayPort& port : ports) {
+                ok = m_database.upsertGatewayPort(port) && ok;
+            }
+        }
+        std::cout << "[GATEWAY REGISTER] gatewayId=" << gateway.gatewayId
+                  << " upTopic=" << registry.upTopic
+                  << " cmdTopic=" << registry.cmdTopic
+                  << " saved=" << (ok ? "ok" : "failed") << std::endl;
 
         if (ok && m_ipc.hasClient()) {
             sendGatewayStatusSnapshot(m_ipc, m_database);
+            sendPortStatusSnapshot(m_ipc, m_database);
+            sendDevicesSnapshot(m_ipc, m_database);
         }
         return;
     }
@@ -564,6 +679,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         }
 
         const bool ok = m_database.isOpen() &&
+            m_database.updateGatewayRegistryHeartbeat(gatewayId, timestampMs, status) &&
             m_database.updateGatewayHeartbeat(gatewayId, timestampMs, status);
         std::cout << "[MQTT RX] gateway_heartbeat "
                   << (ok ? "ok" : "failed")
@@ -613,17 +729,40 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         std::string reason = getJsonString(root, "reason");
         std::string message = getJsonString(root, "message");
 
+        PendingCommandTarget pendingTarget;
+        const bool hasPendingTarget = m_dataService.takePendingCommand(seq, pendingTarget);
         CommandLogTarget target;
-        const bool hasTarget = m_database.isOpen() &&
-                               m_database.queryCommandTargetBySeq(seq, target);
+        bool hasTarget = false;
+        if (hasPendingTarget) {
+            target.commandId = pendingTarget.commandId;
+            target.seq = pendingTarget.uiSeq;
+            target.commandType = pendingTarget.commandType;
+            target.gatewayId = pendingTarget.gatewayId;
+            target.portId = pendingTarget.portId;
+            target.deviceId = pendingTarget.deviceId;
+            hasTarget = true;
+        } else {
+            hasTarget = m_database.isOpen() &&
+                        m_database.queryCommandTargetBySeq(seq, target);
+        }
         if (commandType.empty() && hasTarget) {
             commandType = target.commandType;
         }
+        const std::int64_t uiSeq = hasPendingTarget && pendingTarget.uiSeq > 0
+            ? pendingTarget.uiSeq
+            : (target.seq > 0 ? target.seq : seq);
 
+        std::cout << "[MQTT RX ACK] gatewayId=" << (hasTarget ? target.gatewayId : getJsonStringAny(root, {"gatewayId", "gateway_id"}))
+                  << " cmd=" << commandType
+                  << " seq=" << seq
+                  << " status=" << logStatus
+                  << " reason=" << (reason.empty() ? std::string("ok") : reason)
+                  << std::endl;
         std::cout << "[MQTT RX] ack seq=" << seq
                   << " cmd=" << commandType
                   << " status=" << logStatus
                   << " hasTarget=" << hasTarget
+                  << " hasPendingTarget=" << hasPendingTarget
                   << " gatewayId=" << (hasTarget ? target.gatewayId : std::string())
                   << " portId=" << (hasTarget ? target.portId : std::string())
                   << " deviceId=" << (hasTarget ? target.deviceId : 0)
@@ -715,20 +854,21 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             m_dataService.forgetRemovedDevice(target.gatewayId,
                                               target.portId,
                                               target.deviceId);
-            publishConfigSnapshotRequest(m_mqtt, target.gatewayId, "add_device_success");
-            if (m_ipc.hasClient()) {
+            publishConfigSnapshotRequest(m_mqtt, m_database, target.gatewayId, "add_device_success");
+            if (m_database.isOpen() && m_ipc.hasClient()) {
                 sendDevicesSnapshot(m_ipc, m_database);
                 sendLatestPoints(m_ipc, m_dataService, m_database);
                 sendPortStatusSnapshot(m_ipc, m_database);
             }
         }
         if (m_ipc.hasClient()) {
-            m_ipc.sendMessage(buildCommandLogUpdateJson(seq,
+            m_ipc.sendMessage(buildCommandLogUpdateJson(uiSeq,
                                                         commandType,
                                                         logStatus,
                                                         reason,
                                                         message,
-                                                        hasTarget ? &target : nullptr));
+                                                        hasTarget ? &target : nullptr,
+                                                        seq));
         }
         std::cout << "[MQTT RX] ack seq: " << seq
                   << ", command: " << commandType
@@ -813,6 +953,11 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         }
 
         if (!hasPending) {
+            std::cout << "[MQTT RX SNAPSHOT] gatewayId=" << pending.gatewayId
+                      << " ports=" << portCount
+                      << " devices=" << deviceCount
+                      << " fullSnapshot=" << (getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false)) ? "true" : "false")
+                      << std::endl;
             std::cout << "[MQTT RX] unsolicited config_snapshot " << (ok ? "saved" : "save failed")
                       << ", gateway: " << pending.gatewayId
                       << ", ports: " << portCount
@@ -847,6 +992,11 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                   << ", ok: " << ok
                   << ", ports: " << portCount
                   << ", devices: " << deviceCount
+                  << std::endl;
+        std::cout << "[MQTT RX SNAPSHOT] gatewayId=" << pending.gatewayId
+                  << " ports=" << portCount
+                  << " devices=" << deviceCount
+                  << " fullSnapshot=" << (getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false)) ? "true" : "false")
                   << std::endl;
         return;
     }
@@ -982,7 +1132,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                 const auto lastIt = m_lastConfigRequestMs.find(requestKey);
                 if (lastIt == m_lastConfigRequestMs.end() ||
                     nowMs - lastIt->second >= kUnknownTelemetryConfigRequestIntervalMs) {
-                    if (publishConfigSnapshotRequest(m_mqtt, pack.site.gatewayId, "unknown_device_telemetry")) {
+                    if (publishConfigSnapshotRequest(m_mqtt, m_database, pack.site.gatewayId, "unknown_device_telemetry")) {
                         m_lastConfigRequestMs[requestKey] = nowMs;
                     }
                 } else {
@@ -1002,6 +1152,11 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     std::cout << "[MQTT RX] received point count: "
               << receivedPoints.size()
               << std::endl;
+    std::cout << "[MQTT RX TELEMETRY] gatewayId=" << pack.site.gatewayId
+              << " portId=" << pack.site.portId
+              << " devices=" << pack.devices.size()
+              << " points=" << receivedPoints.size()
+              << " seq=" << pack.sequence << std::endl;
 
     // Update in-memory snapshot with non-deleted telemetry in PC receive order.
     m_dataService.handleTelemetryPack(pack);

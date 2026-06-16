@@ -3,6 +3,7 @@
 extern "C" {
 #endif
 extern const char MQTT_DEFAULT_PUBLISH_TOPIC[];
+extern const char MQTT_GATEWAY_REGISTER_TOPIC[];
 int  mqtt_init(void);
 void mqtt_poll(void);
 int  mqtt_send(const char *topic, const char *payload);

@@ -194,6 +194,48 @@ static struct json_object *pack_device_json(const device_data_t *dev)
         break;
     }
 
+    struct json_object *points = json_object_new_array();
+    if (points) {
+        if (dev->type == DEV_SENSOR_TH) {
+            struct json_object *temperature = json_object_new_object();
+            if (temperature) {
+                add_string(temperature, "pointKey", "temperature");
+                add_string(temperature, "pointName", "温度");
+                add_string(temperature, "valueType", "Number");
+                json_object_object_add(temperature, "numberValue", json_object_new_double(dev->data.th.temperature));
+                add_string(temperature, "unit", "℃");
+                json_object_array_add(points, temperature);
+            }
+            struct json_object *humidity = json_object_new_object();
+            if (humidity) {
+                add_string(humidity, "pointKey", "humidity");
+                add_string(humidity, "pointName", "湿度");
+                add_string(humidity, "valueType", "Number");
+                json_object_object_add(humidity, "numberValue", json_object_new_double(dev->data.th.humidity));
+                add_string(humidity, "unit", "%");
+                json_object_array_add(points, humidity);
+            }
+        } else if (dev->type == DEV_RELAY) {
+            struct json_object *relay_point = json_object_new_object();
+            if (relay_point) {
+                add_string(relay_point, "pointKey", "relay.ch1");
+                add_string(relay_point, "pointName", "继电器通道1");
+                add_string(relay_point, "valueType", "Boolean");
+                json_object_object_add(relay_point,
+                                       "boolValue",
+                                       json_object_new_boolean((dev->data.relay.relay_states & 0x01) != 0));
+                add_string(relay_point, "unit", "");
+                json_object_array_add(points, relay_point);
+            }
+        }
+
+        if (json_object_array_length(points) > 0) {
+            json_object_object_add(obj, "points", points);
+        } else {
+            json_object_put(points);
+        }
+    }
+
     return obj;
 }
 

@@ -27,17 +27,17 @@ bool OfflinePublishQueue::init(const std::string &dbPath)
         return true;
 
     if (!db_.open(dbPath)) {
-        printf("[OfflineCache] disabled because database open failed\n");
+        printf("[OFFLINE CACHE] disabled because database open failed\n");
         return false;
     }
 
     if (!db_.initSchema()) {
-        printf("[OfflineCache] disabled because schema init failed\n");
+        printf("[OFFLINE CACHE] disabled because schema init failed\n");
         return false;
     }
 
     initialized_ = true;
-    printf("[OfflineCache] initialized\n");
+    printf("[OFFLINE CACHE] initialized\n");
     return true;
 }
 
@@ -63,7 +63,7 @@ int OfflinePublishQueue::publishOrCache(const std::string &topic,
         if (send_ret == 0)
             return 0;
 
-        printf("[OfflineCache] MQTT offline or direct send failed ret=%d type=%s\n",
+        printf("[OFFLINE CACHE] MQTT offline or direct send failed ret=%d type=%s\n",
                send_ret, meta.messageType.c_str());
     }
 
@@ -80,13 +80,13 @@ bool OfflinePublishQueue::cacheMessage(const std::string &topic,
     std::lock_guard<std::mutex> guard(lock_);
 
     if (!cache_enabled_) {
-        printf("[OfflineCache] skip cache because cache is disabled type=%s\n",
+        printf("[OFFLINE CACHE] skip cache because cache is disabled type=%s\n",
                meta.messageType.c_str());
         return false;
     }
 
     if (!initialized_) {
-        printf("[OfflineCache] skip cache because queue is not initialized type=%s\n",
+        printf("[OFFLINE CACHE] skip cache because queue is not initialized type=%s\n",
                meta.messageType.c_str());
         return false;
     }
@@ -120,7 +120,7 @@ void OfflinePublishQueue::flushToMqttOnce()
     if (rows.empty())
         return;
 
-    printf("[OfflineCache] flushing offline messages batch=%zu\n", rows.size());
+    printf("[OFFLINE CACHE] flush batch=%zu\n", rows.size());
 
     for (const OfflinePendingMessage &row : rows) {
         int ret = sender(row.topic.c_str(), row.payload.c_str());
@@ -130,7 +130,7 @@ void OfflinePublishQueue::flushToMqttOnce()
         } else {
             std::lock_guard<std::mutex> guard(lock_);
             db_.markSendFailed(row.id, currentTimeMs());
-            printf("[OfflineCache] stop current flush because send failed id=%lld ret=%d\n",
+            printf("[OFFLINE CACHE] publish failed id=%lld reason=ret_%d\n",
                    (long long)row.id, ret);
             break;
         }

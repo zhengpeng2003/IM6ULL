@@ -96,9 +96,9 @@ int main()
             cout << "MQTT subscribe topic: " << topic << endl;
         }
 
-        bool pendingStartupConfigRequest = database.isOpen() && database.deviceCount() == 0;
-        if (pendingStartupConfigRequest) {
-            cout << "Pc_data device table empty, need_config_sync=true" << endl;
+        bool pendingStartupGatewayDiscovery = true;
+        if (database.isOpen() && database.deviceCount() == 0) {
+            cout << "Pc_data device table empty, wait for gateway_register or broadcast discovery" << endl;
         }
 
         cout << "Before mqtt.connectToBroker" << endl;
@@ -106,34 +106,33 @@ int main()
             cout << "MQTT connectToBroker call failed" << endl;
         } else {
             cout << "MQTT async connect request sent, status=" << mqtt.status() << endl;
-            if (pendingStartupConfigRequest) {
-                cout << "MQTT not connected yet, defer request_config_snapshot gateway=gateway_001" << endl;
-            }
+            cout << "MQTT not connected yet, defer gateway discovery broadcast" << endl;
         }
 
         std::int64_t lastOfflineScanMs = 0;
         while (true) {
             const std::int64_t nowMs = currentTimeMs();
-            if (pendingStartupConfigRequest && mqtt.status() == "connected") {
-                cout << "MQTT connected, flush pending request_config_snapshot gateway=gateway_001" << endl;
+            if (pendingStartupGatewayDiscovery && mqtt.status() == "connected") {
+                cout << "MQTT connected, broadcast discover_gateways" << endl;
                 const std::int64_t seq = currentTimeMs();
-                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"request_config_snapshot\",\"seq\":") +
-                    std::to_string(seq) + ",\"target\":{\"gatewayId\":\"gateway_001\"}}";
-                const bool requestOk = mqtt.publish("cmd/gateway_001", payload);
-                cout << "request_config_snapshot publish " << (requestOk ? "ok" : "failed")
-                     << ", gateway=gateway_001" << endl;
-                pendingStartupConfigRequest = !requestOk;
+                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"discover_gateways\",\"seq\":") +
+                    std::to_string(seq) + "}";
+                const bool requestOk = mqtt.publish("gateway/broadcast/down", payload);
+                cout << "discover_gateways broadcast " << (requestOk ? "ok" : "failed") << endl;
+                pendingStartupGatewayDiscovery = !requestOk;
             }
 
-            if (database.isOpen() && nowMs - lastOfflineScanMs >= 1000) {
+            if (nowMs - lastOfflineScanMs >= 1000) {
                 lastOfflineScanMs = nowMs;
-                const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
-                if (offlineChanged > 0 && ipc.hasClient()) {
-                    sendDevicesSnapshot(ipc, database);
-                }
-                const int staleGatewayChanged = database.markStaleGateways(nowMs, 30000);
-                if (staleGatewayChanged > 0 && ipc.hasClient()) {
-                    sendGatewayStatusSnapshot(ipc, database);
+                if (database.isOpen()) {
+                    const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
+                    if (offlineChanged > 0 && ipc.hasClient()) {
+                        sendDevicesSnapshot(ipc, database);
+                    }
+                    const int staleGatewayChanged = database.markStaleGateways(nowMs, 30000);
+                    if (staleGatewayChanged > 0 && ipc.hasClient()) {
+                        sendGatewayStatusSnapshot(ipc, database);
+                    }
                 }
                 const std::vector<SyncConfigResult> syncTimeouts =
                     dataService.collectSyncConfigTimeouts(nowMs, 5000);
@@ -145,16 +144,31 @@ int main()
                                                                   result.deviceCount));
                     }
                 }
-                const std::vector<CommandLogTarget> commandTimeouts =
-                    database.collectCommandTimeouts(nowMs, 8000);
-                for (const CommandLogTarget& target : commandTimeouts) {
+                const std::vector<PendingCommandTarget> commandTimeouts =
+                    dataService.collectCommandTimeouts(nowMs, 8000);
+                for (const PendingCommandTarget& pending : commandTimeouts) {
+                    if (database.isOpen()) {
+                        database.updateCommandLogBySeq(pending.boardSeq,
+                                                       "timeout",
+                                                       "linux_data_ack_timeout",
+                                                       "device execution timeout",
+                                                       nowMs);
+                    }
                     if (ipc.hasClient()) {
-                        ipc.sendMessage(buildCommandLogUpdateJson(target.seq,
-                                                                  target.commandType,
+                        CommandLogTarget target;
+                        target.commandId = pending.commandId;
+                        target.seq = pending.uiSeq;
+                        target.commandType = pending.commandType;
+                        target.gatewayId = pending.gatewayId;
+                        target.portId = pending.portId;
+                        target.deviceId = pending.deviceId;
+                        ipc.sendMessage(buildCommandLogUpdateJson(pending.uiSeq,
+                                                                  pending.commandType,
                                                                   "timeout",
                                                                   "linux_data_ack_timeout",
                                                                   "device execution timeout",
-                                                                  &target));
+                                                                  &target,
+                                                                  pending.boardSeq));
                     }
                 }
             }

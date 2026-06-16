@@ -30,14 +30,19 @@ std::string buildCommandAckJson(const std::string& cmdId,
                                 std::int64_t seq,
                                 const std::string& commandType,
                                 const std::string& stage,
-                                const std::string& message)
+                                const std::string& message,
+                                std::int64_t boardSeq)
 {
     std::ostringstream oss;
+    if (boardSeq <= 0) {
+        boardSeq = seq;
+    }
 
     oss << "{";
     oss << "\"type\":\"command_ack\",";
     oss << "\"cmd_id\":\"" << jsonEscape(cmdId) << "\",";
     oss << "\"seq\":" << seq << ",";
+    oss << "\"boardSeq\":" << boardSeq << ",";
     oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
@@ -73,6 +78,8 @@ std::string buildLatestPointsJson(const std::vector<TelemetryPoint>& points)
         oss << "{";
         oss << "\"pointId\":\"" << jsonEscape(p.pointId) << "\",";
         oss << "\"timestampMs\":" << p.timestampMs << ",";
+        const std::int64_t receiveTimeMs = p.receiveTimeMs > 0 ? p.receiveTimeMs : p.timestampMs;
+        oss << "\"receiveTimeMs\":" << receiveTimeMs << ",";
 
         oss << "\"factoryId\":\"" << jsonEscape(p.factoryId) << "\",";
         oss << "\"factoryName\":\"" << jsonEscape(p.factoryName) << "\",";
@@ -123,15 +130,20 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
                                       const std::string& status,
                                       const std::string& reason,
                                       const std::string& message,
-                                      const CommandLogTarget* target)
+                                      const CommandLogTarget* target,
+                                      std::int64_t boardSeq)
 {
     std::ostringstream oss;
+    if (boardSeq <= 0) {
+        boardSeq = seq;
+    }
     oss << "{";
     oss << "\"type\":\"command_log_update\",";
     if (target) {
         oss << "\"cmd_id\":\"" << jsonEscape(target->commandId) << "\",";
     }
     oss << "\"seq\":" << seq << ",";
+    oss << "\"boardSeq\":" << boardSeq << ",";
     oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";

@@ -23,7 +23,8 @@
 #define MQTT_GATEWAY_HEARTBEAT_MS 10000
 #define MQTT_OFFLINE_CACHE_DB_PATH "/etc/qt_object/offline_cache.db"
 
-const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "pc_data/telemetry/test";
+const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "gateway/" DEFAULT_GATEWAY_ID "/up";
+const char MQTT_GATEWAY_REGISTER_TOPIC[] = "gateway/register";
 
 /* ================= 内部结构 ================= */
 
@@ -150,7 +151,7 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
     /*
      * 现在 Linux_data 只订阅 Pc_data 下发的统一命令主题：
      *
-     *   cmd/gateway_001
+     *   cmd/<gatewayId>
      *
      * 所有控制命令统一交给 data_command_process_message() 处理。
      * 不再使用旧的 imx6ull/gpio/+/set 控制方式。
@@ -221,6 +222,7 @@ int mqtt_init(void)
     printf("[MQTT] default broker: %s:%s\n", MQTT_HOST, MQTT_PORT);
     printf("[MQTT] client id: %s\n", MQTT_CLIENT_ID);
     printf("[MQTT] default publish topic: %s\n", MQTT_DEFAULT_PUBLISH_TOPIC);
+    printf("[MQTT] gateway register topic: %s\n", MQTT_GATEWAY_REGISTER_TOPIC);
     printf("[MQTT] command subscribe topic: cmd/%s\n", DEFAULT_GATEWAY_ID);
 
     offline_publish_queue_set_sender(mqtt_send_direct_if_connected);

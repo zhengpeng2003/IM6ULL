@@ -41,7 +41,7 @@ bool OfflineCacheDatabase::open(const std::string &databasePath)
     ensureParentDirectory(databasePath);
 
     if (sqlite3_open(databasePath.c_str(), &db_) != SQLITE_OK) {
-        printf("[OfflineCache] open database failed path=%s err=%s\n",
+        printf("[OFFLINE CACHE] open database failed path=%s reason=%s\n",
                databasePath.c_str(),
                db_ ? sqlite3_errmsg(db_) : "unknown");
         if (db_) {
@@ -52,7 +52,7 @@ bool OfflineCacheDatabase::open(const std::string &databasePath)
     }
 
     sqlite3_busy_timeout(db_, 1000);
-    printf("[OfflineCache] database opened path=%s\n", databasePath.c_str());
+    printf("[OFFLINE CACHE] database opened path=%s\n", databasePath.c_str());
     return true;
 }
 
@@ -70,7 +70,11 @@ bool OfflineCacheDatabase::initSchema()
         "device_id INTEGER,"
         "point_key TEXT,"
         "timestamp_ms INTEGER NOT NULL,"
+        "retry_count INTEGER DEFAULT 0,"
+        "last_error TEXT,"
         "create_time_ms INTEGER NOT NULL,"
+        "created_at_ms INTEGER,"
+        "updated_at_ms INTEGER,"
         "send_count INTEGER DEFAULT 0,"
         "last_send_time_ms INTEGER DEFAULT 0,"
         "status TEXT DEFAULT 'pending'"
@@ -109,7 +113,7 @@ bool OfflineCacheDatabase::insert(const std::string &topic,
 
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        printf("[OfflineCache] prepare insert failed err=%s\n", sqlite3_errmsg(db_));
+        printf("[OFFLINE CACHE] prepare insert failed reason=%s\n", sqlite3_errmsg(db_));
         return false;
     }
 
@@ -129,12 +133,12 @@ bool OfflineCacheDatabase::insert(const std::string &topic,
     sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE) {
-        printf("[OfflineCache] insert failed type=%s priority=%d err=%s\n",
+        printf("[OFFLINE CACHE] enqueue failed type=%s priority=%d reason=%s\n",
                meta.messageType.c_str(), meta.priority, sqlite3_errmsg(db_));
         return false;
     }
 
-    printf("[OfflineCache] cached message type=%s priority=%d topic=%s\n",
+    printf("[OFFLINE CACHE] enqueue type=%s priority=%d topic=%s\n",
            meta.messageType.c_str(), meta.priority, topic.c_str());
     return true;
 }
@@ -154,7 +158,7 @@ std::vector<OfflinePendingMessage> OfflineCacheDatabase::loadPending(int limit)
 
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        printf("[OfflineCache] prepare load pending failed err=%s\n", sqlite3_errmsg(db_));
+        printf("[OFFLINE CACHE] prepare load pending failed reason=%s\n", sqlite3_errmsg(db_));
         return rows;
     }
 
@@ -188,11 +192,11 @@ bool OfflineCacheDatabase::remove(int64_t id)
     sqlite3_finalize(stmt);
 
     if (rc == SQLITE_DONE) {
-        printf("[OfflineCache] resend success, removed id=%lld\n", (long long)id);
+        printf("[OFFLINE CACHE] publish ok id=%lld\n", (long long)id);
         return true;
     }
 
-    printf("[OfflineCache] remove failed id=%lld err=%s\n",
+    printf("[OFFLINE CACHE] remove failed id=%lld reason=%s\n",
            (long long)id, sqlite3_errmsg(db_));
     return false;
 }
@@ -219,11 +223,11 @@ bool OfflineCacheDatabase::markSendFailed(int64_t id, int64_t nowMs)
     sqlite3_finalize(stmt);
 
     if (rc == SQLITE_DONE) {
-        printf("[OfflineCache] resend failed, send_count increased id=%lld\n", (long long)id);
+        printf("[OFFLINE CACHE] publish failed id=%lld reason=mqtt_send_failed\n", (long long)id);
         return true;
     }
 
-    printf("[OfflineCache] mark send failed failed id=%lld err=%s\n",
+    printf("[OFFLINE CACHE] mark send failed failed id=%lld reason=%s\n",
            (long long)id, sqlite3_errmsg(db_));
     return false;
 }
@@ -252,7 +256,7 @@ bool OfflineCacheDatabase::clearPending()
         return false;
 
     const bool ok = execSql("DELETE FROM offline_publish_queue WHERE status = 'pending';", "clear pending offline cache");
-    printf("[OfflineCache] clear pending cache %s\n", ok ? "ok" : "failed");
+    printf("[OFFLINE CACHE] clear pending cache %s\n", ok ? "ok" : "failed");
     return ok;
 }
 
@@ -262,7 +266,7 @@ void OfflineCacheDatabase::enforceMaxRecords()
     if (total <= kMaxOfflineRecords)
         return;
 
-    printf("[OfflineCache] cache exceeds max records total=%lld max=%d\n",
+    printf("[OFFLINE CACHE] cache exceeds max records total=%lld max=%d\n",
            (long long)total, kMaxOfflineRecords);
 
     for (int priority = 0; priority <= 1 && total > kMaxOfflineRecords; ++priority) {
@@ -271,13 +275,13 @@ void OfflineCacheDatabase::enforceMaxRecords()
             if (deleted <= 0)
                 break;
             total -= deleted;
-            printf("[OfflineCache] removed old low priority records priority=%d count=%d total=%lld\n",
+            printf("[OFFLINE CACHE] removed old low priority records priority=%d count=%d total=%lld\n",
                    priority, deleted, (long long)total);
         }
     }
 
     if (total > kMaxOfflineRecords) {
-        printf("[OfflineCache] cache still exceeds max after low priority cleanup total=%lld\n",
+        printf("[OFFLINE CACHE] cache still exceeds max after low priority cleanup total=%lld\n",
                (long long)total);
     }
 }
@@ -289,7 +293,7 @@ bool OfflineCacheDatabase::execSql(const char *sql, const char *logName)
 
     char *err = nullptr;
     if (sqlite3_exec(db_, sql, nullptr, nullptr, &err) != SQLITE_OK) {
-        printf("[OfflineCache] %s failed err=%s\n", logName ? logName : "exec", err ? err : "");
+        printf("[OFFLINE CACHE] %s failed reason=%s\n", logName ? logName : "exec", err ? err : "");
         sqlite3_free(err);
         return false;
     }
@@ -305,7 +309,7 @@ bool OfflineCacheDatabase::ensureParentDirectory(const std::string &databasePath
 
     const std::string dir = databasePath.substr(0, pos);
     if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
-        printf("[OfflineCache] create database directory failed dir=%s\n", dir.c_str());
+        printf("[OFFLINE CACHE] create database directory failed dir=%s\n", dir.c_str());
         return false;
     }
 

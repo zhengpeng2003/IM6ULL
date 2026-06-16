@@ -46,6 +46,7 @@ void data_ack_send(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
@@ -89,6 +90,7 @@ void data_ack_send_ports(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : "scan_ports"));
@@ -122,6 +124,7 @@ void data_ack_send_port_result(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
@@ -158,6 +161,7 @@ static void data_ack_add_common(struct json_object *root,
 {
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
@@ -312,6 +316,7 @@ void data_ack_send_offline_cache_config(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));

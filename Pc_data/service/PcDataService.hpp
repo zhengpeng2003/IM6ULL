@@ -40,6 +40,18 @@ struct SyncConfigResult
     int deviceCount = 0;
 };
 
+struct PendingCommandTarget
+{
+    std::string commandId;
+    std::int64_t uiSeq = 0;
+    std::int64_t boardSeq = 0;
+    std::string commandType;
+    std::string gatewayId;
+    std::string portId;
+    int deviceId = 0;
+    std::int64_t requestTimeMs = 0;
+};
+
 /*
  * PcDataService
  * -------------
@@ -95,6 +107,11 @@ public:
                             SyncConfigResult& result);
     std::vector<SyncConfigResult> collectSyncConfigTimeouts(std::int64_t nowMs,
                                                             std::int64_t timeoutMs);
+    void rememberPendingCommand(const PendingCommandTarget& target);
+    bool findPendingCommand(std::int64_t boardSeq, PendingCommandTarget& target) const;
+    bool takePendingCommand(std::int64_t boardSeq, PendingCommandTarget& target);
+    std::vector<PendingCommandTarget> collectCommandTimeouts(std::int64_t nowMs,
+                                                             std::int64_t timeoutMs);
 
     // 清空当前快照
     void clear();
@@ -142,6 +159,7 @@ private:
     std::unordered_map<std::int64_t, SyncGatewayPending> m_syncPendingBySeq;
     std::unordered_map<int, std::vector<SyncGatewayPending> > m_syncRequests;
     std::unordered_map<int, SyncConfigResult> m_syncRequestResults;
+    std::unordered_map<std::int64_t, PendingCommandTarget> m_pendingCommandsByBoardSeq;
     int m_nextSyncRequestId = 1;
     std::int64_t m_nextSyncSeq = 1;
 };

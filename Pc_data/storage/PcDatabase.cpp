@@ -11,6 +11,7 @@
 #include "sqlite3.h"
 
 static void bindText(sqlite3_stmt* stmt, int index, const std::string& value);
+static std::string columnText(const unsigned char* value);
 
 PcDatabase::PcDatabase()
 {
@@ -319,8 +320,7 @@ int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
         "  WHERE d.gateway_id=device_status.gateway_id "
         "    AND d.port_id=device_status.port_id "
         "    AND d.device_id=device_status.device_id "
-        "    AND d.enabled=1 "
-        "    AND d.expect_telemetry=1"
+        "    AND d.enabled=1"
         ") AND last_seen_ms > 0 AND (? - last_seen_ms) > ?;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -1173,6 +1173,175 @@ bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)
     return rc == SQLITE_DONE;
 }
 
+bool PcDatabase::upsertGatewayRegistry(const GatewayRegistry& registry)
+{
+    if (!m_db || registry.gatewayId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "INSERT INTO gateway_registry ("
+        "gateway_id,gateway_name,status,up_topic,cmd_topic,broadcast_topic,"
+        "last_register_time_ms,last_heartbeat_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(gateway_id) DO UPDATE SET "
+        "gateway_name=excluded.gateway_name,"
+        "status=excluded.status,"
+        "up_topic=excluded.up_topic,"
+        "cmd_topic=excluded.cmd_topic,"
+        "broadcast_topic=excluded.broadcast_topic,"
+        "last_register_time_ms=excluded.last_register_time_ms,"
+        "last_heartbeat_time_ms=excluded.last_heartbeat_time_ms,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare upsert gateway_registry failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, registry.gatewayId);
+    bindText(stmt, 2, registry.gatewayName);
+    bindText(stmt, 3, registry.status.empty() ? std::string("online") : registry.status);
+    bindText(stmt, 4, registry.upTopic);
+    bindText(stmt, 5, registry.cmdTopic);
+    bindText(stmt, 6, registry.broadcastTopic);
+    sqlite3_bind_int64(stmt, 7, registry.lastRegisterTimeMs);
+    sqlite3_bind_int64(stmt, 8, registry.lastHeartbeatTimeMs);
+    sqlite3_bind_int64(stmt, 9, registry.updateTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+std::string PcDatabase::queryGatewayCmdTopic(const std::string& gatewayId)
+{
+    GatewayRegistry registry;
+    return queryGatewayRegistry(gatewayId, registry) ? registry.cmdTopic : std::string();
+}
+
+std::string PcDatabase::queryGatewayUpTopic(const std::string& gatewayId)
+{
+    GatewayRegistry registry;
+    return queryGatewayRegistry(gatewayId, registry) ? registry.upTopic : std::string();
+}
+
+bool PcDatabase::queryGatewayRegistry(const std::string& gatewayId, GatewayRegistry& registry)
+{
+    if (!m_db || gatewayId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT gateway_id,gateway_name,status,up_topic,cmd_topic,broadcast_topic,"
+        "last_register_time_ms,last_heartbeat_time_ms,update_time_ms "
+        "FROM gateway_registry WHERE gateway_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query gateway_registry failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    bool found = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        registry.gatewayId = columnText(sqlite3_column_text(stmt, 0));
+        registry.gatewayName = columnText(sqlite3_column_text(stmt, 1));
+        registry.status = columnText(sqlite3_column_text(stmt, 2));
+        registry.upTopic = columnText(sqlite3_column_text(stmt, 3));
+        registry.cmdTopic = columnText(sqlite3_column_text(stmt, 4));
+        registry.broadcastTopic = columnText(sqlite3_column_text(stmt, 5));
+        registry.lastRegisterTimeMs = sqlite3_column_int64(stmt, 6);
+        registry.lastHeartbeatTimeMs = sqlite3_column_int64(stmt, 7);
+        registry.updateTimeMs = sqlite3_column_int64(stmt, 8);
+        found = true;
+    }
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+std::vector<GatewayRegistry> PcDatabase::getAllGatewayRegistry()
+{
+    std::vector<GatewayRegistry> rows;
+    if (!m_db) {
+        return rows;
+    }
+
+    static const char* sql =
+        "SELECT gateway_id,gateway_name,status,up_topic,cmd_topic,broadcast_topic,"
+        "last_register_time_ms,last_heartbeat_time_ms,update_time_ms "
+        "FROM gateway_registry ORDER BY gateway_id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query all gateway_registry failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return rows;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        GatewayRegistry registry;
+        registry.gatewayId = columnText(sqlite3_column_text(stmt, 0));
+        registry.gatewayName = columnText(sqlite3_column_text(stmt, 1));
+        registry.status = columnText(sqlite3_column_text(stmt, 2));
+        registry.upTopic = columnText(sqlite3_column_text(stmt, 3));
+        registry.cmdTopic = columnText(sqlite3_column_text(stmt, 4));
+        registry.broadcastTopic = columnText(sqlite3_column_text(stmt, 5));
+        registry.lastRegisterTimeMs = sqlite3_column_int64(stmt, 6);
+        registry.lastHeartbeatTimeMs = sqlite3_column_int64(stmt, 7);
+        registry.updateTimeMs = sqlite3_column_int64(stmt, 8);
+        rows.push_back(registry);
+    }
+
+    sqlite3_finalize(stmt);
+    return rows;
+}
+
+bool PcDatabase::updateGatewayRegistryHeartbeat(const std::string& gatewayId,
+                                                std::int64_t /*heartbeatTimeMs*/,
+                                                const std::string& status)
+{
+    if (!m_db || gatewayId.empty()) {
+        return false;
+    }
+
+    const std::int64_t receiveTimeMs = currentTimeMs();
+    static const char* sql =
+        "INSERT INTO gateway_registry ("
+        "gateway_id,status,last_register_time_ms,last_heartbeat_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?) "
+        "ON CONFLICT(gateway_id) DO UPDATE SET "
+        "status=excluded.status,"
+        "last_heartbeat_time_ms=excluded.last_heartbeat_time_ms,"
+        "update_time_ms=excluded.update_time_ms;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare update gateway_registry heartbeat failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    bindText(stmt, 2, status.empty() ? std::string("online") : status);
+    sqlite3_bind_int64(stmt, 3, 0);
+    sqlite3_bind_int64(stmt, 4, receiveTimeMs);
+    sqlite3_bind_int64(stmt, 5, receiveTimeMs);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
 bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
                                         std::int64_t /*heartbeatTimeMs*/,
                                         const std::string& status)
@@ -1383,6 +1552,7 @@ bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& tar
         const unsigned char* gatewayId = sqlite3_column_text(stmt, 2);
         const unsigned char* portId = sqlite3_column_text(stmt, 3);
         target.commandId = commandId ? reinterpret_cast<const char*>(commandId) : "";
+        target.seq = seq;
         target.commandType = commandType ? reinterpret_cast<const char*>(commandType) : "";
         target.gatewayId = gatewayId ? reinterpret_cast<const char*>(gatewayId) : "";
         target.portId = portId ? reinterpret_cast<const char*>(portId) : "";
@@ -1461,6 +1631,11 @@ static const char* valueTypeToText(PointValueType type)
 static void bindText(sqlite3_stmt* stmt, int index, const std::string& value)
 {
     sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+}
+
+static std::string columnText(const unsigned char* value)
+{
+    return value ? reinterpret_cast<const char*>(value) : std::string();
 }
 
 static void bindCommonPointColumns(sqlite3_stmt* stmt, int offset, const TelemetryPoint& point)

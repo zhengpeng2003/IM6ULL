@@ -315,12 +315,77 @@ std::vector<SyncConfigResult> PcDataService::collectSyncConfigTimeouts(std::int6
     return results;
 }
 
+void PcDataService::rememberPendingCommand(const PendingCommandTarget& target)
+{
+    if (target.boardSeq <= 0 || target.commandId.empty() || target.commandType.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_pendingCommandsByBoardSeq[target.boardSeq] = target;
+}
+
+bool PcDataService::findPendingCommand(std::int64_t boardSeq, PendingCommandTarget& target) const
+{
+    if (boardSeq <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_pendingCommandsByBoardSeq.find(boardSeq);
+    if (it == m_pendingCommandsByBoardSeq.end()) {
+        return false;
+    }
+
+    target = it->second;
+    return true;
+}
+
+bool PcDataService::takePendingCommand(std::int64_t boardSeq, PendingCommandTarget& target)
+{
+    if (boardSeq <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_pendingCommandsByBoardSeq.find(boardSeq);
+    if (it == m_pendingCommandsByBoardSeq.end()) {
+        return false;
+    }
+
+    target = it->second;
+    m_pendingCommandsByBoardSeq.erase(it);
+    return true;
+}
+
+std::vector<PendingCommandTarget> PcDataService::collectCommandTimeouts(std::int64_t nowMs,
+                                                                        std::int64_t timeoutMs)
+{
+    std::vector<PendingCommandTarget> results;
+    if (nowMs <= 0 || timeoutMs <= 0) {
+        return results;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto it = m_pendingCommandsByBoardSeq.begin(); it != m_pendingCommandsByBoardSeq.end(); ) {
+        if (nowMs - it->second.requestTimeMs >= timeoutMs) {
+            results.push_back(it->second);
+            it = m_pendingCommandsByBoardSeq.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    return results;
+}
+
 void PcDataService::clear()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_snapshot.clear();
     m_removedDevices.clear();
     m_removedMasters.clear();
+    m_pendingCommandsByBoardSeq.clear();
 }
 
 void PcDataService::pruneExpiredRemovedDevicesLocked(std::int64_t nowMs) const

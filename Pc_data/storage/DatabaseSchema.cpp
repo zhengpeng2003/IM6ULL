@@ -4,6 +4,20 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 {
     return {
         R"SQL(
+        CREATE TABLE IF NOT EXISTS gateway_registry (
+            gateway_id TEXT PRIMARY KEY,
+            gateway_name TEXT,
+            status TEXT,
+            up_topic TEXT,
+            cmd_topic TEXT,
+            broadcast_topic TEXT,
+            last_register_time_ms INTEGER,
+            last_heartbeat_time_ms INTEGER,
+            update_time_ms INTEGER
+        );
+        )SQL",
+
+        R"SQL(
         CREATE TABLE IF NOT EXISTS gateway_status (
             gateway_id TEXT PRIMARY KEY,
             gateway_name TEXT,
@@ -239,6 +253,11 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
 std::vector<std::string> DatabaseSchema::indexSqlList()
 {
     return {
+        R"SQL(
+        CREATE INDEX IF NOT EXISTS idx_gateway_registry_status
+        ON gateway_registry(status);
+        )SQL",
+
         R"SQL(
         CREATE INDEX IF NOT EXISTS idx_gateway_status_state
         ON gateway_status(status);

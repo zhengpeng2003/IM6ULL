@@ -234,7 +234,9 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
     if (!cmd.isEmpty()) {
         rec.command = cmd;
     }
-    rec.reason = obj.value("message").toString(obj.value("reason").toString());
+    const QString reason = obj.value(QStringLiteral("reason")).toString();
+    const QString rawMessage = obj.value(QStringLiteral("message")).toString();
+    rec.reason = reason.isEmpty() ? rawMessage : reason;
     rec.ackTime = int64Any(obj, {"timestampMs", "timestamp"});
 
     const QString stage = obj.value("stage").toString();
@@ -252,7 +254,7 @@ void CommandManager::onCommandAck(const QJsonObject &obj)
         m_pending.insert(cmdId, rec);
         const QString message = rec.reason.isEmpty() ? QStringLiteral("failed") : QStringLiteral("failed: ") + rec.reason;
         emit commandMessage(cmdId, rec.command, QStringLiteral("error"),
-                            QStringLiteral("命令执行失败"), friendlyCommandReason(rec.reason, rec.reason));
+                            QStringLiteral("命令执行失败"), friendlyCommandReason(rec.reason, rawMessage));
         finishCommand(cmdId, message);
         return;
     }
@@ -331,7 +333,7 @@ void CommandManager::startCommandTimeout(const QString &cmdId)
         emit commandTimeout(cmdId);
     });
     m_timeoutTimers.insert(cmdId, timer);
-    timer->start(5000);
+    timer->start(10000);
 }
 
 void CommandManager::finishCommand(const QString &cmdId, const QString &state)
@@ -361,18 +363,24 @@ QString CommandManager::commandTopic(const DeviceNode &device) const
 
 QString CommandManager::friendlyCommandReason(const QString &reason, const QString &message) const
 {
-    if (!message.isEmpty()) {
-        return message;
-    }
     if (reason == QStringLiteral("invalid_request")) return QStringLiteral("请求参数错误");
     if (reason == QStringLiteral("port_not_connected")) return QStringLiteral("端口未连接");
+    if (reason == QStringLiteral("port_not_found")) return QStringLiteral("端口不存在或未连接");
     if (reason == QStringLiteral("mqtt_publish_failed")) return QStringLiteral("MQTT 发送失败，请检查 Pc_data 与 Broker 连接");
     if (reason == QStringLiteral("linux_data_ack_timeout")) return QStringLiteral("板端执行超时，可能 Linux_data 未运行或 MQTT 不通");
     if (reason == QStringLiteral("delete_device_data_failed")) return QStringLiteral("PC 侧数据删除失败");
     if (reason == QStringLiteral("unsupported_command")) return QStringLiteral("不支持的命令");
+    if (reason == QStringLiteral("unsupported_device_type")) return QStringLiteral("不支持的设备类型");
     if (reason == QStringLiteral("device_not_found")) return QStringLiteral("设备不存在或已被删除");
+    if (reason == QStringLiteral("device_no_response")) return QStringLiteral("设备无响应，请检查从站地址、接线、波特率和设备供电");
+    if (reason == QStringLiteral("slave_address_conflict")) return QStringLiteral("从站地址已存在");
+    if (reason == QStringLiteral("config_write_failed")) return QStringLiteral("板端配置保存失败");
+    if (reason == QStringLiteral("device_db_save_failed")) return QStringLiteral("板端已添加设备，但 PC 本地数据库保存失败");
     if (reason == QStringLiteral("db_not_open")) return QStringLiteral("数据库未打开");
     if (reason == QStringLiteral("timeout")) return QStringLiteral("执行超时");
+    if (!message.isEmpty()) {
+        return message;
+    }
     return reason.isEmpty() ? QStringLiteral("未知错误") : reason;
 }
 

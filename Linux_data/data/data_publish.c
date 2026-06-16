@@ -117,9 +117,10 @@ static void fill_base_meta(offline_publish_meta_t *meta,
     meta->timestamp_ms = timestamp_ms > 0 ? timestamp_ms : current_time_ms();
 }
 
-static int publish_json_to_mqtt_with_meta(struct json_object *root,
-                                          const char *log_name,
-                                          const offline_publish_meta_t *meta)
+static int publish_json_to_mqtt_topic_with_meta(const char *topic,
+                                                struct json_object *root,
+                                                const char *log_name,
+                                                const offline_publish_meta_t *meta)
 {
     if (!root)
         return DATA_SEND_JSON_ERROR;
@@ -128,7 +129,7 @@ static int publish_json_to_mqtt_with_meta(struct json_object *root,
     if (!json)
         return DATA_SEND_JSON_ERROR;
 
-    int ret = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, meta);
+    int ret = offline_publish_or_cache(topic ? topic : MQTT_DEFAULT_PUBLISH_TOPIC, json, meta);
     if (ret == DATA_SEND_OK) {
         printf("%s publish queued: %s\n", log_name ? log_name : "message", json);
     } else {
@@ -136,6 +137,13 @@ static int publish_json_to_mqtt_with_meta(struct json_object *root,
     }
 
     return ret;
+}
+
+static int publish_json_to_mqtt_with_meta(struct json_object *root,
+                                          const char *log_name,
+                                          const offline_publish_meta_t *meta)
+{
+    return publish_json_to_mqtt_topic_with_meta(MQTT_DEFAULT_PUBLISH_TOPIC, root, log_name, meta);
 }
 
 static int device_type_expects_telemetry(const char *device_type)
@@ -254,10 +262,13 @@ int data_publish_gateway_register(uint32_t seq)
     add_string(root, "gatewayName", DEFAULT_GATEWAY_NAME);
     add_string(root, "factoryId", DEFAULT_FACTORY_ID);
     add_string(root, "areaId", DEFAULT_AREA_ID);
+    add_string(root, "upTopic", MQTT_DEFAULT_PUBLISH_TOPIC);
+    add_string(root, "cmdTopic", "cmd/" DEFAULT_GATEWAY_ID);
+    add_string(root, "broadcastTopic", "gateway/broadcast/down");
 
     offline_publish_meta_t meta;
     fill_base_meta(&meta, "gateway_register", 0, current_time_ms());
-    int ret = publish_json_to_mqtt_with_meta(root, "gateway_register", &meta);
+    int ret = publish_json_to_mqtt_topic_with_meta(MQTT_GATEWAY_REGISTER_TOPIC, root, "gateway_register", &meta);
     json_object_put(root);
     return ret;
 }
