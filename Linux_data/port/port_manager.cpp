@@ -1622,6 +1622,7 @@ int PortManager::removeDevice(int slot,
         setReason(reason, reason_size, "config_write_failed");
         return -1;
     }
+    printf("[PortManager] remove_device ok slot=%d slave_id=%d remaining=%zu\n", slot, slave_id, channel.devices.size());
     setReason(reason, reason_size, "ok");
     return 0;
 }
@@ -1700,7 +1701,12 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("config_snapshot"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    addString(root, "factoryId", DEFAULT_FACTORY_ID);
+    addString(root, "factoryName", DEFAULT_FACTORY_NAME);
+    addString(root, "areaId", DEFAULT_AREA_ID);
+    addString(root, "areaName", DEFAULT_AREA_NAME);
     json_object_object_add(root, "gatewayId", json_object_new_string(effective_gateway_id));
+    addString(root, "gatewayName", DEFAULT_GATEWAY_NAME);
     json_object_object_add(root, "timestampMs", json_object_new_int64(currentTimeMs()));
 
     std::set<std::pair<int, int> > exported_devices;
@@ -1728,6 +1734,8 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
             addString(port_obj, "port", channel.port.c_str());
             json_object_object_add(port_obj, "baud", json_object_new_int(channel.baud));
             json_object_object_add(port_obj, "connected", json_object_new_boolean(channel.connected));
+            addString(port_obj, "devicePath", channel.port.c_str());
+            addString(port_obj, "status", channel.connected ? "connected" : "disconnected");
 
             for (const ManagedDevice &device : channel.devices) {
                 if (!device.sensor || !filter.acceptsDevice(slot, device.sensor->slaveId()))
@@ -1738,8 +1746,11 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                     continue;
 
                 json_object_object_add(dev, "deviceId", json_object_new_int(device.sensor->slaveId()));
+                json_object_object_add(dev, "slave_id", json_object_new_int(device.sensor->slaveId()));
                 addString(dev, "deviceType", device.sensor->deviceTypeName());
                 json_object_object_add(dev, "pollIntervalMs", json_object_new_int(device.sensor->pollIntervalMs()));
+                json_object_object_add(dev, "poll_interval_ms", json_object_new_int(device.sensor->pollIntervalMs()));
+                addString(dev, "status", channel.connected ? "online" : "unknown");
 
                 sensor_threshold_config_t config = {};
                 if (device.sensor->thresholdConfig(&config)) {
@@ -1821,6 +1832,8 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                     addString(port_obj, "port", saved_port);
                     json_object_object_add(port_obj, "baud", json_object_new_int(baud));
                     json_object_object_add(port_obj, "connected", json_object_new_boolean(false));
+                    addString(port_obj, "devicePath", saved_port);
+                    addString(port_obj, "status", "disconnected");
                     json_object_object_add(port_obj, "devices", devices);
                     json_object_array_add(ports, port_obj);
                 }
@@ -1842,8 +1855,11 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
                 if (!dev)
                     continue;
                 json_object_object_add(dev, "deviceId", json_object_new_int(slave_id));
+                json_object_object_add(dev, "slave_id", json_object_new_int(slave_id));
                 addString(dev, "deviceType", device_type);
                 json_object_object_add(dev, "pollIntervalMs", json_object_new_int(poll_interval_ms));
+                json_object_object_add(dev, "poll_interval_ms", json_object_new_int(poll_interval_ms));
+                addString(dev, "status", "unknown");
 
                 json_object *threshold = nullptr;
                 if (json_object_object_get_ex(item, "threshold_config", &threshold)) {

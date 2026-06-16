@@ -509,6 +509,8 @@ void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &p
     m_pendingDeletePortId = portId;
     m_pendingDeleteDeviceId = deviceId;
 
+    qDebug() << "Pc_ui send remove_device" << "gatewayId" << gatewayId
+             << "portId" << portId << "slaveId" << deviceId;
     m_command->sendRemoveDeviceCommand(gatewayId, portId, deviceId);
 }
 
@@ -524,6 +526,10 @@ void MainWindow::onRemoveDeviceSucceeded(const QString &gatewayId, const QString
     if (m_alarm) {
         m_alarm->removeDeviceAlarms(gatewayId, portId, deviceId);
     }
+    m_pendingDeleteAction.clear();
+    m_pendingDeleteGatewayId.clear();
+    m_pendingDeletePortId.clear();
+    m_pendingDeleteDeviceId = 0;
     requestFullSnapshot();
 }
 

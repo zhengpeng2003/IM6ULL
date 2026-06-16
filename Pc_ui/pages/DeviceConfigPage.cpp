@@ -7,6 +7,7 @@
 #include <QColor>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDebug>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -187,7 +188,7 @@ void DeviceConfigPage::refreshTables()
         m_slaveTable->setItem(row, 6, readonlyItem(displayTime(d.lastUpdateTime)));
         addStatusItem(m_slaveTable, row, 7, d.online ? QStringLiteral("online") : d.status);
         m_slaveTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
-        addDeleteButton(m_slaveTable, row, false, d.gatewayId, d.port, d.deviceId);
+        addDeleteButton(m_slaveTable, row, false, d.gatewayId, d.port, d.slaveAddr > 0 ? d.slaveAddr : d.deviceId);
     }
 }
 
@@ -325,7 +326,8 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
             if (node.gatewayId != gatewayId || (!portId.isEmpty() && node.port != portId)) {
                 continue;
             }
-            if (!master && node.deviceId != deviceId) {
+            const int nodeSlaveId = node.slaveAddr > 0 ? node.slaveAddr : node.deviceId;
+            if (!master && nodeSlaveId != deviceId) {
                 continue;
             }
             if (node.status == QStringLiteral("service_offline")) {
@@ -354,6 +356,10 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         if (master) {
             emit deleteMasterDataRequested(gatewayId, portId);
         } else {
+            qDebug() << "DeviceConfigPage delete slave clicked"
+                     << "gatewayId" << gatewayId
+                     << "portId" << portId
+                     << "slaveAddr/deviceId" << deviceId;
             emit deleteDeviceDataRequested(gatewayId, portId, deviceId);
         }
     });

@@ -755,6 +755,32 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
     return points;
 }
 
+bool PcDatabase::deviceExists(const std::string& gatewayId,
+                              const std::string& portId,
+                              int deviceId) const
+{
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT 1 FROM device WHERE gateway_id=? AND port_id=? AND device_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare device exists failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, deviceId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW;
+}
+
 bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
                                   const std::string& portId,
                                   int deviceId)
@@ -767,12 +793,22 @@ bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
         return false;
     }
 
-    bool ok = deleteRowsByDevice("device_status", gatewayId, portId, deviceId) &&
-              deleteRowsByDevice("device", gatewayId, portId, deviceId) &&
-              deleteRowsByDevice("latest_point", gatewayId, portId, deviceId) &&
-              deleteRowsByDevice("point_config", gatewayId, portId, deviceId) &&
-              deleteRowsByDevice("telemetry_history", gatewayId, portId, deviceId) &&
-              deleteRowsByDevice("alarm_event", gatewayId, portId, deviceId);
+    const char* tables[] = {
+        "device_status", "device", "latest_point", "point_config",
+        "telemetry_history", "alarm_event"
+    };
+    bool ok = true;
+    for (const char* table : tables) {
+        const int rows = deleteRowsByDevice(table, gatewayId, portId, deviceId) ? sqlite3_changes(m_db) : -1;
+        std::cout << "Delete device table " << table << " rows=" << rows
+                  << ", gateway: " << gatewayId
+                  << ", port: " << portId
+                  << ", device: " << deviceId << std::endl;
+        if (rows < 0) {
+            ok = false;
+            break;
+        }
+    }
 
     if (ok) {
         ok = execSql("COMMIT;");

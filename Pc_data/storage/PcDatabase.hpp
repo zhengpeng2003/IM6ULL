@@ -133,6 +133,9 @@ public:
     bool deleteDeviceData(const std::string& gatewayId,
                           const std::string& portId,
                           int deviceId);
+    bool deviceExists(const std::string& gatewayId,
+                      const std::string& portId,
+                      int deviceId) const;
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);
     bool clearRuntimeData();
