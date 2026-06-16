@@ -1,7 +1,9 @@
 #ifndef MQTT_MESSAGE_HANDLER_HPP
 #define MQTT_MESSAGE_HANDLER_HPP
 
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 
 class IpcServer;
 class MqttClient;
@@ -23,6 +25,7 @@ private:
     PcDataService& m_dataService;
     IpcServer& m_ipc;
     MqttClient& m_mqtt;
+    std::unordered_map<std::string, std::int64_t> m_lastConfigRequestMs;
 };
 
 #endif // MQTT_MESSAGE_HANDLER_HPP

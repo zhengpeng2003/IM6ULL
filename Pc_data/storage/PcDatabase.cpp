@@ -99,6 +99,15 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
             continue;
         }
 
+        if (!deviceExists(point.gatewayId, point.portId, point.deviceId)) {
+            std::cout << "Skip telemetry save for unknown device, gateway: "
+                      << point.gatewayId
+                      << ", port: " << point.portId
+                      << ", device: " << point.deviceId
+                      << ", point: " << point.pointId << std::endl;
+            continue;
+        }
+
         if (!saveLatestPoint(point) || !saveHistoryPoint(point)) {
             ok = false;
             break;
@@ -254,6 +263,14 @@ bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
         return false;
     }
 
+    if (!deviceExists(point.gatewayId, point.portId, point.deviceId)) {
+        std::cout << "Skip device_status update for unknown telemetry device, gateway: "
+                  << point.gatewayId
+                  << ", port: " << point.portId
+                  << ", device: " << point.deviceId << std::endl;
+        return true;
+    }
+
     DeviceRecord device;
     device.factoryId = point.factoryId;
     device.factoryName = point.factoryName;
@@ -279,54 +296,6 @@ bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
     device.statusReason = point.valid ? "" : point.errorMessage;
     device.createTimeMs = receiveTimeMs;
     device.updateTimeMs = receiveTimeMs;
-
-    static const char* sql =
-        "INSERT INTO device ("
-        "factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,"
-        "port_id,port_name,device_id,device_name,device_type,poll_interval_ms,"
-        "expect_telemetry,enabled,create_time_ms,update_time_ms"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT(gateway_id, port_id, device_id) DO UPDATE SET "
-        "factory_id=excluded.factory_id,"
-        "factory_name=excluded.factory_name,"
-        "area_id=excluded.area_id,"
-        "area_name=excluded.area_name,"
-        "gateway_name=excluded.gateway_name,"
-        "port_name=excluded.port_name,"
-        "device_name=excluded.device_name,"
-        "device_type=excluded.device_type,"
-        "update_time_ms=excluded.update_time_ms;";
-
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Prepare telemetry device upsert failed: " << sqlite3_errmsg(m_db) << std::endl;
-        return false;
-    }
-
-    bindText(stmt, 1, device.factoryId);
-    bindText(stmt, 2, device.factoryName);
-    bindText(stmt, 3, device.areaId);
-    bindText(stmt, 4, device.areaName);
-    bindText(stmt, 5, device.gatewayId);
-    bindText(stmt, 6, device.gatewayName);
-    bindText(stmt, 7, device.portId);
-    bindText(stmt, 8, device.portName);
-    sqlite3_bind_int(stmt, 9, device.deviceId);
-    bindText(stmt, 10, device.deviceName);
-    bindText(stmt, 11, device.deviceType);
-    sqlite3_bind_int(stmt, 12, device.pollIntervalMs);
-    sqlite3_bind_int(stmt, 13, device.expectTelemetry ? 1 : 0);
-    sqlite3_bind_int(stmt, 14, 1);
-    sqlite3_bind_int64(stmt, 15, device.createTimeMs);
-    sqlite3_bind_int64(stmt, 16, device.updateTimeMs);
-
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    if (rc != SQLITE_DONE) {
-        std::cerr << "Telemetry device upsert failed: " << sqlite3_errmsg(m_db) << std::endl;
-        return false;
-    }
 
     return upsertDeviceStatus(device);
 }
@@ -782,6 +751,26 @@ bool PcDatabase::deviceExists(const std::string& gatewayId,
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_ROW;
+}
+
+int PcDatabase::deviceCount() const
+{
+    if (!m_db) {
+        return 0;
+    }
+
+    static const char* sql = "SELECT COUNT(1) FROM device;";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare device count failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return 0;
+    }
+
+    rc = sqlite3_step(stmt);
+    const int count = rc == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : 0;
+    sqlite3_finalize(stmt);
+    return count;
 }
 
 bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
