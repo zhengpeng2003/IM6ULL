@@ -176,7 +176,8 @@ void DataManager::removeDeviceData(const QString &gatewayId, const QString &port
         rememberDeletedDeviceLocked(gatewayId, portId, deviceId, now);
         for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
             const DeviceNode &node = it.value().node;
-            if (node.gatewayId == gatewayId && node.port == portId && node.deviceId == deviceId) {
+            const int slaveId = node.slaveAddr > 0 ? node.slaveAddr : node.deviceId;
+            if (node.gatewayId == gatewayId && node.port == portId && slaveId == deviceId) {
                 it = m_realtimeMap.erase(it);
             } else {
                 ++it;

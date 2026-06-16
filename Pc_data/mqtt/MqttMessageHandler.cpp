@@ -124,6 +124,29 @@ std::string buildStableAlarmId(const AlarmEvent& event)
     return out.str();
 }
 
+std::string buildRequestConfigSnapshotJson(const std::string& gatewayId)
+{
+    const std::int64_t seq = currentTimeMs();
+    std::ostringstream payload;
+    payload << "{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":" << seq
+            << ",\"target\":{\"gatewayId\":\"" << jsonEscape(gatewayId) << "\"}}";
+    return payload.str();
+}
+
+bool requestConfigSnapshot(MqttClient& mqtt, const std::string& gatewayId, const std::string& reason)
+{
+    if (gatewayId.empty()) {
+        return false;
+    }
+    const std::string topic = "cmd/" + gatewayId;
+    const std::string payload = buildRequestConfigSnapshotJson(gatewayId);
+    const bool ok = mqtt.publish(topic, payload);
+    std::cout << "[MQTT TX] request_config_snapshot " << (ok ? "ok" : "failed")
+              << ", gateway: " << gatewayId
+              << ", reason: " << reason << std::endl;
+    return ok;
+}
+
 bool fillAlarmEventFromObject(const rapidjson::Value& root, AlarmEvent& event, std::string& reason)
 {
     if (!root.IsObject()) {
@@ -311,7 +334,7 @@ bool parseConfigSnapshot(const std::string& payload,
             }
 
             const int deviceId = getJsonIntAny(deviceValue, {"deviceId", "slave_id", "slaveAddress"}, 0);
-            if (selected.find(std::make_pair(port.portId, deviceId)) == selected.end()) {
+            if (!selected.empty() && selected.find(std::make_pair(port.portId, deviceId)) == selected.end()) {
                 continue;
             }
 
@@ -596,8 +619,10 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         const std::int64_t seq = getJsonInt64(root, "seq", 0);
         SyncGatewayPending pending;
         if (!m_dataService.findSyncPending(seq, pending)) {
-            std::cout << "[MQTT RX] config_snapshot skip unknown seq: " << seq << std::endl;
-            return;
+            pending.gatewayId = getJsonString(root, "gatewayId");
+            pending.gatewayName = getJsonString(root, "gatewayName");
+            std::cout << "[MQTT RX] config_snapshot accepts unsolicited seq: " << seq
+                      << ", gateway: " << pending.gatewayId << std::endl;
         }
 
         std::vector<GatewayPort> ports;
@@ -746,6 +771,20 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << ", device count: "
               << pack.devices.size()
               << std::endl;
+
+    if (m_database.isOpen()) {
+        for (const DeviceData& device : pack.devices) {
+            if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0 ||
+                !m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
+                std::cout << "[MQTT RX] unknown device telemetry, request config snapshot, gateway: "
+                          << pack.site.gatewayId
+                          << ", port: " << pack.site.portId
+                          << ", device: " << device.deviceId << std::endl;
+                requestConfigSnapshot(m_mqtt, pack.site.gatewayId, "unknown_device_telemetry");
+                return;
+            }
+        }
+    }
 
     std::vector<TelemetryPoint> receivedPoints =
         m_dataService.filterRemovedPoints(ModelConverter::toTelemetryPoints(pack));

@@ -1,12 +1,30 @@
 #include "DeviceManager.h"
 #include <QSet>
+#include <QDebug>
 
 DeviceManager::DeviceManager(QObject *parent) : QObject(parent) {}
 
 void DeviceManager::setDevices(const QList<DeviceNode> &devices)
 {
+    const int before = devices.size();
     m_devices.clear();
-    for (const auto &d : devices) m_devices.insert(d.key(), d);
+    int dropped = 0;
+    int duplicates = 0;
+    for (const auto &d : devices) {
+        if (d.gatewayId.isEmpty() || d.port.isEmpty() || d.deviceId <= 0) {
+            ++dropped;
+            qWarning() << "DeviceManager dropped invalid device" << d.gatewayId << d.port << d.deviceId;
+            continue;
+        }
+        const QString key = d.key();
+        if (m_devices.contains(key)) {
+            ++duplicates;
+            qWarning() << "DeviceManager duplicate device overwritten" << key;
+        }
+        m_devices.insert(key, d);
+    }
+    qDebug() << "DeviceManager setDevices dedup" << before << "->" << m_devices.size()
+             << "dropped" << dropped << "duplicates" << duplicates;
     emit deviceConfigChanged();
     emit onlineGatewayCountChanged(onlineGatewayCount());
     emit onlineDeviceCountChanged(onlineDeviceCount());
@@ -50,7 +68,15 @@ void DeviceManager::clearAll()
 
 void DeviceManager::upsertDevice(const DeviceNode &node)
 {
-    m_devices.insert(node.key(), node);
+    if (node.gatewayId.isEmpty() || node.port.isEmpty() || node.deviceId <= 0) {
+        qWarning() << "DeviceManager upsert dropped invalid device" << node.gatewayId << node.port << node.deviceId;
+        return;
+    }
+    const QString key = node.key();
+    if (m_devices.contains(key)) {
+        qDebug() << "DeviceManager upsert overwrite" << key;
+    }
+    m_devices.insert(key, node);
     emit deviceConfigChanged();
     emit onlineGatewayCountChanged(onlineGatewayCount());
     emit onlineDeviceCountChanged(onlineDeviceCount());
@@ -61,7 +87,8 @@ void DeviceManager::removeDeviceData(const QString &gatewayId, const QString &po
     bool removed = false;
     for (auto it = m_devices.begin(); it != m_devices.end(); ) {
         const DeviceNode &node = it.value();
-        if (node.gatewayId == gatewayId && node.port == portId && node.deviceId == deviceId) {
+        const int slaveId = node.slaveAddr > 0 ? node.slaveAddr : node.deviceId;
+        if (node.gatewayId == gatewayId && node.port == portId && slaveId == deviceId) {
             it = m_devices.erase(it);
             removed = true;
         } else {

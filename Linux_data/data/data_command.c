@@ -475,6 +475,9 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
                                                   2,
                                                   "unknown");
 
+    printf("remove_device command gatewayId=%s portId=%s slot=%d slave_id=%d\n",
+           DEFAULT_GATEWAY_ID, slot == 0 ? "port_001" : (slot == 1 ? "port_002" : "unknown"), slot, slave_id);
+
     int ret = port_manager_remove_device(slot, slave_id, reason, sizeof(reason));
     data_ack_send_device_result(seq,
                                 cmd,
@@ -485,6 +488,17 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
                                 slave_id,
                                 device_type,
                                 0);
+    if (ret == 0) {
+        char snapshot[65536];
+        if (port_manager_export_config_snapshot(seq, DEFAULT_GATEWAY_ID, "", snapshot, sizeof(snapshot)) == 0) {
+            int pub_ret = mqtt_send(MQTT_DEFAULT_PUBLISH_TOPIC, snapshot);
+            printf("device_config_snapshot after remove_device publish=%d slot=%d slave_id=%d\n",
+                   pub_ret, slot, slave_id);
+        } else {
+            printf("device_config_snapshot after remove_device export failed slot=%d slave_id=%d\n",
+                   slot, slave_id);
+        }
+    }
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 

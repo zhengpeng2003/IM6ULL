@@ -89,6 +89,12 @@ int main()
 
         if (!mqtt.connectToBroker(mqttConfig.host, mqttConfig.port, mqttConfig.clientId, mqttConfig.topics)) {
             cout << "MQTT connectToBroker call failed" << endl;
+        } else {
+            const std::int64_t seq = currentTimeMs();
+            const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"get_config\",\"seq\":") +
+                std::to_string(seq) + ",\"target\":{\"gatewayId\":\"gateway_001\"}}";
+            const bool requestOk = mqtt.publish("cmd/gateway_001", payload);
+            cout << "Pc_data startup request_config_snapshot " << (requestOk ? "ok" : "failed") << endl;
         }
 
         std::int64_t lastOfflineScanMs = 0;
