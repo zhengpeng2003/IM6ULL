@@ -247,6 +247,69 @@ std::string makePortCommandTopic(const std::string& gatewayId, const std::string
     return gatewayId.empty() || portId.empty() ? std::string() : "cmd/" + gatewayId + "/" + portId;
 }
 
+std::string extractGatewayIdCompat(const rapidjson::Value& root)
+{
+    std::string gatewayId = getJsonStringAny(root, {"gatewayId", "gateway_id"});
+    if (gatewayId.empty() && root.IsObject() && root.HasMember("site") && root["site"].IsObject()) {
+        gatewayId = getJsonStringAny(root["site"], {"gatewayId", "gateway_id"});
+    }
+    return gatewayId;
+}
+
+std::string extractPortIdCompat(const rapidjson::Value& root)
+{
+    std::string portId = getJsonStringAny(root, {"portId", "port_id"});
+    if (portId.empty() && root.IsObject() && root.HasMember("site") && root["site"].IsObject()) {
+        portId = getJsonStringAny(root["site"], {"portId", "port_id"});
+    }
+    return portId;
+}
+
+bool parsePortStatusDetails(const rapidjson::Value& root,
+                            GatewayPort& port,
+                            std::string& reason,
+                            std::string& message)
+{
+    if (!root.IsObject()) {
+        reason = "invalid_payload";
+        message = "port_status payload is not object";
+        return false;
+    }
+
+    const std::int64_t nowMs = currentTimeMs();
+    port.gatewayId = extractGatewayIdCompat(root);
+    port.portId = extractPortIdCompat(root);
+    port.portName = getJsonStringAny(root, {"portName", "port_name"});
+    port.slot = getJsonInt(root, "slot", getJsonInt(root, "master_slot", 0));
+    port.devicePath = getJsonStringAny(root, {"devicePath", "device_path", "port", "path"});
+    port.baud = getJsonInt(root, "baud", 0);
+    if (root.HasMember("connected")) {
+        port.status = getJsonBool(root, "connected", false) ? "connected" : "disconnected";
+    } else {
+        port.status = getJsonString(root, "status");
+        if (port.status.empty()) {
+            port.status = "connected";
+        }
+    }
+    port.lastRegisterTimeMs = nowMs;
+    port.updateTimeMs = nowMs;
+
+    if (port.gatewayId.empty()) {
+        reason = "missing_field";
+        message = "port_status missing gatewayId";
+        return false;
+    }
+    if (port.portId.empty()) {
+        reason = "missing_field";
+        message = "port_status missing portId";
+        return false;
+    }
+
+    reason.clear();
+    message.clear();
+    return true;
+}
+
 bool publishConfigSnapshotRequest(MqttClient& mqtt,
                                   PcDatabase& database,
                                   const std::string& gatewayId,
@@ -288,12 +351,15 @@ std::string buildRegisterAckJson(const std::string& cmd,
                                  int registeredPointCount)
 {
     std::ostringstream out;
+    const std::string actualStatus = ok && status.empty() ? "success" : status;
+    const std::string actualReason = ok ? "saved" : reason;
+    const std::string actualMessage = ok ? "注册类数据保存成功" : message;
     out << "{"
         << "\"type\":\"ack\","
         << "\"cmd\":\"" << jsonEscape(cmd) << "\","
         << "\"seq\":" << seq << ","
         << "\"ok\":" << (ok ? "true" : "false") << ","
-        << "\"status\":\"" << jsonEscape(status) << "\","
+        << "\"status\":\"" << jsonEscape(actualStatus) << "\","
         << "\"gatewayId\":\"" << jsonEscape(gatewayId) << "\",";
     if (!portId.empty()) {
         out << "\"portId\":\"" << jsonEscape(portId) << "\",";
@@ -301,8 +367,8 @@ std::string buildRegisterAckJson(const std::string& cmd,
     if (configVersion > 0) {
         out << "\"configVersion\":" << configVersion << ",";
     }
-    out << "\"reason\":\"" << jsonEscape(reason) << "\","
-        << "\"message\":\"" << jsonEscape(message) << "\","
+    out << "\"reason\":\"" << jsonEscape(actualReason) << "\","
+        << "\"message\":\"" << jsonEscape(actualMessage) << "\","
         << "\"retryable\":" << (retryable ? "true" : "false");
     if (registeredDeviceCount >= 0) {
         out << ",\"registeredDeviceCount\":" << registeredDeviceCount;
@@ -336,6 +402,9 @@ bool publishRegisterAck(MqttClient& mqtt,
     }
 
     const std::string status = ok ? "success" : "failed";
+    const std::string actualReason = ok ? "saved" : reason;
+    const std::string actualMessage = ok ? "注册类数据保存成功" : message;
+    const bool actualRetryable = ok ? false : retryable;
     const std::string topic = portId.empty()
         ? defaultCmdTopic(gatewayId)
         : makePortCommandTopic(gatewayId, portId);
@@ -346,9 +415,9 @@ bool publishRegisterAck(MqttClient& mqtt,
                                                      gatewayId,
                                                      portId,
                                                      configVersion,
-                                                     reason,
-                                                     message,
-                                                     retryable,
+                                                     actualReason,
+                                                     actualMessage,
+                                                     actualRetryable,
                                                      registeredDeviceCount,
                                                      registeredPointCount);
     const bool publishOk = mqtt.publish(topic, payload);
@@ -357,7 +426,7 @@ bool publishRegisterAck(MqttClient& mqtt,
               << " topic=" << topic
               << " ok=" << (ok ? "true" : "false")
               << " publish=" << (publishOk ? "ok" : "failed")
-              << " reason=" << reason
+              << " reason=" << actualReason
               << std::endl;
     return publishOk;
 }
@@ -738,20 +807,56 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     }
 
     if (messageType == "gateway_register") {
+        rapidjson::Document root;
+        root.Parse(payload.c_str());
+        const std::int64_t seq = root.HasParseError() || !root.IsObject()
+            ? 0
+            : getJsonInt64Any(root, {"seq", "sequence"}, 0);
+        const std::int64_t configVersion = root.HasParseError() || !root.IsObject()
+            ? 0
+            : getJsonInt64Any(root, {"configVersion", "config_version"}, 0);
+        const std::string fallbackGatewayId = root.HasParseError() || !root.IsObject()
+            ? extractJsonStringValue(payload, "gatewayId")
+            : extractGatewayIdCompat(root);
         GatewayStatus gateway;
         GatewayRegistry registry;
         std::vector<GatewayPort> ports;
         if (!parseGatewayRegisterDetails(payload, gateway, registry, ports)) {
             std::cout << "[MQTT RX] gateway_register parse failed" << std::endl;
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               seq,
+                               false,
+                               fallbackGatewayId,
+                               std::string(),
+                               configVersion,
+                               fallbackGatewayId.empty() ? "missing_field" : "parse_error",
+                               fallbackGatewayId.empty() ? "gateway_register missing gatewayId" : "gateway_register parse failed",
+                               false);
             return;
         }
 
-        bool ok = m_database.isOpen() &&
-            m_database.upsertGatewayRegistry(registry) &&
-            m_database.upsertGatewayStatus(gateway);
+        bool ok = false;
+        std::string reason;
+        std::string ackMessage;
+        if (!m_database.isOpen()) {
+            reason = "db_error";
+            ackMessage = "database is not open";
+        } else {
+            ok = m_database.upsertGatewayRegistry(registry) &&
+                m_database.upsertGatewayStatus(gateway);
+            if (!ok) {
+                reason = "db_error";
+                ackMessage = "gateway_register database save failed";
+            }
+        }
         if (ok) {
             for (const GatewayPort& port : ports) {
                 ok = m_database.upsertGatewayPort(port) && ok;
+            }
+            if (!ok) {
+                reason = "db_error";
+                ackMessage = "gateway_register port save failed";
             }
         }
         std::cout << "[GATEWAY REGISTER] gatewayId=" << gateway.gatewayId
@@ -764,17 +869,15 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             sendPortStatusSnapshot(m_ipc, m_database);
             sendDevicesSnapshot(m_ipc, m_database);
         }
-        rapidjson::Document root;
-        root.Parse(payload.c_str());
         publishRegisterAck(m_mqtt,
-                           "gateway_register",
-                           getJsonInt64Any(root, {"seq", "sequence"}, 0),
+                           messageType,
+                           seq,
                            ok,
                            gateway.gatewayId,
                            std::string(),
-                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                           ok ? "" : "gateway_register_save_failed",
-                           ok ? "gateway register saved" : "gateway register save failed",
+                           configVersion,
+                           reason,
+                           ackMessage,
                            true);
         return;
     }
@@ -802,13 +905,51 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     }
 
     if (messageType == "port_register") {
+        rapidjson::Document root;
+        root.Parse(payload.c_str());
+        const std::int64_t seq = root.HasParseError() || !root.IsObject()
+            ? 0
+            : getJsonInt64Any(root, {"seq", "sequence"}, 0);
+        const std::int64_t configVersion = root.HasParseError() || !root.IsObject()
+            ? 0
+            : getJsonInt64Any(root, {"configVersion", "config_version"}, 0);
+        const std::string fallbackGatewayId = root.HasParseError() || !root.IsObject()
+            ? extractJsonStringValue(payload, "gatewayId")
+            : extractGatewayIdCompat(root);
+        const std::string fallbackPortId = root.HasParseError() || !root.IsObject()
+            ? extractJsonStringValue(payload, "portId")
+            : extractPortIdCompat(root);
         GatewayPort port;
         if (!parsePortRegister(payload, port)) {
             std::cout << "[MQTT RX] port_register parse failed" << std::endl;
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               seq,
+                               false,
+                               fallbackGatewayId,
+                               fallbackPortId,
+                               configVersion,
+                               fallbackGatewayId.empty() || fallbackPortId.empty() ? "missing_field" : "parse_error",
+                               fallbackGatewayId.empty()
+                                   ? "port_register missing gatewayId"
+                                   : (fallbackPortId.empty() ? "port_register missing portId" : "port_register parse failed"),
+                               false);
             return;
         }
 
-        const bool ok = m_database.isOpen() && m_database.upsertGatewayPort(port);
+        bool ok = false;
+        std::string reason;
+        std::string ackMessage;
+        if (!m_database.isOpen()) {
+            reason = "db_error";
+            ackMessage = "database is not open";
+        } else {
+            ok = m_database.upsertGatewayPort(port);
+            if (!ok) {
+                reason = "db_error";
+                ackMessage = "port_register database save failed";
+            }
+        }
         std::cout << "[MQTT RX] port_register "
                   << (ok ? "ok" : "failed")
                   << ", gateway: " << port.gatewayId
@@ -818,17 +959,15 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         if (ok && m_ipc.hasClient()) {
             sendPortStatusSnapshot(m_ipc, m_database);
         }
-        rapidjson::Document root;
-        root.Parse(payload.c_str());
         publishRegisterAck(m_mqtt,
-                           "port_register",
-                           getJsonInt64Any(root, {"seq", "sequence"}, 0),
+                           messageType,
+                           seq,
                            ok,
                            port.gatewayId,
                            port.portId,
-                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                           ok ? "" : "port_register_save_failed",
-                           ok ? "port register saved" : "port register save failed",
+                           configVersion,
+                           reason,
+                           ackMessage,
                            true);
         return;
     }
@@ -838,19 +977,56 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         root.Parse(payload.c_str());
         if (root.HasParseError() || !root.IsObject()) {
             std::cout << "[MQTT RX] port_status parse failed" << std::endl;
+            const std::string fallbackGatewayId = extractJsonStringValue(payload, "gatewayId");
+            const std::string fallbackPortId = extractJsonStringValue(payload, "portId");
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               0,
+                               false,
+                               fallbackGatewayId,
+                               fallbackPortId,
+                               0,
+                               fallbackGatewayId.empty() ? "invalid_payload" : "parse_error",
+                               "port_status parse failed",
+                               false);
             return;
         }
-        const std::string gatewayId = getJsonStringAny(root, {"gatewayId", "gateway_id"});
-        const std::string portId = getJsonStringAny(root, {"portId", "port_id"});
+        GatewayPort port;
+        std::string reason;
+        std::string ackMessage;
+        bool ok = parsePortStatusDetails(root, port, reason, ackMessage);
+        if (ok) {
+            if (!m_database.isOpen()) {
+                ok = false;
+                reason = "db_error";
+                ackMessage = "database is not open";
+            } else {
+                ok = m_database.upsertGatewayPort(port);
+                if (!ok) {
+                    reason = "db_error";
+                    ackMessage = "port_status database save failed";
+                }
+            }
+        }
+        std::cout << "[MQTT RX] port_status "
+                  << (ok ? "ok" : "failed")
+                  << ", gateway: " << port.gatewayId
+                  << ", port: " << port.portId
+                  << ", status: " << port.status
+                  << ", reason: " << reason << std::endl;
+
+        if (ok && m_ipc.hasClient()) {
+            sendPortStatusSnapshot(m_ipc, m_database);
+        }
         publishRegisterAck(m_mqtt,
-                           "port_status",
+                           messageType,
                            getJsonInt64Any(root, {"seq", "sequence"}, 0),
-                           !gatewayId.empty(),
-                           gatewayId,
-                           portId,
+                           ok,
+                           port.gatewayId,
+                           port.portId,
                            getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                           gatewayId.empty() ? "gateway_id_missing" : "",
-                           gatewayId.empty() ? "port status missing gatewayId" : "port status received",
+                           reason,
+                           ackMessage,
                            true);
         return;
     }
@@ -1025,18 +1201,26 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         root.Parse(payload.c_str());
         if (root.HasParseError() || !root.IsObject()) {
             std::cout << "[MQTT RX] config_snapshot parse failed" << std::endl;
+            const std::string fallbackGatewayId = extractJsonStringValue(payload, "gatewayId");
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               0,
+                               false,
+                               fallbackGatewayId,
+                               std::string(),
+                               0,
+                               fallbackGatewayId.empty() ? "invalid_payload" : "parse_error",
+                               "config_snapshot parse failed",
+                               false);
             return;
         }
 
         const std::int64_t seq = getJsonInt64(root, "seq", 0);
+        const std::int64_t configVersion = getJsonInt64Any(root, {"configVersion", "config_version"}, 0);
         SyncGatewayPending pending;
         const bool hasPending = m_dataService.findSyncPending(seq, pending);
         if (!hasPending) {
-            const rapidjson::Value& site = root.HasMember("site") && root["site"].IsObject() ? root["site"] : root;
-            std::string gatewayId = getJsonString(root, "gatewayId");
-            if (gatewayId.empty()) {
-                gatewayId = getJsonString(site, "gatewayId");
-            }
+            std::string gatewayId = extractGatewayIdCompat(root);
             if (seq > 0) {
                 std::cout << "[MQTT RX] config_snapshot accepted without pending sync request, seq="
                           << seq << ", gateway=" << gatewayId << std::endl;
@@ -1052,8 +1236,8 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                false,
                                pending.gatewayId,
                                std::string(),
-                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                               "gateway_id_missing",
+                               configVersion,
+                               "missing_field",
                                "config snapshot missing gatewayId",
                                false);
             return;
@@ -1067,8 +1251,8 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                false,
                                pending.gatewayId,
                                std::string(),
-                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                               "pending_devices_empty",
+                               configVersion,
+                               "invalid_payload",
                                "config snapshot pending devices empty",
                                false);
             return;
@@ -1080,6 +1264,12 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         int portCount = 0;
         int deviceCount = 0;
         bool ok = parseConfigSnapshot(payload, pending, ports, devices, pointConfigs, portCount, deviceCount);
+        std::string reason;
+        std::string ackMessage;
+        if (!ok) {
+            reason = "parse_error";
+            ackMessage = "config_snapshot parse failed";
+        }
 
         if (ok && m_database.isOpen()) {
             if (hasPending) {
@@ -1112,8 +1302,14 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             }
         } else if (ok) {
             ok = false;
+            reason = "db_error";
+            ackMessage = "database is not open";
             std::cout << "[MQTT RX] config_snapshot save failed: database not open, seq="
                       << seq << ", gateway=" << pending.gatewayId << std::endl;
+        }
+        if (!ok && reason.empty()) {
+            reason = "db_error";
+            ackMessage = "config_snapshot database save failed";
         }
 
         if (!hasPending) {
@@ -1138,9 +1334,9 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                ok,
                                pending.gatewayId,
                                std::string(),
-                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                               ok ? "" : "config_snapshot_save_failed",
-                               ok ? "config snapshot saved" : "config snapshot save failed",
+                               configVersion,
+                               reason,
+                               ackMessage,
                                true,
                                ok ? deviceCount : -1,
                                ok ? static_cast<int>(pointConfigs.size()) : -1);
@@ -1180,9 +1376,9 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                            ok,
                            pending.gatewayId,
                            std::string(),
-                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
-                           ok ? "" : "config_snapshot_save_failed",
-                           ok ? "config snapshot saved" : "config snapshot save failed",
+                           configVersion,
+                           reason,
+                           ackMessage,
                            true,
                            ok ? deviceCount : -1,
                            ok ? static_cast<int>(pointConfigs.size()) : -1);
