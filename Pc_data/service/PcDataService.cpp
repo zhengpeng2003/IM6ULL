@@ -21,6 +21,11 @@ PcDataService::PcDataService()
 void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
 {
     std::vector<TelemetryPoint> points = ModelConverter::toTelemetryPoints(pack);
+    handleTelemetryPoints(points);
+}
+
+void PcDataService::handleTelemetryPoints(const std::vector<TelemetryPoint>& points)
+{
     const std::int64_t receiveTimeMs = currentTimeMs();
 
     std::lock_guard<std::mutex> lock(m_mutex);

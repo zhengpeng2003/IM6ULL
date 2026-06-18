@@ -758,6 +758,68 @@ bool PcDatabase::deviceExists(const std::string& gatewayId,
     return rc == SQLITE_ROW;
 }
 
+std::string PcDatabase::queryDeviceType(const std::string& gatewayId,
+                                        const std::string& portId,
+                                        int deviceId) const
+{
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return std::string();
+    }
+
+    static const char* sql =
+        "SELECT device_type FROM device WHERE gateway_id=? AND port_id=? AND device_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query device type failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return std::string();
+    }
+
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, deviceId);
+
+    std::string deviceType;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        deviceType = columnText(sqlite3_column_text(stmt, 0));
+    }
+
+    sqlite3_finalize(stmt);
+    return deviceType;
+}
+
+bool PcDatabase::pointConfigExists(const std::string& gatewayId,
+                                   const std::string& portId,
+                                   int deviceId,
+                                   const std::string& pointKey) const
+{
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0 || pointKey.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT 1 FROM point_config "
+        "WHERE gateway_id=? AND port_id=? AND device_id=? AND point_key=? "
+        "LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare point_config exists failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, deviceId);
+    sqlite3_bind_text(stmt, 4, pointKey.c_str(), -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW;
+}
+
 int PcDatabase::deviceCount() const
 {
     if (!m_db) {
@@ -962,11 +1024,27 @@ bool PcDatabase::upsertGatewayConfigSnapshot(const std::string& gatewayId,
 
     bool ok = true;
     if (fullSnapshot) {
-        // Protocol-compatible conservative behavior: full snapshots currently upsert all
-        // provided rows but do not delete rows unless a future payload supplies an
-        // explicit deletion contract. This avoids accidental data loss.
-        std::cout << "Config snapshot fullSnapshot received; using safe upsert-only mode, gateway: "
-                  << gatewayId << std::endl;
+        std::set<std::pair<std::string, int> > snapshotDevices;
+        for (const ConfigSnapshotDevice& snapshotDevice : devices) {
+            const DeviceRecord& device = snapshotDevice.device;
+            if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
+                snapshotDevices.insert(std::make_pair(device.portId, device.deviceId));
+            }
+        }
+
+        const std::vector<DeviceRecord> existingDevices = queryDevices();
+        for (const DeviceRecord& existing : existingDevices) {
+            if (existing.gatewayId != gatewayId || existing.portId.empty() || existing.deviceId <= 0) {
+                continue;
+            }
+            if (snapshotDevices.find(std::make_pair(existing.portId, existing.deviceId)) != snapshotDevices.end()) {
+                continue;
+            }
+            ok = deleteDeviceData(existing.gatewayId, existing.portId, existing.deviceId) && ok;
+            std::cout << "Config snapshot removed missing device, gateway: " << existing.gatewayId
+                      << ", port: " << existing.portId
+                      << ", device: " << existing.deviceId << std::endl;
+        }
     }
 
     for (const GatewayPort& port : ports) {

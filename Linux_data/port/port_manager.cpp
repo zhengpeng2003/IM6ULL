@@ -1731,6 +1731,8 @@ int PortManager::exportConfigSnapshotJson(uint32_t seq,
 
     json_object_object_add(root, "type", json_object_new_string("config_snapshot"));
     json_object_object_add(root, "seq", json_object_new_int64(seq));
+    json_object_object_add(root, "fullSnapshot", json_object_new_boolean(!filter.has_devices));
+    json_object_object_add(root, "full_snapshot", json_object_new_boolean(!filter.has_devices));
     addString(root, "factoryId", DEFAULT_FACTORY_ID);
     addString(root, "factoryName", DEFAULT_FACTORY_NAME);
     addString(root, "areaId", DEFAULT_AREA_ID);

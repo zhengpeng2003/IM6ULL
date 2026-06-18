@@ -118,6 +118,7 @@ struct DeviceData
 
     bool valid = false;            // 本轮是否读取成功
     std::string errorMessage;      // 如果 valid=false，可以记录 timeout / crc_error 等
+    std::vector<std::string> pointKeys; // telemetry_pack points[] 中携带的原始 pointKey
 
     TemperatureHumidityData th;
     ElectricMeterData meter;

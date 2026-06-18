@@ -266,6 +266,9 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
                     continue;
                 }
                 const std::string pointKey = getString(point, "pointKey");
+                if (!pointKey.empty()) {
+                    device.pointKeys.push_back(pointKey);
+                }
                 if (pointKey == "temperature") {
                     device.th.temperature = static_cast<float>(getDouble(point, "numberValue", getDouble(point, "value", 0.0)));
                     hasPointTemperature = true;

@@ -77,6 +77,7 @@ public:
 
     // 接收一包遥测数据，转换成测点，并更新内存快照
     void handleTelemetryPack(const TelemetryPack& pack);
+    void handleTelemetryPoints(const std::vector<TelemetryPoint>& points);
 
     // 获取当前所有最新测点
     std::vector<TelemetryPoint> getLatestPoints() const;

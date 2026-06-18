@@ -157,6 +157,13 @@ public:
     bool deviceExists(const std::string& gatewayId,
                       const std::string& portId,
                       int deviceId) const;
+    std::string queryDeviceType(const std::string& gatewayId,
+                                const std::string& portId,
+                                int deviceId) const;
+    bool pointConfigExists(const std::string& gatewayId,
+                           const std::string& portId,
+                           int deviceId,
+                           const std::string& pointKey) const;
     int deviceCount() const;
     bool deleteMasterData(const std::string& gatewayId,
                           const std::string& portId);

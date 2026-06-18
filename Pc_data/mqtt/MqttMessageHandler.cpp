@@ -6,6 +6,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <rapidjson/document.h>
@@ -121,6 +122,80 @@ DeviceRecord deviceRecordFromTelemetry(const TelemetryPack& pack, const DeviceDa
     device.createTimeMs = nowMs;
     device.updateTimeMs = nowMs;
     return device;
+}
+
+bool isRelayPointKey(const std::string& pointKey)
+{
+    if (pointKey.rfind("relay_", 0) != 0) {
+        return false;
+    }
+
+    try {
+        const int channel = std::stoi(pointKey.substr(6));
+        return channel >= 1 && channel <= 16;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool isDefaultTelemetryPointKey(const std::string& deviceType, const std::string& pointKey)
+{
+    if (deviceType == "sensor_th") {
+        return pointKey == "temperature" || pointKey == "humidity";
+    }
+
+    if (deviceType == "relay") {
+        return pointKey == "state" || pointKey == "ch1" || isRelayPointKey(pointKey);
+    }
+
+    if (deviceType == "electric_meter" || deviceType == "meter") {
+        return pointKey == "voltage" ||
+               pointKey == "current" ||
+               pointKey == "power" ||
+               pointKey == "energy";
+    }
+
+    return false;
+}
+
+bool deviceTypesMatch(const std::string& registeredType, const std::string& telemetryType)
+{
+    if (registeredType.empty() || telemetryType.empty() || telemetryType == "unknown") {
+        return true;
+    }
+
+    if (registeredType == telemetryType) {
+        return true;
+    }
+
+    return (registeredType == "meter" && telemetryType == "electric_meter") ||
+           (registeredType == "electric_meter" && telemetryType == "meter");
+}
+
+std::string normalizeTelemetryPointKey(const std::string& pointKey)
+{
+    if (pointKey.rfind("relay.ch", 0) == 0) {
+        return "relay_" + pointKey.substr(8);
+    }
+
+    if (pointKey.rfind("relay_", 0) == 0) {
+        return pointKey;
+    }
+
+    if (pointKey.rfind("ch", 0) == 0) {
+        return "relay_" + pointKey.substr(2);
+    }
+
+    if (pointKey == "relay" || pointKey == "state") {
+        return "relay_1";
+    }
+
+    return pointKey;
+}
+
+std::string telemetryDeviceKey(const std::string& portId, int deviceId)
+{
+    return portId + "/" + std::to_string(deviceId);
 }
 
 std::string buildSnapshotPointId(const DeviceRecord& device,
@@ -1139,25 +1214,12 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             m_database.isOpen()) {
             DeviceRecord device = deviceRecordFromAddDeviceAck(root);
             if (device.deviceId > 0 && !device.deviceType.empty()) {
-                const bool saveOk = m_database.upsertDevice(device);
-                if (saveOk) {
-                    m_dataService.forgetRemovedDevice(device.gatewayId,
-                                                      device.portId,
-                                                      device.deviceId);
-                    if (m_ipc.hasClient()) {
-                        sendDevicesSnapshot(m_ipc, m_database);
-                        sendLatestPoints(m_ipc, m_dataService, m_database);
-                        sendPortStatusSnapshot(m_ipc, m_database);
-                    }
-                } else {
-                    logStatus = "failed";
-                    reason = "device_db_save_failed";
-                    if (message.empty()) {
-                        message = "gateway added device, but Pc_data database save failed";
-                    }
-                }
-                std::cout << "[MQTT RX] add_device ack db sync without command log "
-                          << (saveOk ? "ok" : "failed")
+                publishConfigSnapshotRequest(m_mqtt,
+                                             m_database,
+                                             device.gatewayId,
+                                             device.portId,
+                                             "add_device_ack_without_command_log");
+                std::cout << "[MQTT RX] add_device ack without command log, wait config_snapshot"
                           << ", gateway: " << device.gatewayId
                           << ", port: " << device.portId
                           << ", device: " << device.deviceId
@@ -1264,6 +1326,12 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         int portCount = 0;
         int deviceCount = 0;
         bool ok = parseConfigSnapshot(payload, pending, ports, devices, pointConfigs, portCount, deviceCount);
+        const bool fullSnapshot = !hasPending &&
+            getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false));
+        std::vector<DeviceRecord> devicesBeforeFullSnapshot;
+        if (ok && fullSnapshot && m_database.isOpen()) {
+            devicesBeforeFullSnapshot = m_database.queryDevices();
+        }
         std::string reason;
         std::string ackMessage;
         if (!ok) {
@@ -1286,7 +1354,6 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                                             devices,
                                                             pointConfigs);
             } else {
-                const bool fullSnapshot = getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false));
                 ok = m_database.upsertGatewayConfigSnapshot(pending.gatewayId,
                                                             ports,
                                                             devices,
@@ -1294,6 +1361,28 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                                                             fullSnapshot);
             }
             if (ok) {
+                if (fullSnapshot) {
+                    std::set<std::pair<std::string, int> > snapshotDevices;
+                    for (const ConfigSnapshotDevice& snapshotDevice : devices) {
+                        const DeviceRecord& device = snapshotDevice.device;
+                        if (device.gatewayId == pending.gatewayId &&
+                            !device.portId.empty() &&
+                            device.deviceId > 0) {
+                            snapshotDevices.insert(std::make_pair(device.portId, device.deviceId));
+                        }
+                    }
+                    for (const DeviceRecord& oldDevice : devicesBeforeFullSnapshot) {
+                        if (oldDevice.gatewayId != pending.gatewayId ||
+                            oldDevice.portId.empty() ||
+                            oldDevice.deviceId <= 0 ||
+                            snapshotDevices.find(std::make_pair(oldDevice.portId, oldDevice.deviceId)) != snapshotDevices.end()) {
+                            continue;
+                        }
+                        m_dataService.removeDeviceData(oldDevice.gatewayId,
+                                                       oldDevice.portId,
+                                                       oldDevice.deviceId);
+                    }
+                }
                 for (const ConfigSnapshotDevice& snapshotDevice : devices) {
                     m_dataService.forgetRemovedDevice(snapshotDevice.device.gatewayId,
                                                       snapshotDevice.device.portId,
@@ -1398,13 +1487,18 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         bool ok = reason.empty();
         if (ok) {
             if (m_database.isOpen()) {
-                ok = m_database.upsertDevice(device);
-                if (!ok) {
-                    reason = "device_db_save_failed";
+                if (m_dataService.isRemovedDevice(device.gatewayId, device.portId, device.deviceId)) {
+                    ok = false;
+                    reason = "device_removed_wait_config_snapshot";
+                    std::cout << "[MQTT RX] device_register rejected for removed device, wait config_snapshot, gateway: "
+                              << device.gatewayId
+                              << ", port: " << device.portId
+                              << ", device: " << device.deviceId << std::endl;
                 } else {
-                    m_dataService.forgetRemovedDevice(device.gatewayId,
-                                                      device.portId,
-                                                      device.deviceId);
+                    ok = m_database.upsertDevice(device);
+                    if (!ok) {
+                        reason = "device_db_save_failed";
+                    }
                 }
             } else {
                 ok = false;
@@ -1451,7 +1545,49 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                   << std::endl;
 
         if (m_database.isOpen()) {
-            m_database.savePointConfigs(configs);
+            std::vector<PointConfig> acceptedConfigs;
+            acceptedConfigs.reserve(configs.size());
+            for (const PointConfig& config : configs) {
+                if (!m_database.deviceExists(config.gatewayId, config.portId, config.deviceId)) {
+                    std::cout << "[MQTT RX] threshold_config ignored for unknown device, gateway: "
+                              << config.gatewayId
+                              << ", port: " << config.portId
+                              << ", device: " << config.deviceId
+                              << ", pointKey: " << config.pointKey << std::endl;
+                    continue;
+                }
+                const std::string deviceType = m_database.queryDeviceType(config.gatewayId,
+                                                                          config.portId,
+                                                                          config.deviceId);
+                PointConfig acceptedConfig = config;
+                acceptedConfig.pointKey = normalizeTelemetryPointKey(config.pointKey);
+                if (acceptedConfig.pointKey != config.pointKey && !acceptedConfig.pointId.empty()) {
+                    acceptedConfig.pointId = ModelConverter::buildPointId(acceptedConfig.factoryId,
+                                                                          acceptedConfig.areaId,
+                                                                          acceptedConfig.gatewayId,
+                                                                          acceptedConfig.portId,
+                                                                          acceptedConfig.deviceId,
+                                                                          acceptedConfig.pointKey);
+                }
+                if (!m_database.pointConfigExists(config.gatewayId,
+                                                  config.portId,
+                                                  config.deviceId,
+                                                  acceptedConfig.pointKey) &&
+                    !isDefaultTelemetryPointKey(deviceType.empty() ? config.deviceType : deviceType,
+                                                acceptedConfig.pointKey)) {
+                    std::cout << "[MQTT RX] threshold_config ignored for unknown point, gateway: "
+                              << config.gatewayId
+                              << ", port: " << config.portId
+                              << ", device: " << config.deviceId
+                              << ", pointKey: " << config.pointKey << std::endl;
+                    continue;
+                }
+                acceptedConfigs.push_back(acceptedConfig);
+            }
+            m_database.savePointConfigs(acceptedConfigs);
+            std::cout << "[MQTT RX] threshold_config accepted config count: "
+                      << acceptedConfigs.size()
+                      << std::endl;
         } else {
             std::cout << "[MQTT RX] database is not open, skip point_config storage" << std::endl;
         }
@@ -1479,53 +1615,124 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << pack.devices.size()
               << std::endl;
 
-    std::set<std::pair<std::string, int> > unknownTelemetryDevices;
-    if (m_database.isOpen()) {
-        for (const DeviceData& device : pack.devices) {
-            if (!pack.site.gatewayId.empty() && !pack.site.portId.empty() && device.deviceId > 0 &&
-                m_dataService.isRemovedDevice(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
-                std::cout << "[MQTT RX] deleted device telemetry ignored, gateway: "
-                          << pack.site.gatewayId
-                          << ", port: " << pack.site.portId
-                          << ", device: " << device.deviceId << std::endl;
-                unknownTelemetryDevices.insert(std::make_pair(pack.site.portId, device.deviceId));
-                continue;
-            }
-            if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0 ||
-                !m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
-                std::cout << "[MQTT RX] unknown telemetry ignored, gateway: "
-                          << pack.site.gatewayId
-                          << ", port: " << pack.site.portId
-                          << ", device: " << device.deviceId << std::endl;
-                unknownTelemetryDevices.insert(std::make_pair(pack.site.portId, device.deviceId));
-                const std::string requestKey = pack.site.gatewayId.empty()
-                    ? std::string("unknown_gateway")
-                    : pack.site.gatewayId;
-                const std::int64_t nowMs = currentTimeMs();
-                const auto lastIt = m_lastConfigRequestMs.find(requestKey);
-                if (lastIt == m_lastConfigRequestMs.end() ||
-                    nowMs - lastIt->second >= kUnknownTelemetryConfigRequestIntervalMs) {
-                    if (publishConfigSnapshotRequest(m_mqtt, m_database, pack.site.gatewayId, pack.site.portId, "unknown_device_telemetry")) {
-                        m_lastConfigRequestMs[requestKey] = nowMs;
-                    }
-                } else {
-                    std::cout << "[MQTT RX] unknown telemetry config request throttled, gateway: "
-                              << pack.site.gatewayId
-                              << ", remain_ms: "
-                              << (kUnknownTelemetryConfigRequestIntervalMs - (nowMs - lastIt->second))
-                              << std::endl;
-                }
-            }
-        }
+    if (!m_database.isOpen()) {
+        std::cout << "[MQTT RX] database is not open, telemetry_pack ignored; skip storage, snapshot update and Pc_ui publish"
+                  << std::endl;
+        return;
     }
 
-    std::vector<TelemetryPoint> receivedPoints =
-        m_dataService.filterRemovedPoints(ModelConverter::toTelemetryPoints(pack));
+    TelemetryPack filteredPack = pack;
+    filteredPack.devices.clear();
+    std::unordered_map<std::string, std::string> registeredDeviceTypes;
+    std::unordered_map<std::string, std::set<std::string> > telemetryPointKeys;
+
+    for (const DeviceData& device : pack.devices) {
+        if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0) {
+            std::cout << "[MQTT RX] unknown telemetry ignored, gateway: "
+                      << pack.site.gatewayId
+                      << ", port: " << pack.site.portId
+                      << ", device: " << device.deviceId
+                      << ", reason=missing_identity" << std::endl;
+            continue;
+        }
+
+        if (m_dataService.isRemovedDevice(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
+            std::cout << "[MQTT RX] deleted device telemetry ignored, gateway: "
+                      << pack.site.gatewayId
+                      << ", port: " << pack.site.portId
+                      << ", device: " << device.deviceId << std::endl;
+            continue;
+        }
+
+        if (!m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
+            std::cout << "[MQTT RX] unknown telemetry ignored, gateway: "
+                      << pack.site.gatewayId
+                      << ", port: " << pack.site.portId
+                      << ", device: " << device.deviceId << std::endl;
+
+            const std::string requestKey = pack.site.gatewayId + "/" + pack.site.portId;
+            const std::int64_t nowMs = currentTimeMs();
+            const auto lastIt = m_lastConfigRequestMs.find(requestKey);
+            if (lastIt == m_lastConfigRequestMs.end() ||
+                nowMs - lastIt->second >= kUnknownTelemetryConfigRequestIntervalMs) {
+                if (publishConfigSnapshotRequest(m_mqtt, m_database, pack.site.gatewayId, pack.site.portId, "unknown_device_telemetry")) {
+                    m_lastConfigRequestMs[requestKey] = nowMs;
+                }
+            } else {
+                std::cout << "[MQTT RX] unknown telemetry config request throttled, gateway: "
+                          << pack.site.gatewayId
+                          << ", port: " << pack.site.portId
+                          << ", remain_ms: "
+                          << (kUnknownTelemetryConfigRequestIntervalMs - (nowMs - lastIt->second))
+                          << std::endl;
+            }
+            continue;
+        }
+
+        const std::string registeredType = m_database.queryDeviceType(pack.site.gatewayId,
+                                                                      pack.site.portId,
+                                                                      device.deviceId);
+        const std::string telemetryType = deviceTypeToString(device.type);
+        if (!deviceTypesMatch(registeredType, telemetryType)) {
+            std::cout << "[MQTT RX] telemetry device type mismatch ignored, gateway: "
+                      << pack.site.gatewayId
+                      << ", port: " << pack.site.portId
+                      << ", device: " << device.deviceId
+                      << ", registeredType: " << registeredType
+                      << ", telemetryType: " << telemetryType << std::endl;
+            continue;
+        }
+
+        const std::string deviceKey = telemetryDeviceKey(pack.site.portId, device.deviceId);
+        registeredDeviceTypes[deviceKey] = registeredType.empty() ? telemetryType : registeredType;
+        for (const std::string& pointKey : device.pointKeys) {
+            const std::string normalizedPointKey = normalizeTelemetryPointKey(pointKey);
+            telemetryPointKeys[deviceKey].insert(normalizedPointKey);
+            if (!m_database.pointConfigExists(pack.site.gatewayId,
+                                              pack.site.portId,
+                                              device.deviceId,
+                                              normalizedPointKey) &&
+                !isDefaultTelemetryPointKey(registeredDeviceTypes[deviceKey], normalizedPointKey)) {
+                std::cout << "[MQTT RX] unknown telemetry point ignored, gateway: "
+                          << pack.site.gatewayId
+                          << ", port: " << pack.site.portId
+                          << ", device: " << device.deviceId
+                          << ", pointKey: " << pointKey << std::endl;
+            }
+        }
+        filteredPack.devices.push_back(device);
+    }
+
+    std::vector<TelemetryPoint> receivedPoints = ModelConverter::toTelemetryPoints(filteredPack);
     receivedPoints.erase(std::remove_if(receivedPoints.begin(),
                                         receivedPoints.end(),
-                                        [&unknownTelemetryDevices](const TelemetryPoint& point) {
-                                            return unknownTelemetryDevices.find(std::make_pair(point.portId, point.deviceId)) !=
-                                                   unknownTelemetryDevices.end();
+                                        [this, &registeredDeviceTypes, &telemetryPointKeys](const TelemetryPoint& point) {
+                                            const std::string deviceKey = telemetryDeviceKey(point.portId, point.deviceId);
+                                            const auto typeIt = registeredDeviceTypes.find(deviceKey);
+                                            const std::string deviceType = typeIt == registeredDeviceTypes.end()
+                                                ? point.deviceType
+                                                : typeIt->second;
+                                            const auto rawKeysIt = telemetryPointKeys.find(deviceKey);
+                                            if (rawKeysIt != telemetryPointKeys.end() &&
+                                                !rawKeysIt->second.empty() &&
+                                                rawKeysIt->second.find(point.pointKey) == rawKeysIt->second.end()) {
+                                                return true;
+                                            }
+                                            if (m_database.pointConfigExists(point.gatewayId,
+                                                                            point.portId,
+                                                                            point.deviceId,
+                                                                            point.pointKey)) {
+                                                return false;
+                                            }
+                                            if (isDefaultTelemetryPointKey(deviceType, point.pointKey)) {
+                                                return false;
+                                            }
+                                            std::cout << "[MQTT RX] unknown telemetry point ignored, gateway: "
+                                                      << point.gatewayId
+                                                      << ", port: " << point.portId
+                                                      << ", device: " << point.deviceId
+                                                      << ", pointKey: " << point.pointKey << std::endl;
+                                            return true;
                                         }),
                          receivedPoints.end());
 
@@ -1538,8 +1745,8 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << " points=" << receivedPoints.size()
               << " seq=" << pack.sequence << std::endl;
 
-    // Update in-memory snapshot with non-deleted telemetry in PC receive order.
-    m_dataService.handleTelemetryPack(pack);
+    // Update in-memory snapshot with the same filtered points that are allowed into storage.
+    m_dataService.handleTelemetryPoints(receivedPoints);
 
     std::vector<TelemetryPoint> points = m_dataService.getLatestPoints();
 
@@ -1547,11 +1754,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << points.size()
               << std::endl;
 
-    if (m_database.isOpen()) {
-        m_database.saveTelemetryPoints(receivedPoints);
-    } else {
-        std::cout << "[MQTT RX] database is not open, skip storage" << std::endl;
-    }
+    m_database.saveTelemetryPoints(receivedPoints);
 
     if (m_ipc.hasClient()) {
         std::string json = buildLatestPointsJson(points);
