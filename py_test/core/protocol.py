@@ -54,7 +54,6 @@ def gateway_register() -> Dict[str, Any]:
         "status": "online",
         "upTopic": config.UP_TOPIC,
         "cmdTopic": config.CMD_TOPIC,
-        "broadcastTopic": config.BROADCAST_DOWN_TOPIC,
 
         "ports": [
             {

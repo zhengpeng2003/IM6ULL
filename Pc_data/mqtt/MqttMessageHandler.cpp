@@ -241,15 +241,22 @@ std::string defaultCmdTopic(const std::string& gatewayId)
     return gatewayId.empty() ? std::string() : "cmd/" + gatewayId;
 }
 
+std::string makePortCommandTopic(const std::string& gatewayId, const std::string& portId)
+{
+    return gatewayId.empty() || portId.empty() ? std::string() : "cmd/" + gatewayId + "/" + portId;
+}
+
 bool publishConfigSnapshotRequest(MqttClient& mqtt,
                                   PcDatabase& database,
                                   const std::string& gatewayId,
+                                  const std::string& portId,
                                   const std::string& reason)
 {
-    if (gatewayId.empty()) {
+    (void)database;
+    if (gatewayId.empty() || portId.empty()) {
         return false;
     }
-    const std::string topic = database.isOpen() ? database.queryGatewayCmdTopic(gatewayId) : std::string();
+    const std::string topic = makePortCommandTopic(gatewayId, portId);
     if (topic.empty()) {
         std::cout << "[MQTT TX CMD] gatewayId=" << gatewayId
                   << " topic=<unregistered> cmd=request_config_snapshot seq=0 failed=gateway_not_registered"
@@ -308,7 +315,6 @@ bool parseGatewayRegisterDetails(const std::string& payload,
     registry.cmdTopic = getJsonString(root, "cmdTopic");
     if (registry.cmdTopic.empty()) registry.cmdTopic = defaultCmdTopic(gateway.gatewayId);
     registry.broadcastTopic = getJsonString(root, "broadcastTopic");
-    if (registry.broadcastTopic.empty()) registry.broadcastTopic = "gateway/broadcast/down";
     registry.lastRegisterTimeMs = nowMs;
     registry.lastHeartbeatTimeMs = nowMs;
     registry.updateTimeMs = nowMs;
@@ -854,7 +860,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             m_dataService.forgetRemovedDevice(target.gatewayId,
                                               target.portId,
                                               target.deviceId);
-            publishConfigSnapshotRequest(m_mqtt, m_database, target.gatewayId, "add_device_success");
+            publishConfigSnapshotRequest(m_mqtt, m_database, target.gatewayId, target.portId, "add_device_success");
             if (m_database.isOpen() && m_ipc.hasClient()) {
                 sendDevicesSnapshot(m_ipc, m_database);
                 sendLatestPoints(m_ipc, m_dataService, m_database);
@@ -1132,7 +1138,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                 const auto lastIt = m_lastConfigRequestMs.find(requestKey);
                 if (lastIt == m_lastConfigRequestMs.end() ||
                     nowMs - lastIt->second >= kUnknownTelemetryConfigRequestIntervalMs) {
-                    if (publishConfigSnapshotRequest(m_mqtt, m_database, pack.site.gatewayId, "unknown_device_telemetry")) {
+                    if (publishConfigSnapshotRequest(m_mqtt, m_database, pack.site.gatewayId, pack.site.portId, "unknown_device_telemetry")) {
                         m_lastConfigRequestMs[requestKey] = nowMs;
                     }
                 } else {

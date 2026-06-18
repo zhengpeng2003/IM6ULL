@@ -513,7 +513,9 @@ struct PortManager::Impl {
             meta.device_id = device.sensor->slaveId();
             meta.priority = 0;
             meta.timestamp_ms = currentTimeMs();
-            (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+            char topic[128];
+            if (mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0)
+                (void)offline_publish_or_cache(topic, payload, &meta);
         }
 
         json_object_put(root);
@@ -607,8 +609,18 @@ struct PortManager::Impl {
             return;
 
         const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
-        if (payload)
+        if (payload) {
             (void)ipc_server_send(payload);
+            offline_publish_meta_t meta = {};
+            meta.message_type = "port_status";
+            meta.gateway_id = DEFAULT_GATEWAY_ID;
+            meta.port_id = portIdForSlot(slot);
+            meta.priority = connected ? 1 : 2;
+            meta.timestamp_ms = currentTimeMs();
+            char topic[128];
+            if (mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0)
+                (void)offline_publish_or_cache(topic, payload, &meta);
+        }
         json_object_put(root);
     }
 
@@ -815,7 +827,9 @@ struct PortManager::Impl {
             meta.priority = 3;
             meta.has_alarm = 1;
             meta.timestamp_ms = currentTimeMs();
-            (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+            char topic[128];
+            if (mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0)
+                (void)offline_publish_or_cache(topic, payload, &meta);
         }
         json_object_put(root);
     }

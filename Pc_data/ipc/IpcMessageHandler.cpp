@@ -92,7 +92,9 @@ bool isRemoteCommandAllowed(const std::string& commandType)
 {
     static const std::set<std::string> allowed = {
         "add_device", "remove_device", "set_relay", "set_device_threshold",
-        "get_config", "request_config_snapshot"
+        "get_config", "request_config_snapshot", "delete_gateway",
+        "disconnect_gateway", "request_gateway_status", "delete_port",
+        "disconnect_port", "request_port_status", "request_latest_status"
     };
     return allowed.find(commandType) != allowed.end();
 }
@@ -192,12 +194,30 @@ std::string buildGetConfigCommandJson(const SyncGatewayPending& pending)
     return oss.str();
 }
 
-std::string queryRegisteredCmdTopic(PcDatabase& database, const std::string& gatewayId)
+std::string makeGatewayCommandTopic(const std::string& gatewayId)
 {
-    if (!database.isOpen() || gatewayId.empty()) {
-        return std::string();
-    }
-    return database.queryGatewayCmdTopic(gatewayId);
+    return gatewayId.empty() ? std::string() : "cmd/" + gatewayId;
+}
+
+std::string makePortCommandTopic(const std::string& gatewayId, const std::string& portId)
+{
+    return gatewayId.empty() || portId.empty() ? std::string() : "cmd/" + gatewayId + "/" + portId;
+}
+
+bool isGatewayCommand(const std::string& commandType)
+{
+    return commandType == "delete_gateway" ||
+           commandType == "disconnect_gateway" ||
+           commandType == "request_gateway_status";
+}
+
+std::string commandTopicFor(const std::string& commandType,
+                            const std::string& gatewayId,
+                            const std::string& portId)
+{
+    return isGatewayCommand(commandType)
+        ? makeGatewayCommandTopic(gatewayId)
+        : makePortCommandTopic(gatewayId, portId);
 }
 
 void failGatewayNotRegistered(IpcServer& ipc,
@@ -262,7 +282,8 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         for (const SyncGatewayPending& pending : pendingList) {
-            const std::string topic = queryRegisteredCmdTopic(m_database, pending.gatewayId);
+            const std::string portId = pending.devices.empty() ? std::string() : pending.devices.front().portId;
+            const std::string topic = makePortCommandTopic(pending.gatewayId, portId);
             if (topic.empty()) {
                 SyncConfigResult result;
                 if (m_dataService.completeSyncConfig(pending.seq,
@@ -538,8 +559,9 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::cout << "command rejected, unsupported command: " << commandType << std::endl;
             return;
         }
-        if (seqForAck <= 0 || commandIdForAck.empty() || gatewayId.empty() || portId.empty()) {
-            m_ipc.sendMessage(buildCommandAckJson(commandIdForAck, false, "invalid_request", seqForAck, commandType, "done", "gatewayId, portId, seq and cmd_id are required"));
+        if (seqForAck <= 0 || commandIdForAck.empty() || gatewayId.empty() ||
+            (!isGatewayCommand(commandType) && portId.empty())) {
+            m_ipc.sendMessage(buildCommandAckJson(commandIdForAck, false, "invalid_request", seqForAck, commandType, "done", "gatewayId, seq, cmd_id and portId for port commands are required"));
             std::cout << "command rejected, invalid target, command: " << commandType << std::endl;
             return;
         }
@@ -557,7 +579,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                 return;
             }
 
-            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            const std::string topic = makePortCommandTopic(gatewayId, portId);
             if (topic.empty()) {
                 failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
                                          commandType, gatewayId, portId, slaveId);
@@ -616,7 +638,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                 std::cout << "set_device_threshold rejected, invalid request" << std::endl;
                 return;
             }
-            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            const std::string topic = makePortCommandTopic(gatewayId, portId);
             if (topic.empty()) {
                 failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
                                          commandType, gatewayId, portId, slaveId);
@@ -676,7 +698,7 @@ void IpcMessageHandler::handle(const std::string& msg)
                 std::cout << commandType << " rejected, missing device id" << std::endl;
                 return;
             }
-            const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+            const std::string topic = makePortCommandTopic(gatewayId, portId);
             if (topic.empty()) {
                 failGatewayNotRegistered(m_ipc, m_database, commandId, uiSeq, boardSeq,
                                          commandType, gatewayId, portId, deviceId);
@@ -771,7 +793,7 @@ void IpcMessageHandler::handle(const std::string& msg)
             std::cout << "command rejected, missing gateway, cmd_id: " << cmdId << std::endl;
             return;
         }
-        const std::string topic = queryRegisteredCmdTopic(m_database, gatewayId);
+        const std::string topic = commandTopicFor(commandType, gatewayId, portId);
         if (topic.empty()) {
             const std::int64_t boardSeq = linuxDataSeqFrom(seq);
             failGatewayNotRegistered(m_ipc, m_database, commandIdForAck, seq, boardSeq,

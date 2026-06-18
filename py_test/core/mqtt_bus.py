@@ -41,8 +41,9 @@ class MqttBus:
         print(f"broker              = {config.MQTT_HOST}:{config.MQTT_PORT}")
         print(f"register_topic      = {config.REGISTER_TOPIC}")
         print(f"publish up_topic    = {config.UP_TOPIC}")
+        print(f"publish port_up     = {config.PORT_UP_TOPIC}")
         print(f"subscribe cmd_topic = {config.CMD_TOPIC}")
-        print(f"subscribe broadcast = {config.BROADCAST_DOWN_TOPIC}")
+        print(f"subscribe cmd_wild  = {config.CMD_WILDCARD_TOPIC}")
         print("=====================================")
 
         self.client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
@@ -56,10 +57,10 @@ class MqttBus:
         print("[MQTT][CONNECTED]")
 
         client.subscribe(config.CMD_TOPIC, qos=0)
-        client.subscribe(config.BROADCAST_DOWN_TOPIC, qos=0)
+        client.subscribe(config.CMD_WILDCARD_TOPIC, qos=0)
 
         print(f"[SUB] {config.CMD_TOPIC}")
-        print(f"[SUB] {config.BROADCAST_DOWN_TOPIC}")
+        print(f"[SUB] {config.CMD_WILDCARD_TOPIC}")
 
         if self.on_connected_callback:
             self.on_connected_callback()
@@ -85,7 +86,12 @@ class MqttBus:
     def publish(self, payload: Dict[str, Any]):
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         msg_type = payload.get("type") or ""
-        topic = config.REGISTER_TOPIC if msg_type == "gateway_register" else config.UP_TOPIC
+        if msg_type in {"gateway_register", "port_register", "port_status", "device_config_snapshot", "config_snapshot"}:
+            topic = config.REGISTER_TOPIC
+        elif msg_type in {"gateway_heartbeat", "gateway_status"}:
+            topic = config.UP_TOPIC
+        else:
+            topic = config.PORT_UP_TOPIC
 
         print("\n[MQTT][PUB]")
         print(f"topic = {topic}")

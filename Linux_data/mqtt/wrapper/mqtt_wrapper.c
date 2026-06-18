@@ -25,6 +25,8 @@
 
 const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "gateway/" DEFAULT_GATEWAY_ID "/up";
 const char MQTT_GATEWAY_REGISTER_TOPIC[] = "gateway/register";
+const char MQTT_GATEWAY_COMMAND_TOPIC[] = "cmd/" DEFAULT_GATEWAY_ID;
+const char MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC[] = "cmd/" DEFAULT_GATEWAY_ID "/#";
 
 /* ================= 内部结构 ================= */
 
@@ -132,6 +134,117 @@ static unsigned int next_gateway_seq(void)
     return ++g_gateway_seq;
 }
 
+static const char *port_id_from_slot(int slot)
+{
+    return slot == 0 ? "port_001" : "port_002";
+}
+
+static int copy_token(char *out, int out_size, const char *begin, size_t len)
+{
+    if (!out || out_size <= 0 || !begin || len >= (size_t)out_size)
+        return -1;
+
+    memcpy(out, begin, len);
+    out[len] = '\0';
+    return 0;
+}
+
+int mqtt_make_gateway_up_topic(char *buffer, int buffer_size)
+{
+    if (!buffer || buffer_size <= 0)
+        return -1;
+    int len = snprintf(buffer, (size_t)buffer_size, "gateway/%s/up", DEFAULT_GATEWAY_ID);
+    return (len > 0 && len < buffer_size) ? 0 : -1;
+}
+
+int mqtt_make_port_up_topic(const char *port_id, char *buffer, int buffer_size)
+{
+    if (!buffer || buffer_size <= 0 || !port_id || port_id[0] == '\0')
+        return -1;
+    int len = snprintf(buffer, (size_t)buffer_size, "gateway/%s/%s/up", DEFAULT_GATEWAY_ID, port_id);
+    return (len > 0 && len < buffer_size) ? 0 : -1;
+}
+
+int mqtt_make_port_up_topic_for_slot(int slot, char *buffer, int buffer_size)
+{
+    return mqtt_make_port_up_topic(port_id_from_slot(slot), buffer, buffer_size);
+}
+
+int mqtt_make_gateway_command_topic(char *buffer, int buffer_size)
+{
+    if (!buffer || buffer_size <= 0)
+        return -1;
+    int len = snprintf(buffer, (size_t)buffer_size, "cmd/%s", DEFAULT_GATEWAY_ID);
+    return (len > 0 && len < buffer_size) ? 0 : -1;
+}
+
+int mqtt_make_port_command_topic(const char *port_id, char *buffer, int buffer_size)
+{
+    if (!buffer || buffer_size <= 0 || !port_id || port_id[0] == '\0')
+        return -1;
+    int len = snprintf(buffer, (size_t)buffer_size, "cmd/%s/%s", DEFAULT_GATEWAY_ID, port_id);
+    return (len > 0 && len < buffer_size) ? 0 : -1;
+}
+
+int mqtt_parse_gateway_command_topic(const char *topic, char *gateway_id, int gateway_size)
+{
+    const char prefix[] = "cmd/";
+    if (!topic || strncmp(topic, prefix, strlen(prefix)) != 0)
+        return -1;
+
+    const char *gateway = topic + strlen(prefix);
+    const char *slash = strchr(gateway, '/');
+    if (slash || gateway[0] == '\0')
+        return -1;
+
+    return copy_token(gateway_id, gateway_size, gateway, strlen(gateway));
+}
+
+int mqtt_parse_port_command_topic(const char *topic,
+                                  char *gateway_id,
+                                  int gateway_size,
+                                  char *port_id,
+                                  int port_size)
+{
+    const char prefix[] = "cmd/";
+    if (!topic || strncmp(topic, prefix, strlen(prefix)) != 0)
+        return -1;
+
+    const char *gateway = topic + strlen(prefix);
+    const char *slash = strchr(gateway, '/');
+    if (!slash || slash == gateway || slash[1] == '\0' || strchr(slash + 1, '/'))
+        return -1;
+
+    if (copy_token(gateway_id, gateway_size, gateway, (size_t)(slash - gateway)) != 0)
+        return -1;
+    return copy_token(port_id, port_size, slash + 1, strlen(slash + 1));
+}
+
+int mqtt_parse_port_up_topic(const char *topic,
+                             char *gateway_id,
+                             int gateway_size,
+                             char *port_id,
+                             int port_size)
+{
+    const char prefix[] = "gateway/";
+    if (!topic || strncmp(topic, prefix, strlen(prefix)) != 0)
+        return -1;
+
+    const char *gateway = topic + strlen(prefix);
+    const char *gateway_end = strchr(gateway, '/');
+    if (!gateway_end || gateway_end == gateway)
+        return -1;
+
+    const char *port = gateway_end + 1;
+    const char *port_end = strchr(port, '/');
+    if (!port_end || port_end == port || strcmp(port_end, "/up") != 0)
+        return -1;
+
+    if (copy_token(gateway_id, gateway_size, gateway, (size_t)(gateway_end - gateway)) != 0)
+        return -1;
+    return copy_token(port_id, port_size, port, (size_t)(port_end - port));
+}
+
 /* ================= MQTT 回调函数 ================= */
 
 static void mqtt_message_handler(void *client, message_data_t *msg)
@@ -149,14 +262,28 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
            topic, payloadlen, payload);
 
     /*
-     * 现在 Linux_data 只订阅 Pc_data 下发的统一命令主题：
+     * 现在 Linux_data 订阅 Pc_data 下发的统一命令主题：
      *
      *   cmd/<gatewayId>
+     *   cmd/<gatewayId>/#
      *
      * 所有控制命令统一交给 data_command_process_message() 处理。
      * 不再使用旧的 imx6ull/gpio/+/set 控制方式。
      */
-    if (strcmp(topic, "cmd/" DEFAULT_GATEWAY_ID) == 0) {
+    char topic_gateway[64];
+    char topic_port[64];
+    int is_gateway_cmd =
+        mqtt_parse_gateway_command_topic(topic, topic_gateway, sizeof(topic_gateway)) == 0 &&
+        strcmp(topic_gateway, DEFAULT_GATEWAY_ID) == 0;
+    int is_port_cmd =
+        mqtt_parse_port_command_topic(topic,
+                                      topic_gateway,
+                                      sizeof(topic_gateway),
+                                      topic_port,
+                                      sizeof(topic_port)) == 0 &&
+        strcmp(topic_gateway, DEFAULT_GATEWAY_ID) == 0;
+
+    if (is_gateway_cmd || is_port_cmd) {
         char command[MQTT_PAYLOAD_MAX];
         int copy_len = payloadlen < (MQTT_PAYLOAD_MAX - 1)
                            ? payloadlen
@@ -223,7 +350,8 @@ int mqtt_init(void)
     printf("[MQTT] client id: %s\n", MQTT_CLIENT_ID);
     printf("[MQTT] default publish topic: %s\n", MQTT_DEFAULT_PUBLISH_TOPIC);
     printf("[MQTT] gateway register topic: %s\n", MQTT_GATEWAY_REGISTER_TOPIC);
-    printf("[MQTT] command subscribe topic: cmd/%s\n", DEFAULT_GATEWAY_ID);
+    printf("[MQTT] command subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_TOPIC);
+    printf("[MQTT] command subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC);
 
     offline_publish_queue_set_sender(mqtt_send_direct_if_connected);
 
@@ -250,7 +378,7 @@ int mqtt_init(void)
  *
  * 主要流程：
  * 1. 未连接时尝试连接 Broker
- * 2. 连接成功后订阅 cmd/<gatewayId>
+ * 2. 连接成功后订阅 cmd/<gatewayId> 和 cmd/<gatewayId>/#
  * 3. 发送网关注册包
  * 4. 发布当前端口/设备状态
  * 5. 定时发送网关心跳
@@ -316,11 +444,16 @@ void mqtt_poll(void)
     /* 2. 订阅统一命令主题 */
     if (g_connected && !g_subscribed) {
         mqtt_subscribe(g_client,
-                       "cmd/" DEFAULT_GATEWAY_ID,
+                       MQTT_GATEWAY_COMMAND_TOPIC,
                        QOS0,
                        mqtt_message_handler);
+        printf("[MQTT] subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_TOPIC);
 
-        printf("[MQTT] subscribe topic: cmd/%s\n", DEFAULT_GATEWAY_ID);
+        mqtt_subscribe(g_client,
+                       MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC,
+                       QOS0,
+                       mqtt_message_handler);
+        printf("[MQTT] subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC);
 
         g_subscribed = 1;
     }

@@ -241,7 +241,10 @@ int data_publish_device_status_for_slot(int slot, const device_data_t *dev)
     meta.status_changed = status_changed;
     meta.point_key = point_key_from_device(dev);
 
-    int mqtt_code = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, &meta);
+    char topic[128];
+    int mqtt_code = mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0
+                        ? offline_publish_or_cache(topic, json, &meta)
+                        : DATA_SEND_INVALID_ARG;
     int code = merge_send_code(ipc_code, mqtt_code);
 
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);
@@ -262,9 +265,12 @@ int data_publish_gateway_register(uint32_t seq)
     add_string(root, "gatewayName", DEFAULT_GATEWAY_NAME);
     add_string(root, "factoryId", DEFAULT_FACTORY_ID);
     add_string(root, "areaId", DEFAULT_AREA_ID);
-    add_string(root, "upTopic", MQTT_DEFAULT_PUBLISH_TOPIC);
-    add_string(root, "cmdTopic", "cmd/" DEFAULT_GATEWAY_ID);
-    add_string(root, "broadcastTopic", "gateway/broadcast/down");
+    char gateway_up_topic[128];
+    char gateway_cmd_topic[128];
+    mqtt_make_gateway_up_topic(gateway_up_topic, sizeof(gateway_up_topic));
+    mqtt_make_gateway_command_topic(gateway_cmd_topic, sizeof(gateway_cmd_topic));
+    add_string(root, "upTopic", gateway_up_topic);
+    add_string(root, "cmdTopic", gateway_cmd_topic);
 
     offline_publish_meta_t meta;
     fill_base_meta(&meta, "gateway_register", 0, current_time_ms());
@@ -319,7 +325,7 @@ int data_publish_port_register(uint32_t seq,
     offline_publish_meta_t meta;
     fill_base_meta(&meta, "port_register", 0, current_time_ms());
     meta.port_id = port_id_from_slot(slot);
-    int ret = publish_json_to_mqtt_with_meta(root, "port_register", &meta);
+    int ret = publish_json_to_mqtt_topic_with_meta(MQTT_GATEWAY_REGISTER_TOPIC, root, "port_register", &meta);
     json_object_put(root);
     return ret;
 }
@@ -384,7 +390,10 @@ int data_publish_device_register(uint32_t seq,
     meta.port_id = port_id_from_slot(slot);
     meta.device_id = slave_id;
     (void)ipc_server_send(json);
-    int ret = offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, json, &meta);
+    char topic[128];
+    int ret = mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0
+                  ? offline_publish_or_cache(topic, json, &meta)
+                  : DATA_SEND_INVALID_ARG;
     json_object_put(root);
     return ret;
 }

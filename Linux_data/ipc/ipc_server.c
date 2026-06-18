@@ -78,7 +78,7 @@ static void ipc_process_received_data(const char *buf, int len)
                 meta.message_type = "ipc_forward";
                 meta.gateway_id = DEFAULT_GATEWAY_ID;
                 meta.priority = 0;
-                (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, msg, &meta);
+                (void)offline_publish_or_cache(MQTT_GATEWAY_REGISTER_TOPIC, msg, &meta);
             } else if (ret == CMD_PROCESS_ERROR) {
                 printf("IPC process failed, skip MQTT: %s\n", msg);
             }

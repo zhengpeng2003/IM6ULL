@@ -315,11 +315,7 @@ bool MqttClient::subscribeTopics()
                       << std::endl;
             ok = false;
         } else {
-            if (topic == "pc_data/telemetry/test") {
-                std::cout << "[MQTT SUB][LEGACY] " << topic << std::endl;
-            } else {
-                std::cout << "[MQTT SUB] " << topic << std::endl;
-            }
+            std::cout << "[MQTT SUB] " << topic << std::endl;
             std::cout << "MQTT subscribe requested, topic="
                       << topic
                       << ", qos="

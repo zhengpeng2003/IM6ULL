@@ -34,6 +34,39 @@ static int data_ack_code_from_reason(const char *reason)
     return ACK_ERROR;
 }
 
+static const char *data_ack_port_id_from_slot(int slot)
+{
+    return slot == 0 ? "port_001" : "port_002";
+}
+
+static int data_ack_publish_gateway(struct json_object *root, offline_publish_meta_t *meta)
+{
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    if (!payload)
+        return DATA_SEND_JSON_ERROR;
+
+    return offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, meta);
+}
+
+static int data_ack_publish_port(int slot, struct json_object *root, offline_publish_meta_t *meta)
+{
+    if (!root)
+        return DATA_SEND_JSON_ERROR;
+
+    const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    if (!payload)
+        return DATA_SEND_JSON_ERROR;
+
+    char topic[128];
+    if (mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) != 0)
+        return DATA_SEND_INVALID_ARG;
+
+    return offline_publish_or_cache(topic, payload, meta);
+}
+
 void data_ack_send(uint32_t seq,
                    const char *cmd,
                    int ok,
@@ -66,7 +99,7 @@ void data_ack_send(uint32_t seq,
     meta.gateway_id = DEFAULT_GATEWAY_ID;
     meta.priority = 3;
     meta.timestamp_ms = 0;
-    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+    (void)data_ack_publish_gateway(root, &meta);
     json_object_put(root);
 }
 
@@ -104,6 +137,13 @@ void data_ack_send_ports(uint32_t seq,
     json_object_object_add(root, "ports", port_array);
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.priority = 3;
+    meta.timestamp_ms = data_ack_current_time_ms();
+    (void)data_ack_publish_gateway(root, &meta);
     json_object_put(root);
 }
 
@@ -148,6 +188,14 @@ void data_ack_send_port_result(uint32_t seq,
     }
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.port_id = data_ack_port_id_from_slot(slot);
+    meta.priority = 3;
+    meta.timestamp_ms = data_ack_current_time_ms();
+    (void)data_ack_publish_port(slot, root, &meta);
     json_object_put(root);
 }
 
@@ -232,7 +280,8 @@ void data_ack_send_relay_result(uint32_t seq,
     meta.message_type = "ack";
     meta.gateway_id = DEFAULT_GATEWAY_ID;
     meta.priority = 3;
-    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+    meta.port_id = data_ack_port_id_from_slot(slot);
+    (void)data_ack_publish_port(slot, root, &meta);
     json_object_put(root);
 }
 
@@ -268,7 +317,8 @@ void data_ack_send_device_result(uint32_t seq,
     meta.message_type = "ack";
     meta.gateway_id = DEFAULT_GATEWAY_ID;
     meta.priority = 3;
-    (void)offline_publish_or_cache(MQTT_DEFAULT_PUBLISH_TOPIC, payload, &meta);
+    meta.port_id = data_ack_port_id_from_slot(slot);
+    (void)data_ack_publish_port(slot, root, &meta);
     json_object_put(root);
 }
 
@@ -298,6 +348,13 @@ void data_ack_send_threshold_result(uint32_t seq,
     json_object_object_add(root, "thresholds", data_ack_thresholds_to_json(threshold_config));
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
+    offline_publish_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.message_type = "ack";
+    meta.gateway_id = DEFAULT_GATEWAY_ID;
+    meta.port_id = data_ack_port_id_from_slot(slot);
+    meta.priority = 3;
+    (void)data_ack_publish_port(slot, root, &meta);
     json_object_put(root);
 }
 

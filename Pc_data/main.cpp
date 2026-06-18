@@ -96,9 +96,8 @@ int main()
             cout << "MQTT subscribe topic: " << topic << endl;
         }
 
-        bool pendingStartupGatewayDiscovery = true;
         if (database.isOpen() && database.deviceCount() == 0) {
-            cout << "Pc_data device table empty, wait for gateway_register or broadcast discovery" << endl;
+            cout << "Pc_data device table empty, wait for gateway_register" << endl;
         }
 
         cout << "Before mqtt.connectToBroker" << endl;
@@ -106,22 +105,12 @@ int main()
             cout << "MQTT connectToBroker call failed" << endl;
         } else {
             cout << "MQTT async connect request sent, status=" << mqtt.status() << endl;
-            cout << "MQTT not connected yet, defer gateway discovery broadcast" << endl;
+            cout << "MQTT not connected yet, wait for gateway_register" << endl;
         }
 
         std::int64_t lastOfflineScanMs = 0;
         while (true) {
             const std::int64_t nowMs = currentTimeMs();
-            if (pendingStartupGatewayDiscovery && mqtt.status() == "connected") {
-                cout << "MQTT connected, broadcast discover_gateways" << endl;
-                const std::int64_t seq = currentTimeMs();
-                const std::string payload = std::string("{\"type\":\"command\",\"cmd\":\"discover_gateways\",\"seq\":") +
-                    std::to_string(seq) + "}";
-                const bool requestOk = mqtt.publish("gateway/broadcast/down", payload);
-                cout << "discover_gateways broadcast " << (requestOk ? "ok" : "failed") << endl;
-                pendingStartupGatewayDiscovery = !requestOk;
-            }
-
             if (nowMs - lastOfflineScanMs >= 1000) {
                 lastOfflineScanMs = nowMs;
                 if (database.isOpen()) {
