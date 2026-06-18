@@ -49,6 +49,11 @@ signals:
                             const QString &reason,
                             const QString &message,
                             const QJsonObject &root);
+    void configSyncStateReceived(const QString &status,
+                                 const QString &reason,
+                                 const QString &message,
+                                 int retryCount,
+                                 const QJsonObject &root);
     void emergencyReceived(int level,
                            const QString &reason,
                            int deviceId,

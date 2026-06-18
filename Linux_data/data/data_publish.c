@@ -1,6 +1,7 @@
 #include "data_publish.h"
 
 #include "data_telemetry.h"
+#include "data_config_sync.h"
 #include "ipc_server.h"
 #include "mqtt_wrapper.h"
 #include "OfflinePublishQueueC.h"
@@ -242,9 +243,14 @@ int data_publish_device_status_for_slot(int slot, const device_data_t *dev)
     meta.point_key = point_key_from_device(dev);
 
     char topic[128];
-    int mqtt_code = mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0
+    int mqtt_code = DATA_SEND_OK;
+    if (data_config_sync_telemetry_allowed(slot, dev)) {
+        mqtt_code = mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0
                         ? offline_publish_or_cache(topic, json, &meta)
                         : DATA_SEND_INVALID_ARG;
+    } else {
+        printf("telemetry local only before config ACK slot=%d device=%d\n", slot, dev->device_id);
+    }
     int code = merge_send_code(ipc_code, mqtt_code);
 
     send_publish_ack(pack.seq, code, ipc_code, mqtt_code);
@@ -275,6 +281,10 @@ int data_publish_gateway_register(uint32_t seq)
     offline_publish_meta_t meta;
     fill_base_meta(&meta, "gateway_register", 0, current_time_ms());
     int ret = publish_json_to_mqtt_topic_with_meta(MQTT_GATEWAY_REGISTER_TOPIC, root, "gateway_register", &meta);
+    (void)data_config_sync_mark_sent(seq,
+                                     "gateway_register",
+                                     json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN),
+                                     DEFAULT_PORT_ID);
     json_object_put(root);
     return ret;
 }
@@ -326,6 +336,10 @@ int data_publish_port_register(uint32_t seq,
     fill_base_meta(&meta, "port_register", 0, current_time_ms());
     meta.port_id = port_id_from_slot(slot);
     int ret = publish_json_to_mqtt_topic_with_meta(MQTT_GATEWAY_REGISTER_TOPIC, root, "port_register", &meta);
+    (void)data_config_sync_mark_sent(seq,
+                                     "port_register",
+                                     json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN),
+                                     port_id_from_slot(slot));
     json_object_put(root);
     return ret;
 }

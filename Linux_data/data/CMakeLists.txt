@@ -2,6 +2,7 @@ add_library(data_protocol STATIC
     data_telemetry.c
     data_command.c
     data_ack.c
+    data_config_sync.c
     data_publish.c
     $<TARGET_OBJECTS:port_manager>
 )

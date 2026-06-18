@@ -6,6 +6,7 @@
 #include "data_protocol.h"
 #include "data_publish.h"
 #include "data_telemetry.h"
+#include "data_config_sync.h"
 #include "OfflinePublishQueueC.h"
 #include "port_manager.h"
 
@@ -292,6 +293,7 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
         memcpy(command, payload, copy_len);
         command[copy_len] = '\0';
 
+        data_config_sync_handle_ack_json(command);
         data_command_process_message(command);
         return;
     }
@@ -419,6 +421,7 @@ void mqtt_poll(void)
              */
             data_publish_gateway_register(next_gateway_seq());
             port_manager_publish_latest_status();
+            data_config_sync_publish_latest_snapshot(next_gateway_seq());
 
             if (offline_publish_flush_enabled()) {
                 printf("[MQTT] reconnected, start offline cache flush pending=%d\n",
@@ -482,6 +485,8 @@ void mqtt_poll(void)
         offline_publish_flush_once();
         g_last_offline_flush_ms = now_ms;
     }
+
+    data_config_sync_tick();
 }
 
 /*

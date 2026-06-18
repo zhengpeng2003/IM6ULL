@@ -1,6 +1,7 @@
 #include "MqttMessageHandler.hpp"
 
 #include <cstdint>
+#include <algorithm>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -273,6 +274,94 @@ bool publishConfigSnapshotRequest(MqttClient& mqtt,
     return ok;
 }
 
+std::string buildRegisterAckJson(const std::string& cmd,
+                                 std::int64_t seq,
+                                 bool ok,
+                                 const std::string& status,
+                                 const std::string& gatewayId,
+                                 const std::string& portId,
+                                 std::int64_t configVersion,
+                                 const std::string& reason,
+                                 const std::string& message,
+                                 bool retryable,
+                                 int registeredDeviceCount,
+                                 int registeredPointCount)
+{
+    std::ostringstream out;
+    out << "{"
+        << "\"type\":\"ack\","
+        << "\"cmd\":\"" << jsonEscape(cmd) << "\","
+        << "\"seq\":" << seq << ","
+        << "\"ok\":" << (ok ? "true" : "false") << ","
+        << "\"status\":\"" << jsonEscape(status) << "\","
+        << "\"gatewayId\":\"" << jsonEscape(gatewayId) << "\",";
+    if (!portId.empty()) {
+        out << "\"portId\":\"" << jsonEscape(portId) << "\",";
+    }
+    if (configVersion > 0) {
+        out << "\"configVersion\":" << configVersion << ",";
+    }
+    out << "\"reason\":\"" << jsonEscape(reason) << "\","
+        << "\"message\":\"" << jsonEscape(message) << "\","
+        << "\"retryable\":" << (retryable ? "true" : "false");
+    if (registeredDeviceCount >= 0) {
+        out << ",\"registeredDeviceCount\":" << registeredDeviceCount;
+    }
+    if (registeredPointCount >= 0) {
+        out << ",\"registeredPointCount\":" << registeredPointCount;
+    }
+    out << ",\"timestampMs\":" << currentTimeMs()
+        << "}";
+    return out.str();
+}
+
+bool publishRegisterAck(MqttClient& mqtt,
+                        const std::string& cmd,
+                        std::int64_t seq,
+                        bool ok,
+                        const std::string& gatewayId,
+                        const std::string& portId,
+                        std::int64_t configVersion,
+                        const std::string& reason,
+                        const std::string& message,
+                        bool retryable,
+                        int registeredDeviceCount = -1,
+                        int registeredPointCount = -1)
+{
+    if (gatewayId.empty()) {
+        std::cout << "[MQTT TX ACK] skip register ack cmd=" << cmd
+                  << " seq=" << seq
+                  << " reason=gateway_id_missing" << std::endl;
+        return false;
+    }
+
+    const std::string status = ok ? "success" : "failed";
+    const std::string topic = portId.empty()
+        ? defaultCmdTopic(gatewayId)
+        : makePortCommandTopic(gatewayId, portId);
+    const std::string payload = buildRegisterAckJson(cmd,
+                                                     seq,
+                                                     ok,
+                                                     status,
+                                                     gatewayId,
+                                                     portId,
+                                                     configVersion,
+                                                     reason,
+                                                     message,
+                                                     retryable,
+                                                     registeredDeviceCount,
+                                                     registeredPointCount);
+    const bool publishOk = mqtt.publish(topic, payload);
+    std::cout << "[MQTT TX ACK] cmd=" << cmd
+              << " seq=" << seq
+              << " topic=" << topic
+              << " ok=" << (ok ? "true" : "false")
+              << " publish=" << (publishOk ? "ok" : "failed")
+              << " reason=" << reason
+              << std::endl;
+    return publishOk;
+}
+
 bool parseGatewayRegisterDetails(const std::string& payload,
                                  GatewayStatus& gateway,
                                  GatewayRegistry& registry,
@@ -481,8 +570,11 @@ bool parseConfigSnapshot(const std::string& payload,
 {
     rapidjson::Document root;
     root.Parse(payload.c_str());
+    const std::string snapshotType = root.HasParseError() || !root.IsObject()
+        ? std::string()
+        : getJsonString(root, "type");
     if (root.HasParseError() || !root.IsObject() ||
-        getJsonString(root, "type") != "config_snapshot") {
+        (snapshotType != "config_snapshot" && snapshotType != "device_config_snapshot")) {
         return false;
     }
 
@@ -672,6 +764,18 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             sendPortStatusSnapshot(m_ipc, m_database);
             sendDevicesSnapshot(m_ipc, m_database);
         }
+        rapidjson::Document root;
+        root.Parse(payload.c_str());
+        publishRegisterAck(m_mqtt,
+                           "gateway_register",
+                           getJsonInt64Any(root, {"seq", "sequence"}, 0),
+                           ok,
+                           gateway.gatewayId,
+                           std::string(),
+                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                           ok ? "" : "gateway_register_save_failed",
+                           ok ? "gateway register saved" : "gateway register save failed",
+                           true);
         return;
     }
 
@@ -714,6 +818,40 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         if (ok && m_ipc.hasClient()) {
             sendPortStatusSnapshot(m_ipc, m_database);
         }
+        rapidjson::Document root;
+        root.Parse(payload.c_str());
+        publishRegisterAck(m_mqtt,
+                           "port_register",
+                           getJsonInt64Any(root, {"seq", "sequence"}, 0),
+                           ok,
+                           port.gatewayId,
+                           port.portId,
+                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                           ok ? "" : "port_register_save_failed",
+                           ok ? "port register saved" : "port register save failed",
+                           true);
+        return;
+    }
+
+    if (messageType == "port_status") {
+        rapidjson::Document root;
+        root.Parse(payload.c_str());
+        if (root.HasParseError() || !root.IsObject()) {
+            std::cout << "[MQTT RX] port_status parse failed" << std::endl;
+            return;
+        }
+        const std::string gatewayId = getJsonStringAny(root, {"gatewayId", "gateway_id"});
+        const std::string portId = getJsonStringAny(root, {"portId", "port_id"});
+        publishRegisterAck(m_mqtt,
+                           "port_status",
+                           getJsonInt64Any(root, {"seq", "sequence"}, 0),
+                           !gatewayId.empty(),
+                           gatewayId,
+                           portId,
+                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                           gatewayId.empty() ? "gateway_id_missing" : "",
+                           gatewayId.empty() ? "port status missing gatewayId" : "port status received",
+                           true);
         return;
     }
 
@@ -882,7 +1020,7 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
         return;
     }
 
-    if (messageType == "config_snapshot") {
+    if (messageType == "config_snapshot" || messageType == "device_config_snapshot") {
         rapidjson::Document root;
         root.Parse(payload.c_str());
         if (root.HasParseError() || !root.IsObject()) {
@@ -908,11 +1046,31 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
 
         if (pending.gatewayId.empty()) {
             std::cout << "[MQTT RX] config_snapshot ignored: empty gatewayId, seq=" << seq << std::endl;
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               seq,
+                               false,
+                               pending.gatewayId,
+                               std::string(),
+                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                               "gateway_id_missing",
+                               "config snapshot missing gatewayId",
+                               false);
             return;
         }
         if (hasPending && pending.devices.empty()) {
             std::cout << "[MQTT RX] config_snapshot ignored: pending devices empty, seq="
                       << seq << ", gateway=" << pending.gatewayId << std::endl;
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               seq,
+                               false,
+                               pending.gatewayId,
+                               std::string(),
+                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                               "pending_devices_empty",
+                               "config snapshot pending devices empty",
+                               false);
             return;
         }
 
@@ -974,6 +1132,18 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                 sendDevicesSnapshot(m_ipc, m_database);
                 sendLatestPoints(m_ipc, m_dataService, m_database);
             }
+            publishRegisterAck(m_mqtt,
+                               messageType,
+                               seq,
+                               ok,
+                               pending.gatewayId,
+                               std::string(),
+                               getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                               ok ? "" : "config_snapshot_save_failed",
+                               ok ? "config snapshot saved" : "config snapshot save failed",
+                               true,
+                               ok ? deviceCount : -1,
+                               ok ? static_cast<int>(pointConfigs.size()) : -1);
             return;
         }
 
@@ -1004,6 +1174,18 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
                   << " devices=" << deviceCount
                   << " fullSnapshot=" << (getJsonBool(root, "fullSnapshot", getJsonBool(root, "full_snapshot", false)) ? "true" : "false")
                   << std::endl;
+        publishRegisterAck(m_mqtt,
+                           messageType,
+                           seq,
+                           ok,
+                           pending.gatewayId,
+                           std::string(),
+                           getJsonInt64Any(root, {"configVersion", "config_version"}, 0),
+                           ok ? "" : "config_snapshot_save_failed",
+                           ok ? "config snapshot saved" : "config snapshot save failed",
+                           true,
+                           ok ? deviceCount : -1,
+                           ok ? static_cast<int>(pointConfigs.size()) : -1);
         return;
     }
 
@@ -1101,36 +1283,25 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
               << pack.devices.size()
               << std::endl;
 
-    bool deviceCatalogChanged = false;
+    std::set<std::pair<std::string, int> > unknownTelemetryDevices;
     if (m_database.isOpen()) {
         for (const DeviceData& device : pack.devices) {
             if (!pack.site.gatewayId.empty() && !pack.site.portId.empty() && device.deviceId > 0 &&
                 m_dataService.isRemovedDevice(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
-                std::cout << "[MQTT RX] deleted device telemetry ignored before auto register, gateway: "
+                std::cout << "[MQTT RX] deleted device telemetry ignored, gateway: "
                           << pack.site.gatewayId
                           << ", port: " << pack.site.portId
                           << ", device: " << device.deviceId << std::endl;
+                unknownTelemetryDevices.insert(std::make_pair(pack.site.portId, device.deviceId));
                 continue;
             }
             if (pack.site.gatewayId.empty() || pack.site.portId.empty() || device.deviceId <= 0 ||
                 !m_database.deviceExists(pack.site.gatewayId, pack.site.portId, device.deviceId)) {
-                std::cout << "[MQTT RX] unknown device telemetry, auto register and request config snapshot, gateway: "
+                std::cout << "[MQTT RX] unknown telemetry ignored, gateway: "
                           << pack.site.gatewayId
                           << ", port: " << pack.site.portId
                           << ", device: " << device.deviceId << std::endl;
-                if (!pack.site.gatewayId.empty() && !pack.site.portId.empty() && device.deviceId > 0) {
-                    const DeviceRecord record = deviceRecordFromTelemetry(pack, device);
-                    if (m_database.upsertDevice(record)) {
-                        deviceCatalogChanged = true;
-                        std::cout << "[MQTT RX] unknown telemetry device auto registered, gateway: "
-                                  << record.gatewayId
-                                  << ", port: " << record.portId
-                                  << ", device: " << record.deviceId
-                                  << ", type: " << record.deviceType << std::endl;
-                    } else {
-                        std::cout << "[MQTT RX] unknown telemetry device auto register failed" << std::endl;
-                    }
-                }
+                unknownTelemetryDevices.insert(std::make_pair(pack.site.portId, device.deviceId));
                 const std::string requestKey = pack.site.gatewayId.empty()
                     ? std::string("unknown_gateway")
                     : pack.site.gatewayId;
@@ -1154,6 +1325,13 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
 
     std::vector<TelemetryPoint> receivedPoints =
         m_dataService.filterRemovedPoints(ModelConverter::toTelemetryPoints(pack));
+    receivedPoints.erase(std::remove_if(receivedPoints.begin(),
+                                        receivedPoints.end(),
+                                        [&unknownTelemetryDevices](const TelemetryPoint& point) {
+                                            return unknownTelemetryDevices.find(std::make_pair(point.portId, point.deviceId)) !=
+                                                   unknownTelemetryDevices.end();
+                                        }),
+                         receivedPoints.end());
 
     std::cout << "[MQTT RX] received point count: "
               << receivedPoints.size()
@@ -1180,11 +1358,6 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
     }
 
     if (m_ipc.hasClient()) {
-        if (deviceCatalogChanged) {
-            sendDevicesSnapshot(m_ipc, m_database);
-            sendPortStatusSnapshot(m_ipc, m_database);
-            sendGatewayStatusSnapshot(m_ipc, m_database);
-        }
         std::string json = buildLatestPointsJson(points);
         std::cout << "[MQTT RX] send latest_points to Pc_ui, size: "
                   << json.size()

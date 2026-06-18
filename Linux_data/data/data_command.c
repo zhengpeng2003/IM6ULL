@@ -5,6 +5,7 @@
 #include "data_protocol.h"
 #include "data_publish.h"
 #include "data_telemetry.h"
+#include "data_config_sync.h"
 #include "mqtt_wrapper.h"
 #include "port_manager.h"
 
@@ -268,8 +269,10 @@ static int handle_connect_port(uint32_t seq, struct json_object *root, const cha
                               "unknown",
                               baud,
                               ret == 0);
-    if (ret == 0)
+    if (ret == 0) {
         data_publish_port_register(seq, slot, port, baud, "connected");
+        (void)data_config_sync_publish_latest_snapshot(seq);
+    }
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -298,8 +301,10 @@ static int handle_disconnect_port(uint32_t seq, struct json_object *root, const 
                               "unknown",
                               old_baud,
                               0);
-    if (ret == 0)
+    if (ret == 0) {
         data_publish_port_register(seq, slot, old_port, old_baud, "disconnected");
+        (void)data_config_sync_publish_latest_snapshot(seq);
+    }
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -392,6 +397,7 @@ static int handle_add_device(uint32_t seq, struct json_object *root, const char 
         if (publish_ret != DATA_SEND_OK) {
             printf("device_register publish failed, code=%d\n", publish_ret);
         }
+        (void)data_config_sync_publish_latest_snapshot(seq);
     }
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
@@ -432,6 +438,8 @@ static int handle_set_device_threshold(uint32_t seq, struct json_object *root, c
                                    "sensor_th",
                                    threshold_config.threshold_enabled,
                                    &threshold_config);
+    if (ret == 0)
+        (void)data_config_sync_publish_latest_snapshot(seq);
     return ret == 0 ? CMD_PROCESS_HANDLED : CMD_PROCESS_ERROR;
 }
 
@@ -489,11 +497,8 @@ static int handle_remove_device(uint32_t seq, struct json_object *root, const ch
                                 device_type,
                                 0);
     if (ret == 0) {
-        char snapshot[65536];
-        if (port_manager_export_config_snapshot(seq, DEFAULT_GATEWAY_ID, "", snapshot, sizeof(snapshot)) == 0) {
-            int pub_ret = mqtt_send(MQTT_GATEWAY_REGISTER_TOPIC, snapshot);
-            printf("config_snapshot after remove_device publish=%d slot=%d slave_id=%d\n",
-                   pub_ret, slot, slave_id);
+        if (data_config_sync_publish_latest_snapshot(seq) == DATA_SEND_OK) {
+            printf("config_snapshot after remove_device queued slot=%d slave_id=%d\n", slot, slave_id);
         } else {
             printf("config_snapshot after remove_device export failed slot=%d slave_id=%d\n",
                    slot, slave_id);
@@ -572,7 +577,6 @@ static int handle_set_relay(uint32_t seq, struct json_object *root, const char *
 
 static int handle_get_config(uint32_t seq, struct json_object *root, const char *cmd)
 {
-    char snapshot[65536];
     char reason[MAX_ACK_MSG_LEN] = "";
     const char *gateway_id = DEFAULT_GATEWAY_ID;
     const char *target_json = "";
@@ -591,19 +595,29 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
         return CMD_PROCESS_ERROR;
     }
 
-    if (port_manager_export_config_snapshot(seq,
-                                            DEFAULT_GATEWAY_ID,
-                                            target_json,
-                                            snapshot,
-                                            sizeof(snapshot)) != 0) {
-        snprintf(reason, sizeof(reason), "config_snapshot_failed");
-        data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
-        return CMD_PROCESS_ERROR;
+    if (target_json && target_json[0] != '\0') {
+        char snapshot[65536];
+        if (port_manager_export_config_snapshot(seq,
+                                                DEFAULT_GATEWAY_ID,
+                                                target_json,
+                                                snapshot,
+                                                sizeof(snapshot)) != 0) {
+            snprintf(reason, sizeof(reason), "config_snapshot_failed");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+        int ret = mqtt_send(MQTT_GATEWAY_REGISTER_TOPIC, snapshot);
+        if (ret != DATA_SEND_OK) {
+            snprintf(reason, sizeof(reason), "mqtt_publish_failed");
+            data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
+            return CMD_PROCESS_ERROR;
+        }
+        (void)data_config_sync_mark_sent(seq, "config_snapshot", snapshot, DEFAULT_PORT_ID);
+        return CMD_PROCESS_HANDLED;
     }
 
-    int ret = mqtt_send(MQTT_GATEWAY_REGISTER_TOPIC, snapshot);
-    if (ret != DATA_SEND_OK) {
-        snprintf(reason, sizeof(reason), "mqtt_publish_failed");
+    if (data_config_sync_publish_latest_snapshot(seq) != DATA_SEND_OK) {
+        snprintf(reason, sizeof(reason), "config_snapshot_failed");
         data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
         return CMD_PROCESS_ERROR;
     }
@@ -839,6 +853,11 @@ int data_command_process_message(const char *json_str)
     struct json_object *type_obj;
     if (json_object_object_get_ex(root, "type", &type_obj))
         msg_type = json_object_get_string(type_obj);
+
+    if (msg_type && strcmp(msg_type, "ack") == 0) {
+        json_object_put(root);
+        return CMD_PROCESS_HANDLED;
+    }
 
     struct json_object *cmd_obj = NULL;
     json_get_object_any(root,

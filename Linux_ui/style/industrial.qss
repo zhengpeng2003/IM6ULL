@@ -325,6 +325,16 @@ QComboBox QAbstractItemView {
     border-radius: 5px;
 }
 
+#StatusYellow {
+    background-color: #F59E0B;
+    border-radius: 5px;
+}
+
+#StatusRed {
+    background-color: #EF4444;
+    border-radius: 5px;
+}
+
 #StatusGray {
     background-color: #94A3B8;
     border-radius: 5px;

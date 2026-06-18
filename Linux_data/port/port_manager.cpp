@@ -1,6 +1,7 @@
 #include "port_manager.h"
 
 #include "data_ack.h"
+#include "data_config_sync.h"
 #include "data_publish.h"
 #include "data_telemetry.h"
 #include "ipc_server.h"
@@ -642,7 +643,11 @@ struct PortManager::Impl {
             baud = baud_override > 0 ? baud_override : channels[slot].baud;
         }
 
+        const uint32_t seq = data_config_sync_next_seq();
         addString(root, "type", "port_status");
+        json_object_object_add(root, "seq", json_object_new_int64(seq));
+        addString(root, "gatewayId", DEFAULT_GATEWAY_ID);
+        addString(root, "portId", portIdForSlot(slot));
         json_object_object_add(root, "slot", json_object_new_int(slot));
         addString(root, "port", port.c_str());
         addString(root, "device_type", "unknown");
@@ -651,8 +656,19 @@ struct PortManager::Impl {
         addString(root, "message", message ? message : "");
 
         const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
-        if (payload)
+        if (payload) {
             (void)ipc_server_send(payload);
+            offline_publish_meta_t meta = {};
+            meta.message_type = "port_status";
+            meta.gateway_id = DEFAULT_GATEWAY_ID;
+            meta.port_id = portIdForSlot(slot);
+            meta.priority = connected ? 1 : 2;
+            meta.timestamp_ms = currentTimeMs();
+            char topic[128];
+            if (mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0) {
+                (void)offline_publish_or_cache(topic, payload, &meta);
+            }
+        }
         json_object_put(root);
     }
 

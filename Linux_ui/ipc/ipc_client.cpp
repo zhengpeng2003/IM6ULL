@@ -164,6 +164,15 @@ void IpcClient::onReadyRead()
             continue;
         }
 
+        if (msgType == "config_sync_state") {
+            emit configSyncStateReceived(root.value("status").toString(),
+                                         root.value("reason").toString(),
+                                         root.value("message").toString(),
+                                         root.value("retryCount").toInt(),
+                                         root);
+            continue;
+        }
+
         if ((msgType == "command" && root.value("cmd").toString() == "port_status") ||
             msgType == "port_status") {
             emit portStatusUpdated(root.value("slot").toInt(),

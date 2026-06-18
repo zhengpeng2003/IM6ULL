@@ -72,6 +72,18 @@ void Widget::initUI()
     connect(_Myclient, &IpcClient::disconnected, this, [this, top, pageInfo, pageSetting]() {
         handleIpcDisconnected(top, pageInfo, pageSetting);
     });
+    connect(_Myclient,
+            &IpcClient::configSyncStateReceived,
+            this,
+            [top](const QString &status,
+                  const QString &reason,
+                  const QString &message,
+                  int retryCount,
+                  const QJsonObject &root) {
+                Q_UNUSED(root);
+                if (top)
+                    top->setConfigSyncState(status, reason, message, retryCount);
+            });
     connect(pageInfo, &Pageinfo::reconnectIpcRequested, this, [this, top, pageInfo]() {
         if (m_operationOverlay)
             m_operationOverlay->showLoading("正在检查后端...");
