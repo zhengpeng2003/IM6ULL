@@ -21,6 +21,9 @@ struct DeviceRecord
     int pollIntervalMs = 1000;
     bool expectTelemetry = true;
     bool enabled = true;
+    bool deleted = false;
+    std::int64_t deletedTimeMs = 0;
+    std::string lifecycleStatus = "active";
 
     std::string status = "unknown";
     std::int64_t lastSeenMs = 0;

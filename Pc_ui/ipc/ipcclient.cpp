@@ -1,6 +1,9 @@
 #include "ipcclient.h"
 
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 
 IpcClient::IpcClient(QObject *parent)
     : QObject(parent)
@@ -133,7 +136,7 @@ void IpcClient::onReadyRead()
         return;
     }
 
-    qDebug() << "IpcClient recv raw bytes:" << data.size();
+    qDebug() << "[DBG_IPC_RECV] raw bytes:" << data.size();
 
     processReceivedData(data);
 }
@@ -179,7 +182,15 @@ void IpcClient::processReceivedData(const QByteArray &data)
             continue;
         }
 
-        qDebug() << "IpcClient recv frame bytes:" << frame.size();
+        QString messageType = QStringLiteral("<parse_failed>");
+        QJsonParseError error;
+        const QJsonDocument doc = QJsonDocument::fromJson(frame, &error);
+        if (error.error == QJsonParseError::NoError && doc.isObject()) {
+            messageType = doc.object().value(QStringLiteral("type")).toString(QStringLiteral("<missing>"));
+        }
+
+        qDebug() << "[DBG_IPC_RECV] frame bytes:" << frame.size()
+                 << "type:" << messageType;
 
         emit messageReceived(frame);
     }

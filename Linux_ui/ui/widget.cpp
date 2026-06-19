@@ -75,7 +75,7 @@ void Widget::initUI()
     connect(_Myclient,
             &IpcClient::configSyncStateReceived,
             this,
-            [top](const QString &status,
+            [this, top](const QString &status,
                   const QString &reason,
                   const QString &message,
                   int retryCount,
@@ -83,6 +83,23 @@ void Widget::initUI()
                 Q_UNUSED(root);
                 if (top)
                     top->setConfigSyncState(status, reason, message, retryCount);
+                if (status == "offline")
+                    m_configSyncText = "MQTT 未连接";
+                else if (status == "syncing")
+                    m_configSyncText = "注册等待 ACK";
+                else if (status == "timeout")
+                    m_configSyncText = "Pc_data 未确认，重试中";
+                else if (status == "retrying")
+                    m_configSyncText = "Pc_data 未连接";
+                else if (status == "failed" || status == "partial_failed")
+                    m_configSyncText = message.isEmpty() ? "注册失败" : message;
+                else if (status == "success")
+                    m_configSyncText = "注册已确认";
+                else if (retryCount > 0)
+                    m_configSyncText = "注册等待 ACK";
+                else
+                    m_configSyncText = "--";
+                refreshStatusSummary();
             });
     connect(pageInfo, &Pageinfo::reconnectIpcRequested, this, [this, top, pageInfo]() {
         if (m_operationOverlay)
@@ -1187,7 +1204,7 @@ void Widget::refreshStatusSummary()
         m_pageStatus->setMasterSummary(m_connectedMasterSlots.size(),
                                        onlineSlaveCount,
                                        m_activeAlarmCount,
-                                       "--");
+                                       m_configSyncText);
     }
 }
 
@@ -1203,9 +1220,12 @@ QString Widget::relayStateKey(int masterSlot, int slaveAddr) const
 
 bool Widget::ackSucceeded(const QString &status, const QJsonObject &ackRoot) const
 {
+    const QString stage = ackRoot.value("stage").toString();
+    if (stage != "done")
+        return false;
     if (ackRoot.contains("ok"))
-        return ackRoot.value("ok").toBool(false);
-    return status == "ok";
+        return ackRoot.value("ok").toBool(false) && status == "success";
+    return status == "success";
 }
 
 QString Widget::ackDisplayText(const QString &cmd,
@@ -1269,9 +1289,14 @@ bool Widget::sendCommand(const QString &cmd, QJsonObject payload, quint32 *seqOu
     if (seqOut)
         *seqOut = seq;
 
+    QJsonObject legacyPayload = payload;
     payload.insert("type", "command");
     payload.insert("cmd", cmd);
+    payload.insert("cmdType", cmd);
+    payload.insert("commandType", cmd);
     payload.insert("seq", static_cast<int>(seq));
+    payload.insert("timestampMs", QDateTime::currentMSecsSinceEpoch());
+    payload.insert("payload", legacyPayload);
 
     const QByteArray msg = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 

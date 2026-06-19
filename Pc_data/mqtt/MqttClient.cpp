@@ -132,6 +132,15 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload, i
         return false;
     }
 
+    if (topic.find('#') != std::string::npos ||
+        topic.find('+') != std::string::npos) {
+        std::cerr << "MQTT publish rejected, wildcard topic is not allowed, topic="
+                  << topic
+                  << ", status=" << status()
+                  << std::endl;
+        return false;
+    }
+
     MQTTAsync_message message = MQTTAsync_message_initializer;
     message.payload = const_cast<char*>(payload.c_str());
     message.payloadlen = static_cast<int>(payload.size());

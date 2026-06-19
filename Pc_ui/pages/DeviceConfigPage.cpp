@@ -1,7 +1,9 @@
 #include "DeviceConfigPage.h"
 
 #include "core/ConfigManager.h"
+#include "core/DataManager.h"
 #include "core/DeviceManager.h"
+#include "core/UiStateStore.h"
 
 #include <QAbstractItemView>
 #include <QColor>
@@ -12,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -19,7 +22,9 @@
 #include <QMap>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSpinBox>
+#include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -28,6 +33,15 @@
 #include <QVBoxLayout>
 
 namespace {
+
+constexpr int kRefreshDelayMs = 250;
+constexpr int kRealtimeRefreshMs = 500;
+constexpr int kSlaveColTemperature = 6;
+constexpr int kSlaveColHumidity = 7;
+constexpr int kSlaveColRelay = 8;
+constexpr int kSlaveColLastUpdate = 9;
+constexpr int kSlaveColStatus = 10;
+constexpr int kSlaveColSource = 11;
 
 QString masterKey(const QString &gatewayId, const QString &portId)
 {
@@ -54,10 +68,13 @@ QTableWidgetItem *readonlyItem(const QString &text)
 
 } // namespace
 
-DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config, QWidget *parent)
-    : QWidget(parent), m_device(device), m_config(config)
+DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
+                                   DataManager *dataManager, UiStateStore *stateStore,
+                                   QWidget *parent)
+    : QWidget(parent), m_device(device), m_config(config), m_dataManager(dataManager), m_stateStore(stateStore)
 {
     Q_UNUSED(m_config);
+    Q_UNUSED(m_stateStore);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
@@ -111,7 +128,7 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     layout->addLayout(slaveHeader);
 
     m_slaveTable = new QTableWidget(this);
-    m_slaveTable->setColumnCount(10);
+    m_slaveTable->setColumnCount(13);
     m_slaveTable->setHorizontalHeaderLabels({
         QStringLiteral("主站"),
         QStringLiteral("地址"),
@@ -119,6 +136,9 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
         QStringLiteral("名称"),
         QStringLiteral("区域"),
         QStringLiteral("网关"),
+        QStringLiteral("温度"),
+        QStringLiteral("湿度"),
+        QStringLiteral("继电器"),
         QStringLiteral("最后更新"),
         QStringLiteral("状态"),
         QStringLiteral("来源"),
@@ -132,22 +152,85 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     connect(addSlave, &QPushButton::clicked, this, &DeviceConfigPage::showAddSlaveDialog);
     connect(scanSlave, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
 
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    connect(m_refreshTimer, &QTimer::timeout, this, &DeviceConfigPage::refreshTables);
+
+    m_realtimeTimer = new QTimer(this);
+    m_realtimeTimer->setInterval(kRealtimeRefreshMs);
+    connect(m_realtimeTimer, &QTimer::timeout, this, &DeviceConfigPage::refreshRealtimeColumns);
+
     if (m_device) {
         connect(m_device, &DeviceManager::deviceConfigChanged,
-                this, &DeviceConfigPage::refreshTables);
+                this, &DeviceConfigPage::scheduleRefreshTables);
+        connect(m_device, &DeviceManager::gatewayStatusChanged,
+                this, &DeviceConfigPage::scheduleRefreshTables);
+        connect(m_device, &DeviceManager::portStatusChanged,
+                this, &DeviceConfigPage::scheduleRefreshTables);
         connect(m_device, &DeviceManager::deviceOnlineStateChanged,
-                this, &DeviceConfigPage::refreshTables);
+                this, [this](const QString &, bool) { refreshRealtimeColumns(); });
+    }
+    if (m_dataManager) {
+        connect(m_dataManager, &DataManager::deviceTreeChanged,
+                this, &DeviceConfigPage::scheduleRefreshTables);
+        connect(m_dataManager, &DataManager::realtimeDataUpdated,
+                this, [this]() {
+            if (isVisible()) {
+                refreshRealtimeColumns();
+            }
+        });
     }
 
-    // DeviceManager signals refresh the table; avoid unnecessary UI-side periodic churn.
+    // DeviceManager owns structure changes. DataManager owns realtime cache updates.
 
     refreshTables();
 }
 
+void DeviceConfigPage::scheduleRefreshTables()
+{
+    m_refreshDirty = true;
+    const bool willStart = isVisible() && m_refreshTimer && !m_refreshTimer->isActive();
+    qDebug() << "[DBG_PAGE] DeviceConfigPage scheduleRefreshTables visible:" << isVisible()
+             << "startDebounce250ms:" << willStart;
+    if (!isVisible()) {
+        return;
+    }
+
+    if (m_refreshTimer && !m_refreshTimer->isActive()) {
+        m_refreshTimer->start(kRefreshDelayMs);
+    }
+}
+
+void DeviceConfigPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_realtimeTimer && !m_realtimeTimer->isActive()) {
+        m_realtimeTimer->start();
+    }
+    if (m_refreshDirty) {
+        scheduleRefreshTables();
+    }
+    refreshRealtimeColumns();
+}
+
+void DeviceConfigPage::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    if (m_realtimeTimer) {
+        m_realtimeTimer->stop();
+    }
+}
+
 void DeviceConfigPage::refreshTables()
 {
-    const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
+    m_refreshDirty = false;
+    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
     const QList<MasterRow> masters = buildMasterRows();
+    m_slaveRowByDeviceKey.clear();
+    qDebug() << "[DBG_PAGE] DeviceConfigPage refreshTables executed deviceCount:"
+             << devices.size()
+             << "masterRowCount:" << masters.size()
+             << "slaveRowCount:" << devices.size();
 
     m_masterTable->setRowCount(masters.size());
     for (int row = 0; row < masters.size(); ++row) {
@@ -185,19 +268,60 @@ void DeviceConfigPage::refreshTables()
         m_slaveTable->setItem(row, 3, readonlyItem(d.deviceName));
         m_slaveTable->setItem(row, 4, readonlyItem(d.areaName));
         m_slaveTable->setItem(row, 5, readonlyItem(d.gatewayName.isEmpty() ? d.gatewayId : d.gatewayName));
-        m_slaveTable->setItem(row, 6, readonlyItem(displayTime(d.lastUpdateTime)));
-        addStatusItem(m_slaveTable, row, 7, d.online ? QStringLiteral("online") : d.status);
-        m_slaveTable->setItem(row, 8, readonlyItem(QStringLiteral("设备表")));
+        m_slaveTable->setItem(row, kSlaveColTemperature, readonlyItem(QStringLiteral("-")));
+        m_slaveTable->setItem(row, kSlaveColHumidity, readonlyItem(QStringLiteral("-")));
+        m_slaveTable->setItem(row, kSlaveColRelay, readonlyItem(QStringLiteral("-")));
+        m_slaveTable->setItem(row, kSlaveColLastUpdate, readonlyItem(displayTime(d.lastUpdateTime)));
+        addStatusItem(m_slaveTable, row, kSlaveColStatus, d.online ? QStringLiteral("online") : d.status);
+        m_slaveTable->setItem(row, kSlaveColSource, readonlyItem(QStringLiteral("设备表")));
+        m_slaveRowByDeviceKey.insert(d.key(), row);
         addDeleteButton(m_slaveTable, row, false, d.gatewayId, d.port, d.slaveAddr > 0 ? d.slaveAddr : d.deviceId);
     }
+    refreshRealtimeColumns();
+}
+
+void DeviceConfigPage::refreshRealtimeColumns()
+{
+    if (!m_slaveTable || !m_dataManager) {
+        return;
+    }
+
+    const QList<DeviceNode> devices = m_dataManager->deviceTreeSnapshot();
+    int updatedRows = 0;
+    for (const DeviceNode &device : devices) {
+        const int row = m_slaveRowByDeviceKey.value(device.key(), -1);
+        if (row < 0 || row >= m_slaveTable->rowCount()) {
+            continue;
+        }
+
+        const RealtimeDeviceData realtime = m_dataManager
+            ? m_dataManager->deviceData(device.key())
+            : RealtimeDeviceData();
+        const bool hasRealtimeNode = !realtime.node.gatewayId.isEmpty() &&
+                                     !realtime.node.port.isEmpty() &&
+                                     realtime.node.deviceId > 0;
+        const DeviceNode displayNode = hasRealtimeNode ? realtime.node : device;
+
+        m_slaveTable->setItem(row, kSlaveColTemperature, readonlyItem(realtimeTemperatureText(device.key())));
+        m_slaveTable->setItem(row, kSlaveColHumidity, readonlyItem(realtimeHumidityText(device.key())));
+        m_slaveTable->setItem(row, kSlaveColRelay, readonlyItem(realtimeRelayText(device.key())));
+        m_slaveTable->setItem(row, kSlaveColLastUpdate, readonlyItem(displayTime(displayNode.lastUpdateTime)));
+        addStatusItem(m_slaveTable, row, kSlaveColStatus, displayNode.online ? QStringLiteral("online") : displayNode.status);
+        m_slaveTable->setItem(row, kSlaveColSource, readonlyItem(realtimeSourceText(device.key())));
+        ++updatedRows;
+    }
+
+    qDebug() << "[DBG_PAGE] DeviceConfigPage refreshRealtimeColumns updatedRows:"
+             << updatedRows
+             << "slaveRowCount:" << m_slaveTable->rowCount();
 }
 
 QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows() const
 {
     QMap<QString, MasterRow> rows;
-    const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
-    const QList<GatewayNode> gateways = m_device ? m_device->allGateways() : QList<GatewayNode>();
-    const QList<PortNode> ports = m_device ? m_device->allPorts() : QList<PortNode>();
+    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
+    const QList<GatewayNode> gateways = m_dataManager ? m_dataManager->gatewaySnapshot() : QList<GatewayNode>();
+    const QList<PortNode> ports = m_dataManager ? m_dataManager->portSnapshot() : QList<PortNode>();
     QMap<QString, GatewayNode> gatewayMap;
 
     for (const GatewayNode &gateway : gateways) {
@@ -320,8 +444,8 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
     auto *button = new QPushButton(QStringLiteral("删除"), table);
     button->setProperty("danger", true);
     bool serviceOffline = false;
-    if (m_device) {
-        const QList<DeviceNode> devices = m_device->allDevices();
+    if (m_dataManager) {
+        const QList<DeviceNode> devices = m_dataManager->deviceTreeSnapshot();
         for (const DeviceNode &node : devices) {
             if (node.gatewayId != gatewayId || (!portId.isEmpty() && node.port != portId)) {
                 continue;
@@ -364,6 +488,55 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         }
     });
     table->setCellWidget(row, table->columnCount() - 1, button);
+}
+
+QString DeviceConfigPage::realtimeTemperatureText(const QString &deviceKey) const
+{
+    if (!m_dataManager) {
+        return QStringLiteral("-");
+    }
+    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("sensor_th")) {
+        return QStringLiteral("-");
+    }
+    return QStringLiteral("%1 ℃").arg(data.sensorTh.temperature, 0, 'f', 1);
+}
+
+QString DeviceConfigPage::realtimeHumidityText(const QString &deviceKey) const
+{
+    if (!m_dataManager) {
+        return QStringLiteral("-");
+    }
+    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("sensor_th")) {
+        return QStringLiteral("-");
+    }
+    return QStringLiteral("%1 %").arg(data.sensorTh.humidity, 0, 'f', 1);
+}
+
+QString DeviceConfigPage::realtimeRelayText(const QString &deviceKey) const
+{
+    if (!m_dataManager) {
+        return QStringLiteral("-");
+    }
+    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("relay")) {
+        return QStringLiteral("-");
+    }
+    QStringList channels;
+    for (auto it = data.relay.channels.cbegin(); it != data.relay.channels.cend(); ++it) {
+        channels << QStringLiteral("%1:%2").arg(it.key(), it.value() ? QStringLiteral("ON") : QStringLiteral("OFF"));
+    }
+    return channels.isEmpty() ? QStringLiteral("-") : channels.join(QStringLiteral(" "));
+}
+
+QString DeviceConfigPage::realtimeSourceText(const QString &deviceKey) const
+{
+    if (!m_dataManager) {
+        return QStringLiteral("设备表");
+    }
+    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    return data.points.isEmpty() ? QStringLiteral("设备表") : QStringLiteral("实时缓存");
 }
 
 void DeviceConfigPage::showAddSlaveDialog()
@@ -443,7 +616,7 @@ void DeviceConfigPage::showAddSlaveDialog()
 
 void DeviceConfigPage::showSyncConfigDialog()
 {
-    const QList<DeviceNode> devices = m_device ? m_device->allDevices() : QList<DeviceNode>();
+    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
     if (devices.isEmpty()) {
         QMessageBox::information(this,
                                  QStringLiteral("配置同步"),

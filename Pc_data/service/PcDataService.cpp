@@ -2,8 +2,10 @@
 
 #include <chrono>
 #include <iostream>
+#include <algorithm>
 
 #include "model/ModelConverter.hpp"
+#include "storage/PcDatabase.hpp"
 
 static const std::int64_t kRemovedDeviceIgnoreMs = 30000;
 
@@ -13,56 +15,180 @@ static std::string removedDeviceKey(const std::string& gatewayId,
                                     int deviceId);
 static std::string removedMasterKey(const std::string& gatewayId,
                                     const std::string& portId);
+static std::string deviceRegistryKey(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId);
+static std::string portRegistryKey(const std::string& gatewayId,
+                                   const std::string& portId);
+static std::string pointRegistryKey(const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId,
+                                    const std::string& pointKey);
 
 PcDataService::PcDataService()
 {
 }
-
 void PcDataService::handleTelemetryPack(const TelemetryPack& pack)
 {
     std::vector<TelemetryPoint> points = ModelConverter::toTelemetryPoints(pack);
     handleTelemetryPoints(points);
 }
-
 void PcDataService::handleTelemetryPoints(const std::vector<TelemetryPoint>& points)
 {
     const std::int64_t receiveTimeMs = currentTimeMs();
 
     std::lock_guard<std::mutex> lock(m_mutex);
     pruneExpiredRemovedDevicesLocked(receiveTimeMs);
+    int updatedCount = 0;
+    int skippedCount = 0;
+
+    std::cout << "[DBG_TELEMETRY] PcDataService handleTelemetryPoints inputCount="
+              << points.size()
+              << " snapshotBefore=" << m_snapshot.size()
+              << std::endl;
 
     for (auto point : points) {
         point.receiveTimeMs = receiveTimeMs;
         if (point.pointId.empty()) {
+            ++skippedCount;
             continue;
         }
         if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId) ||
             isRemovedMasterLocked(point.gatewayId, point.portId)) {
-            std::cout << "deleted device telemetry dropped: gatewayId=" << point.gatewayId
-                      << " portId=" << point.portId
-                      << " deviceId=" << point.deviceId
-                      << " pointId=" << point.pointId << std::endl;
+            ++skippedCount;
             continue;
         }
 
         auto old = m_snapshot.find(point.pointId);
         if (old == m_snapshot.end() || point.receiveTimeMs >= old->second.receiveTimeMs) {
-            const std::int64_t oldTs = old == m_snapshot.end() ? 0 : old->second.timestampMs;
-            const std::int64_t oldReceiveTs = old == m_snapshot.end() ? 0 : old->second.receiveTimeMs;
             m_snapshot[point.pointId] = point;
-            std::cout << "snapshot updated: pointId=" << point.pointId
-                      << " oldTs=" << oldTs
-                      << " newTs=" << point.timestampMs
-                      << " oldReceiveTs=" << oldReceiveTs
-                      << " newReceiveTs=" << point.receiveTimeMs << std::endl;
+            ++updatedCount;
         } else {
-            std::cout << "snapshot stale dropped: pointId=" << point.pointId
-                      << " oldTs=" << old->second.timestampMs
-                      << " newTs=" << point.timestampMs
-                      << " oldReceiveTs=" << old->second.receiveTimeMs
-                      << " newReceiveTs=" << point.receiveTimeMs << std::endl;
+            ++skippedCount;
         }
     }
+
+    std::cout << "[DBG_TELEMETRY] PcDataService handleTelemetryPoints updated="
+              << updatedCount
+              << " skipped=" << skippedCount
+              << " snapshotAfter=" << m_snapshot.size()
+              << std::endl;
+}
+
+void PcDataService::updateDeviceRegistry(const std::vector<DeviceRecord>& devices)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const DeviceRecord& device : devices) {
+        if (device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0) {
+            continue;
+        }
+        m_deviceRegistry[deviceRegistryKey(device.gatewayId, device.portId, device.deviceId)] = device;
+        m_registeredGateways.insert(device.gatewayId);
+        m_registeredPorts.insert(portRegistryKey(device.gatewayId, device.portId));
+        m_registeredDeviceTypes[registryDeviceKey(device.gatewayId, device.portId, device.deviceId)] = device.deviceType;
+    }
+}
+
+void PcDataService::updateDeviceRegistry(const DeviceRecord& device)
+{
+    updateDeviceRegistry(std::vector<DeviceRecord>{device});
+}
+
+void PcDataService::updateGatewayPorts(const std::vector<GatewayPort>& ports)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const GatewayPort& port : ports) {
+        if (port.gatewayId.empty() || port.portId.empty()) {
+            continue;
+        }
+        m_gatewayPorts[portRegistryKey(port.gatewayId, port.portId)] = port;
+        m_registeredGateways.insert(port.gatewayId);
+        m_registeredPorts.insert(portRegistryKey(port.gatewayId, port.portId));
+    }
+}
+
+void PcDataService::updateGatewayPort(const GatewayPort& port)
+{
+    updateGatewayPorts(std::vector<GatewayPort>{port});
+}
+
+void PcDataService::updateGatewayStatuses(const std::vector<GatewayStatus>& gateways)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const GatewayStatus& gateway : gateways) {
+        if (gateway.gatewayId.empty()) {
+            continue;
+        }
+        m_gatewayStatuses[gateway.gatewayId] = gateway;
+        m_registeredGateways.insert(gateway.gatewayId);
+    }
+}
+
+void PcDataService::updateGatewayStatus(const GatewayStatus& gateway)
+{
+    updateGatewayStatuses(std::vector<GatewayStatus>{gateway});
+}
+
+void PcDataService::updatePointConfigs(const std::vector<PointConfig>& configs)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const PointConfig& config : configs) {
+        if (config.gatewayId.empty() || config.portId.empty() || config.deviceId <= 0 || config.pointKey.empty()) {
+            continue;
+        }
+        m_pointConfigs[pointRegistryKey(config.gatewayId,
+                                        config.portId,
+                                        config.deviceId,
+                                        config.pointKey)] = config;
+        m_registeredPointConfigs.insert(registryPointKey(config.gatewayId,
+                                                         config.portId,
+                                                         config.deviceId,
+                                                         config.pointKey));
+    }
+}
+
+std::vector<DeviceRecord> PcDataService::getDeviceRegistrySnapshot() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<DeviceRecord> result;
+    result.reserve(m_deviceRegistry.size());
+    for (const auto& item : m_deviceRegistry) {
+        result.push_back(item.second);
+    }
+    return result;
+}
+
+std::vector<GatewayPort> PcDataService::getGatewayPortSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<GatewayPort> result;
+    result.reserve(m_gatewayPorts.size());
+    for (const auto& item : m_gatewayPorts) {
+        result.push_back(item.second);
+    }
+    return result;
+}
+
+std::vector<GatewayStatus> PcDataService::getGatewayStatusSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<GatewayStatus> result;
+    result.reserve(m_gatewayStatuses.size());
+    for (const auto& item : m_gatewayStatuses) {
+        result.push_back(item.second);
+    }
+    return result;
+}
+
+std::vector<PointConfig> PcDataService::getPointConfigSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<PointConfig> result;
+    result.reserve(m_pointConfigs.size());
+    for (const auto& item : m_pointConfigs) {
+        result.push_back(item.second);
+    }
+    return result;
 }
 
 std::vector<TelemetryPoint> PcDataService::getLatestPoints() const
@@ -77,6 +203,43 @@ std::vector<TelemetryPoint> PcDataService::getLatestPoints() const
     }
 
     return result;
+}
+
+std::vector<TelemetryPoint> PcDataService::getLatestPointsSnapshot() const
+{
+    return getLatestPoints();
+}
+
+std::vector<TelemetryPoint> PcDataService::getLatestPointsForDevice(const std::string& gatewayId,
+                                                                    const std::string& portId,
+                                                                    int deviceId) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<TelemetryPoint> result;
+    for (const auto& item : m_snapshot) {
+        const TelemetryPoint& point = item.second;
+        if (point.gatewayId == gatewayId &&
+            point.portId == portId &&
+            point.deviceId == deviceId) {
+            result.push_back(point);
+        }
+    }
+    return result;
+}
+
+bool PcDataService::getDeviceByKey(const std::string& gatewayId,
+                                   const std::string& portId,
+                                   int deviceId,
+                                   DeviceRecord& outDevice) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto it = m_deviceRegistry.find(deviceRegistryKey(gatewayId, portId, deviceId));
+    if (it == m_deviceRegistry.end()) {
+        return false;
+    }
+    outDevice = it->second;
+    return true;
 }
 
 bool PcDataService::getPointById(const std::string& pointId, TelemetryPoint& outPoint) const
@@ -114,6 +277,15 @@ bool PcDataService::removeDeviceData(const std::string& gatewayId,
             ++it;
         }
     }
+    m_registeredDeviceTypes.erase(registryDeviceKey(gatewayId, portId, deviceId));
+    const std::string pointPrefix = registryDeviceKey(gatewayId, portId, deviceId) + "/";
+    for (auto it = m_registeredPointConfigs.begin(); it != m_registeredPointConfigs.end(); ) {
+        if (it->rfind(pointPrefix, 0) == 0) {
+            it = m_registeredPointConfigs.erase(it);
+        } else {
+            ++it;
+        }
+    }
     rememberRemovedDeviceLocked(gatewayId, portId, deviceId, nowMs);
 
     return removed;
@@ -141,6 +313,22 @@ bool PcDataService::removeMasterData(const std::string& gatewayId,
             ++it;
         }
     }
+    const std::string masterPrefix = registryPortKey(gatewayId, portId) + "/";
+    for (auto it = m_registeredDeviceTypes.begin(); it != m_registeredDeviceTypes.end(); ) {
+        if (it->first.rfind(masterPrefix, 0) == 0) {
+            it = m_registeredDeviceTypes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = m_registeredPointConfigs.begin(); it != m_registeredPointConfigs.end(); ) {
+        if (it->rfind(masterPrefix, 0) == 0) {
+            it = m_registeredPointConfigs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    m_registeredPorts.erase(registryPortKey(gatewayId, portId));
     m_removedMasters[removedMasterKey(gatewayId, portId)] = nowMs + kRemovedDeviceIgnoreMs;
 
     return removed;
@@ -182,6 +370,7 @@ std::vector<TelemetryPoint> PcDataService::filterRemovedPoints(const std::vector
     pruneExpiredRemovedDevicesLocked(currentTimeMs());
 
     std::vector<TelemetryPoint> result;
+    int filteredCount = 0;
     result.reserve(points.size());
     for (const TelemetryPoint& point : points) {
         if (isRemovedDeviceLocked(point.gatewayId, point.portId, point.deviceId) ||
@@ -190,11 +379,232 @@ std::vector<TelemetryPoint> PcDataService::filterRemovedPoints(const std::vector
                       << " portId=" << point.portId
                       << " deviceId=" << point.deviceId
                       << " pointId=" << point.pointId << std::endl;
+            ++filteredCount;
             continue;
         }
         result.push_back(point);
     }
+    std::cout << "[DBG_TELEMETRY] filterRemovedPoints before="
+              << points.size()
+              << " after=" << result.size()
+              << " filtered=" << filteredCount
+              << std::endl;
     return result;
+}
+
+void PcDataService::rememberGatewayRegistry(const GatewayRegistry& registry)
+{
+    if (registry.gatewayId.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_registeredGateways.insert(registry.gatewayId);
+}
+
+void PcDataService::rememberGatewayPorts(const std::vector<GatewayPort>& ports)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const GatewayPort& port : ports) {
+        if (port.gatewayId.empty() || port.portId.empty()) {
+            continue;
+        }
+        m_registeredGateways.insert(port.gatewayId);
+        m_registeredPorts.insert(registryPortKey(port.gatewayId, port.portId));
+        m_gatewayPorts[portRegistryKey(port.gatewayId, port.portId)] = port;
+    }
+}
+
+void PcDataService::rememberDeviceRegistry(const DeviceRecord& device)
+{
+    if (device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_registeredGateways.insert(device.gatewayId);
+    m_registeredPorts.insert(registryPortKey(device.gatewayId, device.portId));
+    m_registeredDeviceTypes[registryDeviceKey(device.gatewayId, device.portId, device.deviceId)] =
+        device.deviceType;
+    m_deviceRegistry[deviceRegistryKey(device.gatewayId, device.portId, device.deviceId)] = device;
+}
+
+void PcDataService::rememberDeviceRegistries(const std::vector<DeviceRecord>& devices)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const DeviceRecord& device : devices) {
+        if (device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0) {
+            continue;
+        }
+        m_registeredGateways.insert(device.gatewayId);
+        m_registeredPorts.insert(registryPortKey(device.gatewayId, device.portId));
+        m_registeredDeviceTypes[registryDeviceKey(device.gatewayId, device.portId, device.deviceId)] =
+            device.deviceType;
+        m_deviceRegistry[deviceRegistryKey(device.gatewayId, device.portId, device.deviceId)] = device;
+    }
+}
+
+void PcDataService::rememberPointConfigs(const std::vector<PointConfig>& configs)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const PointConfig& config : configs) {
+        if (config.gatewayId.empty() || config.portId.empty() ||
+            config.deviceId <= 0 || config.pointKey.empty()) {
+            continue;
+        }
+        m_registeredPointConfigs.insert(registryPointKey(config.gatewayId,
+                                                         config.portId,
+                                                         config.deviceId,
+                                                         config.pointKey));
+        m_pointConfigs[pointRegistryKey(config.gatewayId,
+                                        config.portId,
+                                        config.deviceId,
+                                        config.pointKey)] = config;
+    }
+}
+
+void PcDataService::updatePointConfig(const PointConfig& config)
+{
+    updatePointConfigs(std::vector<PointConfig>{config});
+}
+
+void PcDataService::replaceGatewayRegistry(const std::string& gatewayId,
+                                           const std::vector<GatewayPort>& ports,
+                                           const std::vector<DeviceRecord>& devices,
+                                           const std::vector<PointConfig>& pointConfigs,
+                                           bool fullSnapshot)
+{
+    if (gatewayId.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_registeredGateways.insert(gatewayId);
+
+    if (fullSnapshot) {
+        for (auto it = m_registeredPorts.begin(); it != m_registeredPorts.end(); ) {
+            if (it->rfind(gatewayId + "/", 0) == 0) {
+                it = m_registeredPorts.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_registeredDeviceTypes.begin(); it != m_registeredDeviceTypes.end(); ) {
+            if (it->first.rfind(gatewayId + "/", 0) == 0) {
+                it = m_registeredDeviceTypes.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_registeredPointConfigs.begin(); it != m_registeredPointConfigs.end(); ) {
+            if (it->rfind(gatewayId + "/", 0) == 0) {
+                it = m_registeredPointConfigs.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_deviceRegistry.begin(); it != m_deviceRegistry.end(); ) {
+            const DeviceRecord& device = it->second;
+            if (device.gatewayId == gatewayId) {
+                it = m_deviceRegistry.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_gatewayPorts.begin(); it != m_gatewayPorts.end(); ) {
+            if (it->second.gatewayId == gatewayId) {
+                it = m_gatewayPorts.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_pointConfigs.begin(); it != m_pointConfigs.end(); ) {
+            if (it->second.gatewayId == gatewayId) {
+                it = m_pointConfigs.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    for (const GatewayPort& port : ports) {
+        if (port.gatewayId == gatewayId && !port.portId.empty()) {
+            m_registeredPorts.insert(registryPortKey(port.gatewayId, port.portId));
+            m_gatewayPorts[portRegistryKey(port.gatewayId, port.portId)] = port;
+        }
+    }
+
+    for (const DeviceRecord& device : devices) {
+        if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
+            m_registeredPorts.insert(registryPortKey(device.gatewayId, device.portId));
+            m_registeredDeviceTypes[registryDeviceKey(device.gatewayId, device.portId, device.deviceId)] =
+                device.deviceType;
+            m_deviceRegistry[deviceRegistryKey(device.gatewayId, device.portId, device.deviceId)] = device;
+        }
+    }
+
+    for (const PointConfig& config : pointConfigs) {
+        if (config.gatewayId == gatewayId && !config.portId.empty() &&
+            config.deviceId > 0 && !config.pointKey.empty()) {
+            m_registeredPointConfigs.insert(registryPointKey(config.gatewayId,
+                                                             config.portId,
+                                                             config.deviceId,
+                                                             config.pointKey));
+            m_pointConfigs[pointRegistryKey(config.gatewayId,
+                                            config.portId,
+                                            config.deviceId,
+                                            config.pointKey)] = config;
+        }
+    }
+}
+
+bool PcDataService::gatewayRegistered(const std::string& gatewayId) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_registeredGateways.find(gatewayId) != m_registeredGateways.end() ||
+           std::any_of(m_deviceRegistry.begin(), m_deviceRegistry.end(), [&](const auto& item) {
+               return item.second.gatewayId == gatewayId;
+           }) ||
+           std::any_of(m_gatewayPorts.begin(), m_gatewayPorts.end(), [&](const auto& item) {
+               return item.second.gatewayId == gatewayId;
+           });
+}
+
+bool PcDataService::portRegistered(const std::string& gatewayId, const std::string& portId) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_registeredPorts.find(registryPortKey(gatewayId, portId)) != m_registeredPorts.end() ||
+           m_gatewayPorts.find(portRegistryKey(gatewayId, portId)) != m_gatewayPorts.end();
+}
+
+bool PcDataService::deviceRegistered(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_registeredDeviceTypes.find(registryDeviceKey(gatewayId, portId, deviceId)) !=
+           m_registeredDeviceTypes.end() ||
+           m_deviceRegistry.find(deviceRegistryKey(gatewayId, portId, deviceId)) != m_deviceRegistry.end();
+}
+
+std::string PcDataService::registeredDeviceType(const std::string& gatewayId,
+                                                const std::string& portId,
+                                                int deviceId) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto it = m_registeredDeviceTypes.find(registryDeviceKey(gatewayId, portId, deviceId));
+    return it == m_registeredDeviceTypes.end() ? std::string() : it->second;
+}
+
+bool PcDataService::pointConfigRegistered(const std::string& gatewayId,
+                                          const std::string& portId,
+                                          int deviceId,
+                                          const std::string& pointKey) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_registeredPointConfigs.find(registryPointKey(gatewayId, portId, deviceId, pointKey)) !=
+           m_registeredPointConfigs.end() ||
+           m_pointConfigs.find(pointRegistryKey(gatewayId, portId, deviceId, pointKey)) != m_pointConfigs.end();
 }
 
 std::vector<SyncGatewayPending> PcDataService::beginSyncConfigRequest(const std::vector<SyncGatewaySelection>& targets)
@@ -322,23 +732,23 @@ std::vector<SyncConfigResult> PcDataService::collectSyncConfigTimeouts(std::int6
 
 void PcDataService::rememberPendingCommand(const PendingCommandTarget& target)
 {
-    if (target.boardSeq <= 0 || target.commandId.empty() || target.commandType.empty()) {
+    if (target.commandId.empty() || target.commandType.empty()) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_pendingCommandsByBoardSeq[target.boardSeq] = target;
+    m_pendingCommandsByCommandId[target.commandId] = target;
 }
 
-bool PcDataService::findPendingCommand(std::int64_t boardSeq, PendingCommandTarget& target) const
+bool PcDataService::findPendingCommand(const std::string& commandId, PendingCommandTarget& target) const
 {
-    if (boardSeq <= 0) {
+    if (commandId.empty()) {
         return false;
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = m_pendingCommandsByBoardSeq.find(boardSeq);
-    if (it == m_pendingCommandsByBoardSeq.end()) {
+    auto it = m_pendingCommandsByCommandId.find(commandId);
+    if (it == m_pendingCommandsByCommandId.end()) {
         return false;
     }
 
@@ -346,25 +756,25 @@ bool PcDataService::findPendingCommand(std::int64_t boardSeq, PendingCommandTarg
     return true;
 }
 
-bool PcDataService::takePendingCommand(std::int64_t boardSeq, PendingCommandTarget& target)
+bool PcDataService::takePendingCommand(const std::string& commandId, PendingCommandTarget& target)
 {
-    if (boardSeq <= 0) {
+    if (commandId.empty()) {
         return false;
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = m_pendingCommandsByBoardSeq.find(boardSeq);
-    if (it == m_pendingCommandsByBoardSeq.end()) {
+    auto it = m_pendingCommandsByCommandId.find(commandId);
+    if (it == m_pendingCommandsByCommandId.end()) {
         return false;
     }
 
     target = it->second;
-    m_pendingCommandsByBoardSeq.erase(it);
+    m_pendingCommandsByCommandId.erase(it);
     return true;
 }
 
-std::vector<PendingCommandTarget> PcDataService::collectCommandTimeouts(std::int64_t nowMs,
-                                                                        std::int64_t timeoutMs)
+std::vector<PendingCommandTarget> PcDataService::collectCommandSoftTimeouts(std::int64_t nowMs,
+                                                                            std::int64_t timeoutMs)
 {
     std::vector<PendingCommandTarget> results;
     if (nowMs <= 0 || timeoutMs <= 0) {
@@ -372,12 +782,31 @@ std::vector<PendingCommandTarget> PcDataService::collectCommandTimeouts(std::int
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto it = m_pendingCommandsByBoardSeq.begin(); it != m_pendingCommandsByBoardSeq.end(); ) {
-        if (nowMs - it->second.requestTimeMs >= timeoutMs) {
+    for (auto it = m_pendingCommandsByCommandId.begin(); it != m_pendingCommandsByCommandId.end(); ++it) {
+        const std::int64_t ageMs = nowMs - it->second.requestTimeMs;
+        if (!it->second.timeoutNotified && ageMs >= timeoutMs) {
+            it->second.timeoutNotified = true;
             results.push_back(it->second);
-            it = m_pendingCommandsByBoardSeq.erase(it);
-        } else {
-            ++it;
+        }
+    }
+
+    return results;
+}
+
+std::vector<PendingCommandTarget> PcDataService::collectCommandHardTimeouts(std::int64_t nowMs,
+                                                                            std::int64_t timeoutMs)
+{
+    std::vector<PendingCommandTarget> results;
+    if (nowMs <= 0 || timeoutMs <= 0) {
+        return results;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto it = m_pendingCommandsByCommandId.begin(); it != m_pendingCommandsByCommandId.end(); ++it) {
+        const std::int64_t ageMs = nowMs - it->second.requestTimeMs;
+        if (!it->second.hardTimeoutNotified && ageMs >= timeoutMs) {
+            it->second.hardTimeoutNotified = true;
+            results.push_back(it->second);
         }
     }
 
@@ -388,9 +817,38 @@ void PcDataService::clear()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_snapshot.clear();
+    m_deviceRegistry.clear();
+    m_gatewayPorts.clear();
+    m_gatewayStatuses.clear();
+    m_pointConfigs.clear();
+    m_registeredGateways.clear();
+    m_registeredPorts.clear();
+    m_registeredDeviceTypes.clear();
+    m_registeredPointConfigs.clear();
     m_removedDevices.clear();
     m_removedMasters.clear();
-    m_pendingCommandsByBoardSeq.clear();
+    m_pendingCommandsByCommandId.clear();
+}
+
+std::string PcDataService::registryDeviceKey(const std::string& gatewayId,
+                                             const std::string& portId,
+                                             int deviceId)
+{
+    return gatewayId + "/" + portId + "/" + std::to_string(deviceId);
+}
+
+std::string PcDataService::registryPortKey(const std::string& gatewayId,
+                                           const std::string& portId)
+{
+    return gatewayId + "/" + portId;
+}
+
+std::string PcDataService::registryPointKey(const std::string& gatewayId,
+                                            const std::string& portId,
+                                            int deviceId,
+                                            const std::string& pointKey)
+{
+    return registryDeviceKey(gatewayId, portId, deviceId) + "/" + pointKey;
 }
 
 void PcDataService::pruneExpiredRemovedDevicesLocked(std::int64_t nowMs) const
@@ -486,4 +944,25 @@ static std::string removedMasterKey(const std::string& gatewayId,
                                     const std::string& portId)
 {
     return gatewayId + "/" + portId;
+}
+
+static std::string deviceRegistryKey(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId)
+{
+    return gatewayId + "/" + portId + "/" + std::to_string(deviceId);
+}
+
+static std::string portRegistryKey(const std::string& gatewayId,
+                                   const std::string& portId)
+{
+    return gatewayId + "/" + portId;
+}
+
+static std::string pointRegistryKey(const std::string& gatewayId,
+                                    const std::string& portId,
+                                    int deviceId,
+                                    const std::string& pointKey)
+{
+    return deviceRegistryKey(gatewayId, portId, deviceId) + "/" + pointKey;
 }

@@ -42,7 +42,7 @@ class MqttBus:
         print(f"register_topic      = {config.REGISTER_TOPIC}")
         print(f"publish up_topic    = {config.UP_TOPIC}")
         print(f"publish port_up     = {config.PORT_UP_TOPIC}")
-        print(f"subscribe cmd_topic = {config.CMD_TOPIC}")
+        print(f"subscribe cmd       = {config.CMD_TOPIC}")
         print(f"subscribe cmd_wild  = {config.CMD_WILDCARD_TOPIC}")
         print("=====================================")
 
@@ -86,7 +86,7 @@ class MqttBus:
     def publish(self, payload: Dict[str, Any]):
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         msg_type = payload.get("type") or ""
-        if msg_type in {"gateway_register", "port_register", "port_status", "device_config_snapshot", "config_snapshot"}:
+        if msg_type in {"gateway_register", "port_register", "device_register", "device_config_snapshot", "config_snapshot"}:
             topic = config.REGISTER_TOPIC
         elif msg_type in {"gateway_heartbeat", "gateway_status"}:
             topic = config.UP_TOPIC

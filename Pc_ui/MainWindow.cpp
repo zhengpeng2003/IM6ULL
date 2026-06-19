@@ -13,6 +13,7 @@
 #include "core/AlarmManager.h"
 #include "core/CommandManager.h"
 #include "core/ConfigManager.h"
+#include "core/UiStateStore.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -30,57 +31,6 @@
 
 namespace {
 
-QList<GatewayNode> parseGatewayStatusSnapshot(const QJsonObject &root)
-{
-    QList<GatewayNode> gateways;
-    const QJsonArray rows = root.value(QStringLiteral("gateways")).toArray();
-    for (const QJsonValue &value : rows) {
-        if (!value.isObject()) {
-            continue;
-        }
-        const QJsonObject row = value.toObject();
-        GatewayNode gateway;
-        gateway.gatewayId = row.value(QStringLiteral("gatewayId")).toString();
-        gateway.gatewayName = row.value(QStringLiteral("gatewayName")).toString();
-        gateway.factoryId = row.value(QStringLiteral("factoryId")).toString();
-        gateway.areaId = row.value(QStringLiteral("areaId")).toString();
-        gateway.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
-        gateway.lastRegisterTimeMs = row.value(QStringLiteral("lastRegisterTimeMs")).toVariant().toLongLong();
-        gateway.lastHeartbeatTimeMs = row.value(QStringLiteral("lastHeartbeatTimeMs")).toVariant().toLongLong();
-        gateway.updateTimeMs = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
-        if (!gateway.gatewayId.isEmpty()) {
-            gateways.append(gateway);
-        }
-    }
-    return gateways;
-}
-
-QList<PortNode> parsePortStatusSnapshot(const QJsonObject &root)
-{
-    QList<PortNode> ports;
-    const QJsonArray rows = root.value(QStringLiteral("ports")).toArray();
-    for (const QJsonValue &value : rows) {
-        if (!value.isObject()) {
-            continue;
-        }
-        const QJsonObject row = value.toObject();
-        PortNode port;
-        port.gatewayId = row.value(QStringLiteral("gatewayId")).toString();
-        port.portId = row.value(QStringLiteral("portId")).toString();
-        port.portName = row.value(QStringLiteral("portName")).toString();
-        port.slot = row.value(QStringLiteral("slot")).toInt();
-        port.devicePath = row.value(QStringLiteral("devicePath")).toString();
-        port.baud = row.value(QStringLiteral("baud")).toInt();
-        port.status = row.value(QStringLiteral("status")).toString(QStringLiteral("unknown"));
-        port.lastRegisterTimeMs = row.value(QStringLiteral("lastRegisterTimeMs")).toVariant().toLongLong();
-        port.updateTimeMs = row.value(QStringLiteral("updateTimeMs")).toVariant().toLongLong();
-        if (!port.gatewayId.isEmpty() && !port.portId.isEmpty()) {
-            ports.append(port);
-        }
-    }
-    return ports;
-}
-
 QString ackCommandName(const QJsonObject &root)
 {
     QString command = root.value(QStringLiteral("cmd")).toString();
@@ -92,12 +42,16 @@ QString ackCommandName(const QJsonObject &root)
 
 bool ackSucceeded(const QJsonObject &root)
 {
+    if (root.value(QStringLiteral("stage")).toString() != QStringLiteral("done")) {
+        return false;
+    }
     if (root.contains(QStringLiteral("ok"))) {
-        return root.value(QStringLiteral("ok")).toBool();
+        return root.value(QStringLiteral("ok")).toBool() &&
+               root.value(QStringLiteral("status")).toString() == QStringLiteral("success");
     }
 
     const QString status = root.value(QStringLiteral("status")).toString();
-    return status == QStringLiteral("ok") || status == QStringLiteral("success");
+    return status == QStringLiteral("success");
 }
 
 } // namespace
@@ -116,8 +70,8 @@ void MainWindow::initIpc()
 {
     m_ipcClient = new IpcClient(this);
     m_ipcTimer = new QTimer(this);
+    m_uiPullTimer = new QTimer(this);
     m_ipcWatchdogTimer = new QTimer(this);
-    m_snapshotFallbackTimer = new QTimer(this);
 
     connect(m_ipcClient, &IpcClient::connected, this, [this]() {
         qDebug() << "Pc_ui IPC connected";
@@ -130,11 +84,6 @@ void MainWindow::initIpc()
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         m_lastIpcMessageMs = now;
         m_lastLatestPointsMs = now;
-        QTimer::singleShot(200, this, [this]() {
-            if (m_ipcClient && m_ipcClient->isConnected()) {
-                requestFullSnapshot();
-            }
-        });
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
@@ -170,15 +119,16 @@ void MainWindow::initIpc()
 
     });
 
-    connect(m_snapshotFallbackTimer, &QTimer::timeout, this, [this]() {
-        if (m_ipcClient && m_ipcClient->isConnected()) {
-            requestFullSnapshot();
-        }
+    connect(m_uiPullTimer, &QTimer::timeout, this, [this]() {
+        requestLatestPoints();
+        requestDevices();
+        requestGatewayStatus();
+        requestPortStatus();
     });
 
     connect(m_ipcWatchdogTimer, &QTimer::timeout, this, [this]() {
-        if (m_data) {
-            m_data->refreshOfflineStates(30000);
+        if (m_stateStore) {
+            m_stateStore->refreshOfflineStates(30000);
         }
 
         if (!m_ipcClient || !m_ipcClient->isConnected()) {
@@ -212,7 +162,7 @@ void MainWindow::initIpc()
     });
 
     m_ipcTimer->start(2000);
-    m_snapshotFallbackTimer->start(30000);
+    m_uiPullTimer->start(1000);
     m_ipcWatchdogTimer->start(1000);
     m_ipcClient->connectToServer();
 }
@@ -252,35 +202,26 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         if (m_alarm) {
             m_alarm->onAlarmMessage(root);
         }
-        if (m_alarmLogPage) {
-            m_alarmLogPage->refreshTable();
-        }
         return;
     }
 
-    if (type == "latest_points") {
+    if (type == "latest_points" ||
+        type == "devices_snapshot" ||
+        type == "gateway_status_snapshot" ||
+        type == "port_status_snapshot" ||
+        type == "state_snapshot" ||
+        type == "state_delta") {
         m_lastLatestPointsMs = QDateTime::currentMSecsSinceEpoch();
-        m_data->onLatestPointsMessage(root);
-        return;
-    }
-
-    if (type == "devices_snapshot") {
-        if (m_data) {
-            m_data->onDevicesSnapshotMessage(root);
+        if (type == "latest_points") {
+            qDebug() << "[DBG_UI_STATE] MainWindow latest_points frameBytes:" << frame.size()
+                     << "pointCount:" << root.value(QStringLiteral("points")).toArray().size()
+                     << "enterApplyIpcMessage:" << (m_stateStore != nullptr);
         }
-        return;
-    }
-
-    if (type == "gateway_status_snapshot") {
-        if (m_device) {
-            m_device->setGateways(parseGatewayStatusSnapshot(root));
+        if (m_stateStore) {
+            m_stateStore->applyIpcMessage(root);
         }
-        return;
-    }
-
-    if (type == "port_status_snapshot") {
-        if (m_device) {
-            m_device->setPorts(parsePortStatusSnapshot(root));
+        if (type == "latest_points") {
+            qDebug() << "[DBG_UI_STATE] MainWindow latest_points applyIpcMessage returned";
         }
         return;
     }
@@ -298,9 +239,11 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         if (action == "clear_all_data" && m_systemSettingPage) {
             m_systemSettingPage->onClearAllDataResult(root);
         }
-        if (root.value("ok").toBool() && m_data) {
+        if (root.value("ok").toBool()) {
             if (action == "delete_master_data") {
-                m_data->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
+                if (m_stateStore) {
+                    m_stateStore->removeMasterData(m_pendingDeleteGatewayId, m_pendingDeletePortId);
+                }
             } else if (action == "delete_device_data") {
                 onRemoveDeviceSucceeded(m_pendingDeleteGatewayId,
                                         m_pendingDeletePortId,
@@ -308,7 +251,9 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
             } else if (action == "clear_recovered_alarms" && m_alarm) {
                 m_alarm->clearRecoveredAlarms();
             } else if (action == "clear_all_data") {
-                m_data->clearRuntimeData();
+                if (m_stateStore) {
+                    m_stateStore->clearRuntimeData();
+                }
             }
         }
         m_pendingDeleteAction.clear();
@@ -354,7 +299,15 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 m_pendingDeleteDeviceId = 0;
                 requestFullSnapshot();
             }
-        } else if (command == QStringLiteral("add_device") && stage == QStringLiteral("done") && !ok) {
+        } else if (command == QStringLiteral("add_device") && stage == QStringLiteral("done")) {
+            if (ok) {
+                const QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
+                const QString portId = root.value(QStringLiteral("portId")).toString();
+                const int deviceId = root.value(QStringLiteral("deviceId")).toInt(
+                    root.value(QStringLiteral("slave_id")).toInt(root.value(QStringLiteral("slaveId")).toInt()));
+                onAddDeviceSucceeded(gatewayId, portId, deviceId);
+                requestGatewayStatus();
+            }
             requestFullSnapshot();
         }
         return;
@@ -376,6 +329,13 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
              commandType == QStringLiteral("cache") ||
              commandType == QStringLiteral("sync") ||
              commandType == QStringLiteral("get_config"))) {
+            if (commandType == QStringLiteral("add_device")) {
+                const QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
+                const QString portId = root.value(QStringLiteral("portId")).toString();
+                const int deviceId = root.value(QStringLiteral("deviceId")).toInt(
+                    root.value(QStringLiteral("slave_id")).toInt(root.value(QStringLiteral("slaveId")).toInt()));
+                onAddDeviceSucceeded(gatewayId, portId, deviceId);
+            }
             requestFullSnapshot();
             requestGatewayStatus();
         }
@@ -427,7 +387,6 @@ void MainWindow::requestDevices()
     if (!m_ipcClient || !m_ipcClient->isConnected()) {
         return;
     }
-
     m_ipcClient->sendMessage(QString(R"({"type":"get_devices"})"));
 }
 
@@ -436,7 +395,6 @@ void MainWindow::requestGatewayStatus()
     if (!m_ipcClient || !m_ipcClient->isConnected()) {
         return;
     }
-
     m_ipcClient->sendMessage(QString(R"({"type":"get_gateway_status"})"));
 }
 
@@ -445,16 +403,15 @@ void MainWindow::requestPortStatus()
     if (!m_ipcClient || !m_ipcClient->isConnected()) {
         return;
     }
-
     m_ipcClient->sendMessage(QString(R"({"type":"get_port_status"})"));
 }
 
 void MainWindow::requestFullSnapshot()
 {
+    requestLatestPoints();
+    requestDevices();
     requestGatewayStatus();
     requestPortStatus();
-    requestDevices();
-    requestLatestPoints();
 }
 
 void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit)
@@ -527,14 +484,25 @@ void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &p
     m_command->sendRemoveDeviceCommand(gatewayId, portId, deviceId);
 }
 
+void MainWindow::onAddDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId)
+{
+    if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        return;
+    }
+
+    if (m_stateStore) {
+        m_stateStore->forgetRemovedDevice(gatewayId, portId, deviceId);
+    }
+}
+
 void MainWindow::onRemoveDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId)
 {
     if (gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
         return;
     }
 
-    if (m_data) {
-        m_data->removeDeviceData(gatewayId, portId, deviceId);
+    if (m_stateStore) {
+        m_stateStore->removeDeviceData(gatewayId, portId, deviceId);
     }
     if (m_alarm) {
         m_alarm->removeDeviceAlarms(gatewayId, portId, deviceId);
@@ -635,8 +603,8 @@ void MainWindow::markIpcDataOffline()
     if (m_topBar) {
         m_topBar->setServiceOnline(false);
     }
-    if (m_data) {
-        m_data->markAllDevicesOffline();
+    if (m_stateStore) {
+        m_stateStore->markAllDevicesOffline();
     }
 }
 
@@ -647,6 +615,7 @@ void MainWindow::initManagers()
     m_alarm = new AlarmManager(this);
     m_command = new CommandManager(this);
     m_data = new DataManager(m_device, m_alarm, this);
+    m_stateStore = new UiStateStore(m_data, m_device, m_alarm, this);
 }
 
 void MainWindow::initUi()
@@ -670,10 +639,10 @@ void MainWindow::initUi()
     m_sideBar = new SideBar(this);
     m_stack = new QStackedWidget(this);
 
-    m_dashboardPage = new DashboardPage(m_data, m_device, m_alarm, this);
-    m_monitorPage = new MonitorPage(m_data, m_command, this);
-    m_trendPage = new TrendPage(m_data, this);
-    m_deviceConfigPage = new DeviceConfigPage(m_device, m_config, this);
+    m_dashboardPage = new DashboardPage(m_data, m_device, m_alarm, m_stateStore, this);
+    m_monitorPage = new MonitorPage(m_data, m_command, m_stateStore, this);
+    m_trendPage = new TrendPage(m_data, m_stateStore, this);
+    m_deviceConfigPage = new DeviceConfigPage(m_device, m_config, m_data, m_stateStore, this);
     m_alarmLogPage = new AlarmLogPage(m_alarm, this);
     m_systemSettingPage = new SystemSettingPage(this);
 
@@ -695,14 +664,14 @@ void MainWindow::initConnections()
 {
     connect(m_sideBar, &SideBar::pageChanged, m_stack, &QStackedWidget::setCurrentIndex);
 
-    connect(m_alarm, &AlarmManager::activeAlarmCountChanged,
-            m_topBar, &TopBar::setAlarmCount);
-
-    connect(m_device, &DeviceManager::onlineGatewayCountChanged,
-            m_topBar, &TopBar::setOnlineGatewayCount);
-
-    connect(m_device, &DeviceManager::onlineDeviceCountChanged,
-            m_topBar, &TopBar::setOnlineDeviceCount);
+    connect(m_stateStore, &UiStateStore::stateChanged, this, [this]() {
+        if (!m_topBar || !m_stateStore) {
+            return;
+        }
+        m_topBar->setOnlineGatewayCount(m_stateStore->onlineGatewayCount());
+        m_topBar->setOnlineDeviceCount(m_stateStore->onlineDeviceCount());
+        m_topBar->setAlarmCount(m_stateStore->activeAlarmCount());
+    });
 
     connect(m_trendPage, &TrendPage::historyQueryRequested,
             this, &MainWindow::sendHistoryQuery);

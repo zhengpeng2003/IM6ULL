@@ -42,6 +42,6 @@ private:
     QString successMessageForCommand(const QString &commandType) const;
 
     QHash<QString, CommandRecord> m_pending;
-    QHash<qint64, QString> m_seqToCmdId;
     QHash<QString, QTimer *> m_timeoutTimers;
+    mutable quint64 m_cmdCounter = 0;
 };

@@ -10,6 +10,7 @@
 #include "OfflinePublishQueueC.h"
 #include "port_manager.h"
 
+#include <json-c/json.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -26,7 +27,6 @@
 
 const char MQTT_DEFAULT_PUBLISH_TOPIC[] = "gateway/" DEFAULT_GATEWAY_ID "/up";
 const char MQTT_GATEWAY_REGISTER_TOPIC[] = "gateway/register";
-const char MQTT_GATEWAY_COMMAND_TOPIC[] = "cmd/" DEFAULT_GATEWAY_ID;
 const char MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC[] = "cmd/" DEFAULT_GATEWAY_ID "/#";
 
 /* ================= 内部结构 ================= */
@@ -175,7 +175,7 @@ int mqtt_make_gateway_command_topic(char *buffer, int buffer_size)
 {
     if (!buffer || buffer_size <= 0)
         return -1;
-    int len = snprintf(buffer, (size_t)buffer_size, "cmd/%s", DEFAULT_GATEWAY_ID);
+    int len = snprintf(buffer, (size_t)buffer_size, "cmd/%s/gateway", DEFAULT_GATEWAY_ID);
     return (len > 0 && len < buffer_size) ? 0 : -1;
 }
 
@@ -246,6 +246,26 @@ int mqtt_parse_port_up_topic(const char *topic,
     return copy_token(port_id, port_size, port, (size_t)(port_end - port));
 }
 
+static int mqtt_payload_is_ack(const char *payload)
+{
+    if (!payload)
+        return 0;
+
+    struct json_object *root = json_tokener_parse(payload);
+    if (!root)
+        return 0;
+
+    int is_ack = 0;
+    struct json_object *type_obj = NULL;
+    if (json_object_object_get_ex(root, "type", &type_obj)) {
+        const char *type = json_object_get_string(type_obj);
+        is_ack = type && strcmp(type, "ack") == 0;
+    }
+
+    json_object_put(root);
+    return is_ack;
+}
+
 /* ================= MQTT 回调函数 ================= */
 
 static void mqtt_message_handler(void *client, message_data_t *msg)
@@ -265,7 +285,6 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
     /*
      * 现在 Linux_data 订阅 Pc_data 下发的统一命令主题：
      *
-     *   cmd/<gatewayId>
      *   cmd/<gatewayId>/#
      *
      * 所有控制命令统一交给 data_command_process_message() 处理。
@@ -273,9 +292,6 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
      */
     char topic_gateway[64];
     char topic_port[64];
-    int is_gateway_cmd =
-        mqtt_parse_gateway_command_topic(topic, topic_gateway, sizeof(topic_gateway)) == 0 &&
-        strcmp(topic_gateway, DEFAULT_GATEWAY_ID) == 0;
     int is_port_cmd =
         mqtt_parse_port_command_topic(topic,
                                       topic_gateway,
@@ -284,7 +300,7 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
                                       sizeof(topic_port)) == 0 &&
         strcmp(topic_gateway, DEFAULT_GATEWAY_ID) == 0;
 
-    if (is_gateway_cmd || is_port_cmd) {
+    if (is_port_cmd) {
         char command[MQTT_PAYLOAD_MAX];
         int copy_len = payloadlen < (MQTT_PAYLOAD_MAX - 1)
                            ? payloadlen
@@ -294,6 +310,8 @@ static void mqtt_message_handler(void *client, message_data_t *msg)
         command[copy_len] = '\0';
 
         data_config_sync_handle_ack_json(command);
+        if (mqtt_payload_is_ack(command))
+            return;
         data_command_process_message(command);
         return;
     }
@@ -352,7 +370,6 @@ int mqtt_init(void)
     printf("[MQTT] client id: %s\n", MQTT_CLIENT_ID);
     printf("[MQTT] default publish topic: %s\n", MQTT_DEFAULT_PUBLISH_TOPIC);
     printf("[MQTT] gateway register topic: %s\n", MQTT_GATEWAY_REGISTER_TOPIC);
-    printf("[MQTT] command subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_TOPIC);
     printf("[MQTT] command subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC);
 
     offline_publish_queue_set_sender(mqtt_send_direct_if_connected);
@@ -380,7 +397,7 @@ int mqtt_init(void)
  *
  * 主要流程：
  * 1. 未连接时尝试连接 Broker
- * 2. 连接成功后订阅 cmd/<gatewayId> 和 cmd/<gatewayId>/#
+ * 2. 连接成功后订阅 cmd/<gatewayId>/#
  * 3. 发送网关注册包
  * 4. 发布当前端口/设备状态
  * 5. 定时发送网关心跳
@@ -446,12 +463,6 @@ void mqtt_poll(void)
 
     /* 2. 订阅统一命令主题 */
     if (g_connected && !g_subscribed) {
-        mqtt_subscribe(g_client,
-                       MQTT_GATEWAY_COMMAND_TOPIC,
-                       QOS0,
-                       mqtt_message_handler);
-        printf("[MQTT] subscribe topic: %s\n", MQTT_GATEWAY_COMMAND_TOPIC);
-
         mqtt_subscribe(g_client,
                        MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC,
                        QOS0,

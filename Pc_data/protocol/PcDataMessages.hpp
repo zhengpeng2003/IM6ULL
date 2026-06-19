@@ -17,7 +17,10 @@ std::string buildCommandAckJson(const std::string& cmdId,
                                 const std::string& commandType = std::string(),
                                 const std::string& stage = std::string(),
                                 const std::string& message = std::string(),
-                                std::int64_t boardSeq = 0);
+                                std::int64_t boardSeq = 0,
+                                const std::string& gatewayId = std::string(),
+                                const std::string& portId = std::string(),
+                                int deviceId = 0);
 std::string buildLatestPointsJson(const std::vector<TelemetryPoint>& points);
 std::string buildCommandLogUpdateJson(std::int64_t seq,
                                       const std::string& commandType,

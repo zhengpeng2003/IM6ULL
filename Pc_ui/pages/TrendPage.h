@@ -2,6 +2,7 @@
 #include <QString>
 #include <QWidget>
 class DataManager;
+class UiStateStore;
 class QComboBox;
 class QDateTimeAxis;
 class QLabel;
@@ -11,12 +12,14 @@ class QJsonObject;
 class QTableWidget;
 class QValueAxis;
 class DeviceTreeWidget;
+class QShowEvent;
+class QTimer;
 
 class TrendPage : public QWidget
 {
     Q_OBJECT
 public:
-    explicit TrendPage(DataManager *data, QWidget *parent = nullptr);
+    explicit TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *parent = nullptr);
 
 public slots:
     void onHistoryPointsMessage(const QJsonObject &obj);
@@ -25,9 +28,13 @@ signals:
     void historyQueryRequested(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
 
 private slots:
+    void scheduleRefreshPointTree();
     void refreshPointTree();
     void onPointSelected(const QString &pointId, const QString &deviceKey, const QString &pointName, const QString &unit);
     void queryHistory();
+
+protected:
+    void showEvent(QShowEvent *event) override;
 
 private:
     enum class HistoryRequestType {
@@ -59,6 +66,7 @@ private:
     void updateAxes(qint64 firstTimestampMs, qint64 lastTimestampMs, double minValue, double maxValue);
 
     DataManager *m_data = nullptr;
+    UiStateStore *m_stateStore = nullptr;
     DeviceTreeWidget *m_tree = nullptr;
     QComboBox *m_rangeCombo = nullptr;
     QLineSeries *m_series = nullptr;
@@ -74,5 +82,7 @@ private:
     qint64 m_lastEndMs = 0;
     HistoryRequest m_activeHistoryRequest;
     HistoryRequest m_pendingHistoryRequest;
+    QTimer *m_refreshTimer = nullptr;
+    bool m_refreshDirty = false;
     bool m_historyRequestInFlight = false;
 };

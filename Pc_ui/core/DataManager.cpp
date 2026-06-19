@@ -11,6 +11,7 @@
 
 static const qint64 kRealtimeFreshMs = 30000;
 static const qint64 kRealtimeOfflineMs = 90000;
+static const qint64 kRealtimeStaleToleranceMs = 1000;
 
 static int masterSlotFromPortId(const QString &portId)
 {
@@ -108,7 +109,55 @@ void DataManager::loadDemoData(bool demoMode)
 
 QList<DeviceNode> DataManager::deviceTreeSnapshot() const
 {
-    return m_deviceManager->allDevices();
+    QHash<QString, DeviceNode> merged;
+    if (m_deviceManager) {
+        const QList<DeviceNode> devices = m_deviceManager->allDevices();
+        for (const DeviceNode &device : devices) {
+            if (!device.gatewayId.isEmpty() && !device.port.isEmpty() && device.deviceId > 0) {
+                merged.insert(device.key(), device);
+            }
+        }
+    }
+
+    QMutexLocker locker(&m_mutex);
+    for (const RealtimeDeviceData &data : m_realtimeMap) {
+        if (data.node.gatewayId.isEmpty() || data.node.port.isEmpty() || data.node.deviceId <= 0) {
+            continue;
+        }
+
+        const QString key = data.node.key();
+        DeviceNode node = merged.value(key, data.node);
+        node.online = data.node.online;
+        node.status = data.node.status;
+        node.statusReason = data.node.statusReason;
+        node.lastUpdateTime = data.node.lastUpdateTime;
+        if (node.factoryId.isEmpty()) node.factoryId = data.node.factoryId;
+        if (node.factoryName.isEmpty()) node.factoryName = data.node.factoryName;
+        if (node.areaId.isEmpty()) node.areaId = data.node.areaId;
+        if (node.areaName.isEmpty()) node.areaName = data.node.areaName;
+        if (node.gatewayId.isEmpty()) node.gatewayId = data.node.gatewayId;
+        if (node.gatewayName.isEmpty()) node.gatewayName = data.node.gatewayName;
+        if (node.port.isEmpty()) node.port = data.node.port;
+        if (node.masterName.isEmpty()) node.masterName = data.node.masterName;
+        if (node.deviceName.isEmpty()) node.deviceName = data.node.deviceName;
+        if (node.deviceType.isEmpty()) node.deviceType = data.node.deviceType;
+        if (node.deviceId <= 0) node.deviceId = data.node.deviceId;
+        if (node.slaveAddr <= 0) node.slaveAddr = data.node.slaveAddr;
+        node.expectTelemetry = data.node.expectTelemetry;
+        merged.insert(key, node);
+    }
+
+    return merged.values();
+}
+
+QList<GatewayNode> DataManager::gatewaySnapshot() const
+{
+    return m_deviceManager ? m_deviceManager->allGateways() : QList<GatewayNode>();
+}
+
+QList<PortNode> DataManager::portSnapshot() const
+{
+    return m_deviceManager ? m_deviceManager->allPorts() : QList<PortNode>();
 }
 
 RealtimeDeviceData DataManager::deviceData(const QString &deviceKey) const
@@ -123,7 +172,7 @@ QList<RealtimeDeviceData> DataManager::allRealtimeData() const
     return m_realtimeMap.values();
 }
 
-void DataManager::refreshOfflineStates(qint64 timeoutMs)
+bool DataManager::refreshOfflineStates(qint64 timeoutMs)
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const QList<DeviceNode> devices = m_deviceManager->allDevices();
@@ -163,6 +212,7 @@ void DataManager::refreshOfflineStates(qint64 timeoutMs)
         emit deviceTreeChanged();
         emit realtimeDataUpdated();
     }
+    return changed;
 }
 
 void DataManager::removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
@@ -288,20 +338,47 @@ void DataManager::onLatestPointsMessage(const QJsonObject &obj)
         m_serviceOnline = true;
     }
     const QList<RealtimeDeviceData> parsedDevices = parseLatestPoints(obj);
+    m_debugLatestUpsertLogRemaining = 5;
+    qDebug() << "[DBG_DATA] onLatestPointsMessage pointCount:"
+             << obj.value(QStringLiteral("points")).toArray().size()
+             << "parsedDevices:" << parsedDevices.size();
     {
         QMutexLocker locker(&m_mutex);
         pruneExpiredDeletedDevicesLocked(QDateTime::currentMSecsSinceEpoch());
     }
 
+    bool changed = false;
+    int changedDevices = 0;
+    int loggedDevices = 0;
     for (const RealtimeDeviceData &data : parsedDevices) {
         if (isDeletedDevice(data.node.gatewayId, data.node.port, data.node.deviceId)) {
+            if (loggedDevices < 5) {
+                qDebug() << "[DBG_DATA] latest_points device skipped tombstone key:"
+                         << data.node.key();
+                ++loggedDevices;
+            }
             continue;
         }
-        upsertRealtimeData(data);
+        const bool deviceChanged = upsertRealtimeData(data);
+        if (loggedDevices < 5) {
+            qDebug() << "[DBG_DATA] latest_points upsert summary key:"
+                     << data.node.key()
+                     << "changed:" << deviceChanged
+                     << "pointCount:" << data.points.size();
+            ++loggedDevices;
+        }
+        if (deviceChanged) {
+            ++changedDevices;
+        }
+        changed = deviceChanged || changed;
     }
 
-    emit deviceTreeChanged();
-    emit realtimeDataUpdated();
+    qDebug() << "[DBG_DATA] onLatestPointsMessage changed:" << changed
+             << "changedDevices:" << changedDevices
+             << "parsedDevices:" << parsedDevices.size();
+    if (changed) {
+        emit realtimeDataUpdated();
+    }
 }
 
 void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
@@ -311,10 +388,9 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
         m_serviceOnline = true;
     }
     QList<DeviceNode> devices = parseDevicesSnapshot(obj);
-    QSet<QString> snapshotDeviceKeys;
-    for (const DeviceNode &device : devices) {
-        snapshotDeviceKeys.insert(deletedDeviceKey(device.gatewayId, device.port, device.deviceId));
-    }
+    qDebug() << "[DBG_DATA] devices_snapshot rawCount:"
+             << obj.value(QStringLiteral("devices")).toArray().size()
+             << "parsedDevices:" << devices.size();
 
     {
         QMutexLocker locker(&m_mutex);
@@ -329,25 +405,63 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
         }
     }
 
+    QHash<QString, DeviceNode> mergedDeviceMap;
     if (m_deviceManager) {
-        m_deviceManager->setDevices(devices);
+        const QList<DeviceNode> currentDevices = m_deviceManager->allDevices();
+        for (const DeviceNode &node : currentDevices) {
+            if (!node.gatewayId.isEmpty() && !node.port.isEmpty() && node.deviceId > 0) {
+                mergedDeviceMap.insert(node.key(), node);
+            }
+        }
+    }
+
+    for (const DeviceNode &node : devices) {
+        mergedDeviceMap.insert(node.key(), node);
     }
 
     {
         QMutexLocker locker(&m_mutex);
-        QSet<QString> visibleKeys;
-        for (const DeviceNode &node : devices) {
-            visibleKeys.insert(node.key());
-        }
+        for (auto it = m_realtimeMap.cbegin(); it != m_realtimeMap.cend(); ++it) {
+            const DeviceNode &node = it.value().node;
+            if (node.gatewayId.isEmpty() || node.port.isEmpty() || node.deviceId <= 0) {
+                continue;
+            }
 
+            DeviceNode mergedNode = mergedDeviceMap.value(node.key(), node);
+            mergedNode.online = node.online;
+            mergedNode.status = node.status;
+            mergedNode.statusReason = node.statusReason;
+            mergedNode.lastUpdateTime = node.lastUpdateTime;
+            if (mergedNode.factoryId.isEmpty()) mergedNode.factoryId = node.factoryId;
+            if (mergedNode.factoryName.isEmpty()) mergedNode.factoryName = node.factoryName;
+            if (mergedNode.areaId.isEmpty()) mergedNode.areaId = node.areaId;
+            if (mergedNode.areaName.isEmpty()) mergedNode.areaName = node.areaName;
+            if (mergedNode.gatewayId.isEmpty()) mergedNode.gatewayId = node.gatewayId;
+            if (mergedNode.gatewayName.isEmpty()) mergedNode.gatewayName = node.gatewayName;
+            if (mergedNode.port.isEmpty()) mergedNode.port = node.port;
+            if (mergedNode.masterName.isEmpty()) mergedNode.masterName = node.masterName;
+            if (mergedNode.deviceName.isEmpty()) mergedNode.deviceName = node.deviceName;
+            if (mergedNode.deviceType.isEmpty()) mergedNode.deviceType = node.deviceType;
+            if (mergedNode.deviceId <= 0) mergedNode.deviceId = node.deviceId;
+            if (mergedNode.slaveAddr <= 0) mergedNode.slaveAddr = node.slaveAddr;
+            mergedNode.expectTelemetry = node.expectTelemetry;
+            mergedDeviceMap.insert(node.key(), mergedNode);
+        }
+    }
+
+    if (m_deviceManager) {
+        m_deviceManager->setDevices(mergedDeviceMap.values());
+    }
+
+    {
+        QMutexLocker locker(&m_mutex);
         for (auto it = m_realtimeMap.begin(); it != m_realtimeMap.end(); ) {
             const DeviceNode &node = it.value().node;
             const QString tombstoneKey = deletedDeviceKey(node.gatewayId, node.port, node.deviceId);
             const qint64 expiresAt = m_deletedDevices.value(tombstoneKey, 0);
             const bool deleted = m_deletedDevices.contains(tombstoneKey) &&
                                  (expiresAt < 0 || expiresAt > QDateTime::currentMSecsSinceEpoch());
-            if (!visibleKeys.contains(it.key()) ||
-                deleted) {
+            if (deleted) {
                 it = m_realtimeMap.erase(it);
             } else {
                 ++it;
@@ -356,27 +470,39 @@ void DataManager::onDevicesSnapshotMessage(const QJsonObject &obj)
 
         for (const DeviceNode &node : devices) {
             RealtimeDeviceData data = m_realtimeMap.value(node.key());
-            data.node = node;
-            if (node.status == QStringLiteral("offline")) {
-                data.statusText = QStringLiteral("设备离线");
-                data.statusLevel = QStringLiteral("offline");
-                data.dataState = QStringLiteral("offline");
-            } else if (node.status == QStringLiteral("online")) {
-                data.statusText = QStringLiteral("正常");
-                data.statusLevel = QStringLiteral("normal");
-                data.dataState = QStringLiteral("normal");
-            } else if (node.status == QStringLiteral("error")) {
-                data.statusText = node.statusReason.isEmpty()
-                    ? QStringLiteral("设备异常")
-                    : node.statusReason;
-                data.statusLevel = QStringLiteral("error");
-                data.dataState = QStringLiteral("invalid");
-            } else {
-                data.statusText = QStringLiteral("未知");
-                data.statusLevel = QStringLiteral("unknown");
-                data.dataState = QStringLiteral("unknown");
+            const bool hasTelemetry = !data.points.isEmpty();
+
+            DeviceNode mergedNode = node;
+            if (hasTelemetry) {
+                mergedNode.online = data.node.online;
+                mergedNode.status = data.node.status;
+                mergedNode.statusReason = data.node.statusReason;
+                mergedNode.lastUpdateTime = data.node.lastUpdateTime;
             }
-            data.timestamp = node.lastUpdateTime;
+            data.node = mergedNode;
+
+            if (!hasTelemetry) {
+                if (node.status == QStringLiteral("offline")) {
+                    data.statusText = QStringLiteral("设备离线");
+                    data.statusLevel = QStringLiteral("offline");
+                    data.dataState = QStringLiteral("offline");
+                } else if (node.status == QStringLiteral("online")) {
+                    data.statusText = QStringLiteral("正常");
+                    data.statusLevel = QStringLiteral("normal");
+                    data.dataState = QStringLiteral("normal");
+                } else if (node.status == QStringLiteral("error")) {
+                    data.statusText = node.statusReason.isEmpty()
+                        ? QStringLiteral("设备异常")
+                        : node.statusReason;
+                    data.statusLevel = QStringLiteral("error");
+                    data.dataState = QStringLiteral("invalid");
+                } else {
+                    data.statusText = QStringLiteral("未知");
+                    data.statusLevel = QStringLiteral("unknown");
+                    data.dataState = QStringLiteral("unknown");
+                }
+                data.timestamp = node.lastUpdateTime;
+            }
             m_realtimeMap.insert(node.key(), data);
         }
     }
@@ -708,27 +834,75 @@ void DataManager::applyPointToTypedFields(RealtimeDeviceData &data, const Teleme
     }
 }
 
-void DataManager::upsertRealtimeData(const RealtimeDeviceData &data)
+bool DataManager::upsertRealtimeData(const RealtimeDeviceData &data)
 {
     if (isDeletedDevice(data.node.gatewayId, data.node.port, data.node.deviceId)) {
-        return;
+        return false;
     }
 
-    m_deviceManager->upsertDevice(data.node);
-    m_deviceManager->updateDeviceOnline(data.node.key(), data.node.online);
-
-    QMutexLocker locker(&m_mutex);
-    const RealtimeDeviceData old = m_realtimeMap.value(data.node.key());
-    if (old.node.lastUpdateTime > 0 && data.node.lastUpdateTime > 0 &&
-        data.node.lastUpdateTime < old.node.lastUpdateTime) {
-        qDebug() << "latest_points stale dropped in UI" << data.node.key()
-                 << "oldRecvTs" << old.node.lastUpdateTime
-                 << "newRecvTs" << data.node.lastUpdateTime
-                 << "oldDataTs" << old.timestamp
-                 << "newDataTs" << data.timestamp;
-        return;
+    const QString firstPointId = data.points.isEmpty()
+        ? QString()
+        : data.points.first().pointId;
+    bool shouldLog = false;
+    bool newRealtimeDevice = false;
+    RealtimeDeviceData old;
+    {
+        QMutexLocker locker(&m_mutex);
+        old = m_realtimeMap.value(data.node.key());
+        newRealtimeDevice = old.node.gatewayId.isEmpty() ||
+                            old.node.port.isEmpty() ||
+                            old.node.deviceId <= 0;
+        shouldLog = m_debugLatestUpsertLogRemaining > 0;
+        if (shouldLog) {
+            --m_debugLatestUpsertLogRemaining;
+        }
+        const bool oldHasTelemetry = !old.points.isEmpty();
+        if (oldHasTelemetry &&
+            old.node.lastUpdateTime > 0 && data.node.lastUpdateTime > 0 &&
+            data.node.lastUpdateTime + kRealtimeStaleToleranceMs < old.node.lastUpdateTime) {
+            qDebug() << "latest_points stale dropped in UI" << data.node.key()
+                     << "oldRecvTs" << old.node.lastUpdateTime
+                     << "newRecvTs" << data.node.lastUpdateTime
+                     << "oldDataTs" << old.timestamp
+                     << "newDataTs" << data.timestamp;
+            if (shouldLog) {
+                qDebug() << "[DBG_DATA] upsertRealtimeData key:" << data.node.key()
+                         << "deviceId:" << data.node.deviceId
+                         << "slave_id:" << data.node.slaveAddr
+                         << "firstPointId:" << firstPointId
+                         << "oldLastUpdate:" << old.node.lastUpdateTime
+                         << "newLastUpdate:" << data.node.lastUpdateTime
+                         << "timestampChanged:" << (old.timestamp != data.timestamp)
+                         << "staleDrop:true";
+            }
+            return false;
+        }
+        if (shouldLog) {
+            qDebug() << "[DBG_DATA] upsertRealtimeData key:" << data.node.key()
+                     << "deviceId:" << data.node.deviceId
+                     << "slave_id:" << data.node.slaveAddr
+                     << "firstPointId:" << firstPointId
+                     << "oldLastUpdate:" << old.node.lastUpdateTime
+                     << "newLastUpdate:" << data.node.lastUpdateTime
+                     << "timestampChanged:" << (old.timestamp != data.timestamp)
+                     << "staleDrop:false";
+        }
+        m_realtimeMap.insert(data.node.key(), data);
     }
-    m_realtimeMap.insert(data.node.key(), data);
+
+    DeviceNode mergedNode = data.node;
+    mergedNode.online = data.node.online;
+    mergedNode.status = data.node.status;
+    mergedNode.statusReason = data.node.statusReason;
+    mergedNode.lastUpdateTime = data.node.lastUpdateTime;
+    if (m_deviceManager) {
+        m_deviceManager->upsertDevice(mergedNode);
+        m_deviceManager->updateDeviceOnline(data.node.key(), data.node.online);
+    }
+    if (newRealtimeDevice) {
+        emit deviceTreeChanged();
+    }
+    return true;
 }
 
 QString DataManager::deletedDeviceKey(const QString &gatewayId, const QString &portId, int deviceId) const

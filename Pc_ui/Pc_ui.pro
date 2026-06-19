@@ -27,6 +27,8 @@ SOURCES += \
     core/DataManager.cpp \
     core/CommandManager.cpp \
     core/ConfigManager.cpp \
+    core/UiStateStore.cpp \
+    model/DeviceStateListModel.cpp \
     dialogs/AddAreaDialog.cpp \
     dialogs/AddGatewayDialog.cpp \
     dialogs/EditMasterDialog.cpp \
@@ -53,8 +55,10 @@ HEADERS += \
     core/DataManager.h \
     core/CommandManager.h \
     core/ConfigManager.h \
+    core/UiStateStore.h \
     model/DeviceModel.h \
     model/TelemetryModel.h \
+    model/DeviceStateListModel.h \
     model/AlarmModel.h \
     model/CommandModel.h \
     model/ConfigModel.h \

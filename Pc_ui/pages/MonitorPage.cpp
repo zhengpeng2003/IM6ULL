@@ -2,15 +2,20 @@
 #include "ui/DeviceTreeWidget.h"
 #include "core/DataManager.h"
 #include "core/CommandManager.h"
+#include "core/UiStateStore.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QTimer>
 #include <QDateTime>
+#include <QDebug>
+#include <QShowEvent>
+#include <QTimer>
 #include <algorithm>
 
 namespace {
+
+constexpr int kRefreshDelayMs = 250;
 
 QString displayPointValue(const TelemetryPointData &point)
 {
@@ -46,8 +51,9 @@ QString displayPointName(const TelemetryPointData &point)
 
 } // namespace
 
-MonitorPage::MonitorPage(DataManager *data, CommandManager *command, QWidget *parent)
-    : QWidget(parent), m_data(data), m_command(command)
+MonitorPage::MonitorPage(DataManager *data, CommandManager *command,
+                         UiStateStore *stateStore, QWidget *parent)
+    : QWidget(parent), m_data(data), m_command(command), m_stateStore(stateStore)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
@@ -82,24 +88,84 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command, QWidget *pa
         m_currentKey.clear();
         setDetailText(QStringLiteral("请选择左侧设备"));
     });
-    connect(m_data, &DataManager::deviceTreeChanged, this, &MonitorPage::refreshDeviceTree);
+    m_treeRefreshTimer = new QTimer(this);
+    m_treeRefreshTimer->setSingleShot(true);
+    connect(m_treeRefreshTimer, &QTimer::timeout, this, &MonitorPage::refreshDeviceTree);
+
+    m_detailRefreshTimer = new QTimer(this);
+    m_detailRefreshTimer->setSingleShot(true);
+    connect(m_detailRefreshTimer, &QTimer::timeout, this, &MonitorPage::refreshDetail);
+
+    if (m_stateStore) {
+        connect(m_stateStore, &UiStateStore::stateChanged, this, &MonitorPage::scheduleRefreshDeviceTree);
+        connect(m_stateStore, &UiStateStore::stateChanged, this, &MonitorPage::scheduleRefreshDetail);
+    }
     connect(m_fanOn, &QPushButton::clicked, this, [this](){ sendFanCommand(true); });
     connect(m_fanOff, &QPushButton::clicked, this, [this](){ sendFanCommand(false); });
-
-    m_timer = new QTimer(this);
-    connect(m_timer, &QTimer::timeout, this, &MonitorPage::refreshDetail);
-    m_timer->start(1000);
 
     refreshDeviceTree();
 }
 
+void MonitorPage::scheduleRefreshDeviceTree()
+{
+    m_treeRefreshDirty = true;
+    const bool willStart = isVisible() && m_treeRefreshTimer && !m_treeRefreshTimer->isActive();
+    qDebug() << "[DBG_PAGE] MonitorPage scheduleRefreshDeviceTree visible:" << isVisible()
+             << "startDebounce250ms:" << willStart;
+    if (!isVisible()) {
+        return;
+    }
+
+    if (m_treeRefreshTimer && !m_treeRefreshTimer->isActive()) {
+        m_treeRefreshTimer->start(kRefreshDelayMs);
+    }
+}
+
+void MonitorPage::scheduleRefreshDetail()
+{
+    m_detailRefreshDirty = true;
+    const bool willStart = isVisible() && m_detailRefreshTimer && !m_detailRefreshTimer->isActive();
+    qDebug() << "[DBG_PAGE] MonitorPage scheduleRefreshDetail visible:" << isVisible()
+             << "startDebounce250ms:" << willStart
+             << "currentKey:" << m_currentKey;
+    if (!isVisible()) {
+        return;
+    }
+
+    if (m_detailRefreshTimer && !m_detailRefreshTimer->isActive()) {
+        m_detailRefreshTimer->start(kRefreshDelayMs);
+    }
+}
+
+void MonitorPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_treeRefreshDirty) {
+        scheduleRefreshDeviceTree();
+    }
+    if (m_detailRefreshDirty) {
+        scheduleRefreshDetail();
+    }
+}
+
 void MonitorPage::refreshDeviceTree()
 {
+    m_treeRefreshDirty = false;
     const QList<DeviceNode> devices = m_data->deviceTreeSnapshot();
+    qDebug() << "[DBG_PAGE] MonitorPage refreshDeviceTree executed deviceCount:"
+             << devices.size()
+             << "currentKey:" << m_currentKey;
     m_tree->setDevices(devices);
     if (devices.isEmpty()) {
         m_currentKey.clear();
         setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
+        m_fanOn->setEnabled(false);
+        m_fanOff->setEnabled(false);
+        return;
+    }
+
+    if (!m_currentKey.isEmpty()) {
+        refreshDetail();
     }
     //m_tree->expandAll();
 }
@@ -112,10 +178,16 @@ void MonitorPage::onDeviceSelected(const QString &deviceKey)
 
 void MonitorPage::refreshDetail()
 {
+    m_detailRefreshDirty = false;
+    qDebug() << "[DBG_PAGE] MonitorPage refreshDetail executed currentKey:"
+             << m_currentKey
+             << "deviceCount:" << m_data->deviceTreeSnapshot().size();
     if (m_currentKey.isEmpty()) {
         if (m_data->deviceTreeSnapshot().isEmpty()) {
             setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
         }
+        m_fanOn->setEnabled(false);
+        m_fanOff->setEnabled(false);
         return;
     }
 
@@ -123,6 +195,8 @@ void MonitorPage::refreshDetail()
     const auto &n = d.node;
     if (n.factoryId.isEmpty()) {
         setDetailText(QStringLiteral("当前设备暂无实时数据"));
+        m_fanOn->setEnabled(false);
+        m_fanOff->setEnabled(false);
         return;
     }
 

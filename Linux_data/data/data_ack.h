@@ -15,6 +15,8 @@ void data_ack_send(uint32_t seq,
                    int ok,
                    const char *reason,
                    const char *message);
+void data_ack_set_current_cmd_id(const char *cmd_id);
+void data_ack_clear_current_cmd_id(void);
 void data_ack_send_ports(uint32_t seq,
                          const char *cmd,
                          const char * const *ports,

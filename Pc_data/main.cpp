@@ -51,6 +51,15 @@ int main()
         MqttMessageHandler mqttHandler(database, dataService, ipc, mqtt);
         cout << "MqttMessageHandler created" << endl;
 
+        if (database.isOpen()) {
+            dataService.updateGatewayStatuses(database.queryGatewayStatuses());
+            dataService.rememberGatewayPorts(database.queryGatewayPorts());
+            dataService.rememberDeviceRegistries(database.queryDevices());
+            dataService.rememberPointConfigs(database.queryPointConfigs());
+            dataService.handleTelemetryPoints(database.queryLatestPoints());
+            cout << "PcDataService registry cache seeded from database" << endl;
+        }
+
         IpcMessageHandler ipcHandler(database, dataService, ipc, mqtt, mqttConfig);
         cout << "IpcMessageHandler created" << endl;
 
@@ -62,12 +71,12 @@ int main()
         ipc.setClientConnectedCallback([&]() {
             cout << "Pc_ui connected" << endl;
 
-            /*
-             * 注意：
-             * 你的 IpcServer::sendMessage() 返回值是 void，
-             * 所以这里只能直接调用，不能写 bool ok = ...
-             */
+            // Initial snapshots do not need to branch on send status; latest_points debug paths log it.
             ipc.sendMessage(R"({"type":"hello","message":"hello pc_ui"})");
+            sendGatewayStatusSnapshot(ipc, dataService);
+            sendPortStatusSnapshot(ipc, dataService);
+            sendDevicesSnapshot(ipc, dataService);
+            sendLatestPoints(ipc, dataService);
 
             cout << "send hello done" << endl;
         });
@@ -116,11 +125,11 @@ int main()
                 if (database.isOpen()) {
                     const int offlineChanged = database.markOfflineDevices(nowMs, 30000);
                     if (offlineChanged > 0 && ipc.hasClient()) {
-                        sendDevicesSnapshot(ipc, database);
+                        sendDevicesSnapshot(ipc, dataService);
                     }
                     const int staleGatewayChanged = database.markStaleGateways(nowMs, 30000);
                     if (staleGatewayChanged > 0 && ipc.hasClient()) {
-                        sendGatewayStatusSnapshot(ipc, database);
+                        sendGatewayStatusSnapshot(ipc, dataService);
                     }
                 }
                 const std::vector<SyncConfigResult> syncTimeouts =
@@ -133,15 +142,36 @@ int main()
                                                                   result.deviceCount));
                     }
                 }
-                const std::vector<PendingCommandTarget> commandTimeouts =
-                    dataService.collectCommandTimeouts(nowMs, 8000);
-                for (const PendingCommandTarget& pending : commandTimeouts) {
+                const std::vector<PendingCommandTarget> commandSoftTimeouts =
+                    dataService.collectCommandSoftTimeouts(nowMs, 10000);
+                for (const PendingCommandTarget& pending : commandSoftTimeouts) {
+                    if (ipc.hasClient()) {
+                        CommandLogTarget target;
+                        target.commandId = pending.commandId;
+                        target.seq = pending.uiSeq;
+                        target.commandType = pending.commandType;
+                        target.gatewayId = pending.gatewayId;
+                        target.portId = pending.portId;
+                        target.deviceId = pending.deviceId;
+                        ipc.sendMessage(buildCommandLogUpdateJson(pending.uiSeq,
+                                                                  pending.commandType,
+                                                                  "waiting",
+                                                                  "waiting_linux_data_ack",
+                                                                  "waiting for Linux_data final ack",
+                                                                  &target,
+                                                                  pending.boardSeq));
+                    }
+                }
+
+                const std::vector<PendingCommandTarget> commandHardTimeouts =
+                    dataService.collectCommandHardTimeouts(nowMs, 30000);
+                for (const PendingCommandTarget& pending : commandHardTimeouts) {
                     if (database.isOpen()) {
-                        database.updateCommandLogBySeq(pending.boardSeq,
-                                                       "timeout",
-                                                       "linux_data_ack_timeout",
-                                                       "device execution timeout",
-                                                       nowMs);
+                        database.updateCommandLogByCommandId(pending.commandId,
+                                                             "timeout",
+                                                             "linux_data_ack_timeout",
+                                                             "device execution timeout, keep waiting final ack",
+                                                             nowMs);
                     }
                     if (ipc.hasClient()) {
                         CommandLogTarget target;
@@ -155,10 +185,16 @@ int main()
                                                                   pending.commandType,
                                                                   "timeout",
                                                                   "linux_data_ack_timeout",
-                                                                  "device execution timeout",
+                                                                  "device execution timeout, keep waiting final ack",
                                                                   &target,
                                                                   pending.boardSeq));
                     }
+                    cout << "[CMD TIMEOUT] keep pending for late final ack"
+                         << " cmd_id=" << pending.commandId
+                         << " cmd=" << pending.commandType
+                         << " uiSeq=" << pending.uiSeq
+                         << " boardSeq=" << pending.boardSeq
+                         << endl;
                 }
             }
             this_thread::sleep_for(chrono::seconds(1));

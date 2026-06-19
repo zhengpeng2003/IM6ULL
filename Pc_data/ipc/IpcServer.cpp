@@ -206,11 +206,16 @@ void IpcServer::processReceivedData(const char *buf, int len)
     }
 }
 
-void IpcServer::sendMessage(const std::string &msg)
+bool IpcServer::sendMessage(const std::string &msg)
 {
 #ifdef _WIN32
     if (!m_clientConnected || m_pipeHandle == INVALID_HANDLE_VALUE) {
-        return;
+        std::cout << "[DBG_IPC_SEND] skip send clientConnected="
+                  << (m_clientConnected ? "true" : "false")
+                  << " pipeInvalid="
+                  << (m_pipeHandle == INVALID_HANDLE_VALUE ? "true" : "false")
+                  << " payloadBytes=" << msg.size() << std::endl;
+        return false;
     }
 
     std::lock_guard<std::mutex> lock(m_sendMutex);
@@ -229,13 +234,28 @@ void IpcServer::sendMessage(const std::string &msg)
         );
 
     if (!ok) {
-        std::cerr << "WriteFile failed, error=" << GetLastError() << std::endl;
+        const DWORD error = GetLastError();
+        std::cerr << "[DBG_IPC_SEND] WriteFile failed error=" << error
+                  << " requestedBytes=" << data.size()
+                  << " clientConnected=" << (m_clientConnected ? "true" : "false")
+                  << std::endl;
         m_clientConnected = false;
-        return;
+        return false;
     }
+
+    const bool complete = bytesWritten == data.size();
+    std::cout << "[DBG_IPC_SEND] WriteFile ok="
+              << (complete ? "true" : "false")
+              << " requestedBytes=" << data.size()
+              << " writtenBytes=" << bytesWritten
+              << " clientConnected=" << (m_clientConnected ? "true" : "false")
+              << std::endl;
+    return complete;
 
 #else
     (void)msg;
+    std::cout << "[DBG_IPC_SEND] send skipped non_windows" << std::endl;
+    return false;
 #endif
 }
 

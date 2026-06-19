@@ -59,6 +59,10 @@ add_executable(Pc_data
     mqtt/MqttMessageHandler.hpp
 )
 
+if (MSVC)
+    target_compile_options(Pc_data PRIVATE /utf-8)
+endif()
+
 target_include_directories(Pc_data PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc

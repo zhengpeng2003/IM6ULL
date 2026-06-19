@@ -19,6 +19,29 @@ static int64_t data_ack_current_time_ms(void)
     return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+static char g_data_ack_current_cmd_id[128];
+
+void data_ack_set_current_cmd_id(const char *cmd_id)
+{
+    if (!cmd_id || cmd_id[0] == '\0') {
+        g_data_ack_current_cmd_id[0] = '\0';
+        return;
+    }
+    strncpy(g_data_ack_current_cmd_id, cmd_id, sizeof(g_data_ack_current_cmd_id) - 1);
+    g_data_ack_current_cmd_id[sizeof(g_data_ack_current_cmd_id) - 1] = '\0';
+}
+
+void data_ack_clear_current_cmd_id(void)
+{
+    g_data_ack_current_cmd_id[0] = '\0';
+}
+
+static void data_ack_add_current_cmd_id(struct json_object *root)
+{
+    if (root && g_data_ack_current_cmd_id[0] != '\0')
+        json_object_object_add(root, "cmd_id", json_object_new_string(g_data_ack_current_cmd_id));
+}
+
 static int data_ack_code_from_reason(const char *reason)
 {
     if (!reason || reason[0] == '\0')
@@ -37,6 +60,31 @@ static int data_ack_code_from_reason(const char *reason)
 static const char *data_ack_port_id_from_slot(int slot)
 {
     return slot == 0 ? "port_001" : "port_002";
+}
+
+static void data_ack_add_identity(struct json_object *root,
+                                  const char *cmd,
+                                  int slot,
+                                  int device_id)
+{
+    if (!root)
+        return;
+    json_object_object_add(root, "gatewayId", json_object_new_string(DEFAULT_GATEWAY_ID));
+    json_object_object_add(root, "gateway_id", json_object_new_string(DEFAULT_GATEWAY_ID));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    if (slot >= 0) {
+        const char *port_id = data_ack_port_id_from_slot(slot);
+        json_object_object_add(root, "portId", json_object_new_string(port_id));
+        json_object_object_add(root, "port_id", json_object_new_string(port_id));
+    }
+    if (device_id > 0) {
+        json_object_object_add(root, "deviceId", json_object_new_int(device_id));
+        json_object_object_add(root, "device_id", json_object_new_int(device_id));
+        json_object_object_add(root, "slave_id", json_object_new_int(device_id));
+    }
 }
 
 static int data_ack_publish_gateway(struct json_object *root, offline_publish_meta_t *meta)
@@ -78,18 +126,21 @@ void data_ack_send(uint32_t seq,
         return;
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
+    data_ack_add_current_cmd_id(root);
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "stage", json_object_new_string("done"));
-    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "success" : "failed"));
     json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
+    data_ack_add_identity(root, cmd, -1, 0);
 
     const char *payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
     ipc_server_send(payload);
@@ -122,18 +173,21 @@ void data_ack_send_ports(uint32_t seq,
         json_object_array_add(port_array, json_object_new_string(ports && ports[i] ? ports[i] : ""));
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
+    data_ack_add_current_cmd_id(root);
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : "scan_ports"));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : "scan_ports"));
     json_object_object_add(root, "stage", json_object_new_string("done"));
-    json_object_object_add(root, "status", json_object_new_string("ok"));
+    json_object_object_add(root, "status", json_object_new_string("success"));
     json_object_object_add(root, "ok", json_object_new_boolean(1));
     json_object_object_add(root, "code", json_object_new_int(DATA_SEND_OK));
     json_object_object_add(root, "reason", json_object_new_string(""));
     json_object_object_add(root, "message", json_object_new_string("scan ports success"));
     json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
+    data_ack_add_identity(root, cmd ? cmd : "scan_ports", -1, 0);
     json_object_object_add(root, "ports", port_array);
 
     ipc_server_send(json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN));
@@ -163,18 +217,21 @@ void data_ack_send_port_result(uint32_t seq,
         return;
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
+    data_ack_add_current_cmd_id(root);
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "stage", json_object_new_string("done"));
-    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "success" : "failed"));
     json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
+    data_ack_add_identity(root, cmd, slot, 0);
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "port", json_object_new_string(port ? port : ""));
     json_object_object_add(root, "device_type", json_object_new_string(device_type ? device_type : "unknown"));
@@ -208,18 +265,21 @@ static void data_ack_add_common(struct json_object *root,
                                 const char *message)
 {
     json_object_object_add(root, "type", json_object_new_string("ack"));
+    data_ack_add_current_cmd_id(root);
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "stage", json_object_new_string("done"));
-    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "success" : "failed"));
     json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));
     json_object_object_add(root, "message", json_object_new_string(message ? message : ""));
     json_object_object_add(root, "timestampMs", json_object_new_int64(data_ack_current_time_ms()));
+    data_ack_add_identity(root, cmd, -1, 0);
 }
 
 static struct json_object *data_ack_thresholds_to_json(const sensor_threshold_config_t *config)
@@ -262,6 +322,7 @@ void data_ack_send_relay_result(uint32_t seq,
         return;
 
     data_ack_add_common(root, seq, cmd, ok, reason, message);
+    data_ack_add_identity(root, cmd, slot, device_id > 0 ? device_id : slave_id);
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
     json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
@@ -300,6 +361,7 @@ void data_ack_send_device_result(uint32_t seq,
         return;
 
     data_ack_add_common(root, seq, cmd, ok, reason, message);
+    data_ack_add_identity(root, cmd, slot, slave_id);
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
     json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
@@ -338,6 +400,7 @@ void data_ack_send_threshold_result(uint32_t seq,
         return;
 
     data_ack_add_common(root, seq, cmd, ok, reason, message);
+    data_ack_add_identity(root, cmd, slot, slave_id);
     json_object_object_add(root, "slot", json_object_new_int(slot));
     json_object_object_add(root, "slave_id", json_object_new_int(slave_id));
     json_object_object_add(root, "deviceId", json_object_new_int(slave_id));
@@ -372,13 +435,15 @@ void data_ack_send_offline_cache_config(uint32_t seq,
         return;
 
     json_object_object_add(root, "type", json_object_new_string("ack"));
+    data_ack_add_current_cmd_id(root);
     json_object_object_add(root, "seq", json_object_new_int64(seq));
     json_object_object_add(root, "boardSeq", json_object_new_int64(seq));
     json_object_object_add(root, "cmd", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "command", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "commandType", json_object_new_string(cmd ? cmd : ""));
+    json_object_object_add(root, "cmdType", json_object_new_string(cmd ? cmd : ""));
     json_object_object_add(root, "stage", json_object_new_string("done"));
-    json_object_object_add(root, "status", json_object_new_string(ok ? "ok" : "failed"));
+    json_object_object_add(root, "status", json_object_new_string(ok ? "success" : "failed"));
     json_object_object_add(root, "ok", json_object_new_boolean(ok));
     json_object_object_add(root, "code", json_object_new_int(ok ? DATA_SEND_OK : data_ack_code_from_reason(reason)));
     json_object_object_add(root, "reason", json_object_new_string(reason ? reason : ""));

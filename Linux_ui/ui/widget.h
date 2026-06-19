@@ -137,6 +137,7 @@ private:
     QHash<int, MasterPortInfo> m_runtimePorts;
     QHash<quint32, PendingCommand> m_pendingCommands;
     QTimer *m_ipcReconnectTimer = nullptr;
+    QString m_configSyncText = QStringLiteral("--");
     PendingAddSlave m_pendingAddSlave;
     PendingRemoveSlave m_pendingRemoveSlave;
     PendingRelayCommand m_pendingRelay;

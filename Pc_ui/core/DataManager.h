@@ -20,9 +20,11 @@ public:
     void loadDemoData(bool demoMode = false);
     bool isServiceOnline() const;
     QList<DeviceNode> deviceTreeSnapshot() const;
+    QList<GatewayNode> gatewaySnapshot() const;
+    QList<PortNode> portSnapshot() const;
     RealtimeDeviceData deviceData(const QString &deviceKey) const;
     QList<RealtimeDeviceData> allRealtimeData() const;
-    void refreshOfflineStates(qint64 timeoutMs = 30000);
+    bool refreshOfflineStates(qint64 timeoutMs = 30000);
     void removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
     void removeMasterData(const QString &gatewayId, const QString &portId);
     void forgetRemovedDevice(const QString &gatewayId, const QString &portId, int deviceId);
@@ -46,7 +48,7 @@ private:
     RealtimeDeviceData buildRealtimeDeviceData(const QList<TelemetryPointData> &points) const;
     void evaluateDeviceStatus(RealtimeDeviceData &data) const;
     void applyPointToTypedFields(RealtimeDeviceData &data, const TelemetryPointData &point) const;
-    void upsertRealtimeData(const RealtimeDeviceData &data);
+    bool upsertRealtimeData(const RealtimeDeviceData &data);
     QString deletedDeviceKey(const QString &gatewayId, const QString &portId, int deviceId) const;
     bool isDeletedDevice(const QString &gatewayId, const QString &portId, int deviceId) const;
     void pruneExpiredDeletedDevicesLocked(qint64 nowMs);
@@ -59,4 +61,5 @@ private:
     QHash<QString, RealtimeDeviceData> m_realtimeMap;
     QHash<QString, qint64> m_deletedDevices;
     bool m_serviceOnline = true;
+    int m_debugLatestUpsertLogRemaining = 0;
 };

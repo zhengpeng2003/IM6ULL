@@ -1,6 +1,7 @@
 #include "TrendPage.h"
 
 #include "core/DataManager.h"
+#include "core/UiStateStore.h"
 #include "ui/DeviceTreeWidget.h"
 
 #include <limits>
@@ -15,9 +16,11 @@
 #include <QJsonValue>
 #include <QLabel>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QtCharts/QChart>
@@ -28,6 +31,8 @@
 #include <QtCharts/QValueAxis>
 
 namespace {
+
+constexpr int kRefreshDelayMs = 250;
 
 QString displayTime(qint64 timestampMs)
 {
@@ -52,8 +57,8 @@ QString axisTimeFormat(qint64 startMs, qint64 endMs)
 
 } // namespace
 
-TrendPage::TrendPage(DataManager *data, QWidget *parent)
-    : QWidget(parent), m_data(data)
+TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *parent)
+    : QWidget(parent), m_data(data), m_stateStore(stateStore)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
@@ -134,16 +139,41 @@ TrendPage::TrendPage(DataManager *data, QWidget *parent)
         clearCurrentSelection(QStringLiteral("请选择左侧测点后查询历史数据"));
     });
 
-    if (m_data) {
-        connect(m_data, &DataManager::realtimeDataUpdated,
-                this, &TrendPage::refreshPointTree);
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    connect(m_refreshTimer, &QTimer::timeout, this, &TrendPage::refreshPointTree);
+
+    if (m_stateStore) {
+        connect(m_stateStore, &UiStateStore::stateChanged,
+                this, &TrendPage::scheduleRefreshPointTree);
     }
 
     refreshPointTree();
 }
 
+void TrendPage::scheduleRefreshPointTree()
+{
+    m_refreshDirty = true;
+    if (!isVisible()) {
+        return;
+    }
+
+    if (m_refreshTimer && !m_refreshTimer->isActive()) {
+        m_refreshTimer->start(kRefreshDelayMs);
+    }
+}
+
+void TrendPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_refreshDirty) {
+        scheduleRefreshPointTree();
+    }
+}
+
 void TrendPage::refreshPointTree()
 {
+    m_refreshDirty = false;
     if (!m_data || !m_tree) {
         return;
     }

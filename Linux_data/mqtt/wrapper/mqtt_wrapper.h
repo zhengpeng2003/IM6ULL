@@ -4,7 +4,6 @@ extern "C" {
 #endif
 extern const char MQTT_DEFAULT_PUBLISH_TOPIC[];
 extern const char MQTT_GATEWAY_REGISTER_TOPIC[];
-extern const char MQTT_GATEWAY_COMMAND_TOPIC[];
 extern const char MQTT_GATEWAY_COMMAND_WILDCARD_TOPIC[];
 int  mqtt_init(void);
 void mqtt_poll(void);

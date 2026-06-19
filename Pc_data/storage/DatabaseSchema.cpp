@@ -81,6 +81,9 @@ std::vector<std::string> DatabaseSchema::tableSqlList()
             poll_interval_ms INTEGER DEFAULT 1000,
             expect_telemetry INTEGER DEFAULT 1,
             enabled INTEGER DEFAULT 1,
+            deleted INTEGER DEFAULT 0,
+            deleted_time_ms INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
 
             create_time_ms INTEGER,
             update_time_ms INTEGER,

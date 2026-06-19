@@ -699,7 +699,8 @@ struct PortManager::Impl {
         }
 
         for (const DeviceRegisterInfo &device : devices) {
-            (void)data_publish_device_register(seq,
+            const uint32_t register_seq = seq != 0 ? seq : data_config_sync_next_seq();
+            (void)data_publish_device_register(register_seq,
                                                slot,
                                                device.slave_id,
                                                device.device_type.c_str(),
@@ -1467,7 +1468,7 @@ void PortManager::restoreSavedConnections()
                    config.port.c_str(),
                    config.baud);
             impl_->sendPortStatus(slot, true, "restored");
-            (void)data_publish_port_register(0,
+            (void)data_publish_port_register(data_config_sync_next_seq(),
                                              slot,
                                              config.port.c_str(),
                                              config.baud,

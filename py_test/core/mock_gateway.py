@@ -51,10 +51,28 @@ class MockGateway:
     def on_mqtt_message(self, topic, data):
         print("[GATEWAY] mqtt message callback")
 
+        if data.get("type") == "ack":
+            print("[GATEWAY] ignore ack message")
+            return
+
+        cmd = data.get("cmd") or data.get("command") or data.get("commandType") or data.get("action") or ""
+        if cmd in {"gateway_register", "config_snapshot", "device_config_snapshot"}:
+            print(f"[GATEWAY] ignore pc_data ack-like command: {cmd}")
+            return
+
+        if topic == config.CMD_TOPIC:
+            print("[GATEWAY] gateway command topic")
+        elif topic.startswith(config.CMD_TOPIC + "/"):
+            print("[GATEWAY] port/device command topic")
+        else:
+            print(f"[GATEWAY] ignore command on unexpected topic: {topic}")
+            return
+
         handled = self.dispatcher.dispatch(self, topic, data)
 
         if not handled:
             seq = self._safe_seq(data)
+            cmd_id = str(data.get("cmd_id") or data.get("cmdId") or data.get("commandId") or "")
             self.publish(
                 protocol.ack(
                     cmd="unknown_command",
@@ -62,6 +80,7 @@ class MockGateway:
                     ok=False,
                     reason="unknown_command",
                     slave_id=None,
+                    cmd_id=cmd_id,
                 )
             )
 
@@ -105,6 +124,6 @@ class MockGateway:
 
     def _safe_seq(self, data):
         try:
-            return int(data.get("seq") or data.get("sequence") or data.get("cmd_id") or 0)
+            return int(data.get("seq") or data.get("sequence") or 0)
         except Exception:
             return 0

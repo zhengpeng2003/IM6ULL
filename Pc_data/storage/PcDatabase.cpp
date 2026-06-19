@@ -12,6 +12,7 @@
 
 static void bindText(sqlite3_stmt* stmt, int index, const std::string& value);
 static std::string columnText(const unsigned char* value);
+static bool execSqlQuiet(sqlite3* db, const std::string& sql);
 
 PcDatabase::PcDatabase()
 {
@@ -24,6 +25,7 @@ PcDatabase::~PcDatabase()
 
 bool PcDatabase::openDatabase(const std::string& dbPath)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_db) {
         return true;
     }
@@ -58,6 +60,7 @@ bool PcDatabase::openDatabase(const std::string& dbPath)
 
 bool PcDatabase::initTables()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         std::cerr << "Database is not open." << std::endl;
         return false;
@@ -67,6 +70,15 @@ bool PcDatabase::initTables()
         if (!execSql(sql)) {
             return false;
         }
+    }
+
+    const char* migrations[] = {
+        "ALTER TABLE device ADD COLUMN deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE device ADD COLUMN deleted_time_ms INTEGER DEFAULT 0;",
+        "ALTER TABLE device ADD COLUMN status TEXT DEFAULT 'active';"
+    };
+    for (const char* sql : migrations) {
+        execSqlQuiet(m_db, sql);
     }
 
     for (const auto& sql : DatabaseSchema::indexSqlList()) {
@@ -81,11 +93,13 @@ bool PcDatabase::initTables()
 
 bool PcDatabase::isOpen() const
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_db != nullptr;
 }
 
 bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         std::cerr << "Database is not open, skip telemetry save." << std::endl;
         return false;
@@ -142,6 +156,7 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
 
 bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         std::cerr << "Database is not open, skip point config save." << std::endl;
         return false;
@@ -158,6 +173,13 @@ bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
     bool ok = true;
     for (const auto& config : configs) {
         if (config.pointId.empty()) {
+            continue;
+        }
+        if (!deviceExists(config.gatewayId, config.portId, config.deviceId)) {
+            std::cout << "Skip point_config save for inactive device, gateway: "
+                      << config.gatewayId << ", port: " << config.portId
+                      << ", device: " << config.deviceId
+                      << ", pointKey: " << config.pointKey << std::endl;
             continue;
         }
 
@@ -182,10 +204,18 @@ bool PcDatabase::savePointConfigs(const std::vector<PointConfig>& configs)
     return ok;
 }
 
-bool PcDatabase::upsertDevice(const DeviceRecord& device)
+bool PcDatabase::upsertDevice(const DeviceRecord& device, bool allowDeletedReactivate)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || device.gatewayId.empty() || device.portId.empty() || device.deviceId <= 0 ||
         device.deviceType.empty()) {
+        return false;
+    }
+
+    if (deviceDeleted(device.gatewayId, device.portId, device.deviceId) && !allowDeletedReactivate) {
+        std::cout << "Skip upsert tombstoned device, gateway: "
+                  << device.gatewayId << ", port: " << device.portId
+                  << ", device: " << device.deviceId << std::endl;
         return false;
     }
 
@@ -199,8 +229,8 @@ bool PcDatabase::upsertDevice(const DeviceRecord& device)
         "INSERT INTO device ("
         "factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,"
         "port_id,port_name,device_id,device_name,device_type,poll_interval_ms,"
-        "expect_telemetry,enabled,create_time_ms,update_time_ms"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "expect_telemetry,enabled,deleted,deleted_time_ms,status,create_time_ms,update_time_ms"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(gateway_id, port_id, device_id) DO UPDATE SET "
         "factory_id=excluded.factory_id,"
         "factory_name=excluded.factory_name,"
@@ -213,6 +243,9 @@ bool PcDatabase::upsertDevice(const DeviceRecord& device)
         "poll_interval_ms=excluded.poll_interval_ms,"
         "expect_telemetry=excluded.expect_telemetry,"
         "enabled=excluded.enabled,"
+        "deleted=0,"
+        "deleted_time_ms=0,"
+        "status='active',"
         "update_time_ms=excluded.update_time_ms;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -239,8 +272,11 @@ bool PcDatabase::upsertDevice(const DeviceRecord& device)
     sqlite3_bind_int(stmt, 12, device.pollIntervalMs);
     sqlite3_bind_int(stmt, 13, device.expectTelemetry ? 1 : 0);
     sqlite3_bind_int(stmt, 14, device.enabled ? 1 : 0);
-    sqlite3_bind_int64(stmt, 15, device.createTimeMs > 0 ? device.createTimeMs : nowMs);
-    sqlite3_bind_int64(stmt, 16, nowMs);
+    sqlite3_bind_int(stmt, 15, 0);
+    sqlite3_bind_int64(stmt, 16, 0);
+    bindText(stmt, 17, "active");
+    sqlite3_bind_int64(stmt, 18, device.createTimeMs > 0 ? device.createTimeMs : nowMs);
+    sqlite3_bind_int64(stmt, 19, nowMs);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -265,6 +301,7 @@ bool PcDatabase::upsertDevice(const DeviceRecord& device)
 
 bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || point.gatewayId.empty() || point.portId.empty() || point.deviceId <= 0) {
         return false;
     }
@@ -308,6 +345,7 @@ bool PcDatabase::updateDeviceOnlineFromTelemetry(const TelemetryPoint& point)
 
 int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || nowMs <= 0 || timeoutMs <= 0) {
         return 0;
     }
@@ -320,7 +358,7 @@ int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
         "  WHERE d.gateway_id=device_status.gateway_id "
         "    AND d.port_id=device_status.port_id "
         "    AND d.device_id=device_status.device_id "
-        "    AND d.enabled=1"
+        "    AND d.enabled=1 AND COALESCE(d.deleted,0)=0 AND COALESCE(d.status,'active')='active'"
         ") AND last_seen_ms > 0 AND (? - last_seen_ms) > ?;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -349,6 +387,7 @@ int PcDatabase::markOfflineDevices(std::int64_t nowMs, std::int64_t timeoutMs)
 
 int PcDatabase::markStaleGateways(std::int64_t nowMs, std::int64_t timeoutMs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || nowMs <= 0 || timeoutMs <= 0) {
         return 0;
     }
@@ -385,6 +424,7 @@ int PcDatabase::markStaleGateways(std::int64_t nowMs, std::int64_t timeoutMs)
 
 std::vector<GatewayStatus> PcDatabase::queryGatewayStatuses()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<GatewayStatus> gateways;
     if (!m_db) {
         return gateways;
@@ -426,6 +466,7 @@ std::vector<GatewayStatus> PcDatabase::queryGatewayStatuses()
 
 std::vector<GatewayPort> PcDatabase::queryGatewayPorts()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<GatewayPort> ports;
     if (!m_db) {
         return ports;
@@ -468,6 +509,7 @@ std::vector<GatewayPort> PcDatabase::queryGatewayPorts()
 
 std::vector<DeviceRecord> PcDatabase::queryDevices()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<DeviceRecord> devices;
     if (!m_db) {
         return devices;
@@ -484,7 +526,7 @@ std::vector<DeviceRecord> PcDatabase::queryDevices()
         "FROM device d "
         "LEFT JOIN device_status s "
         "ON s.gateway_id=d.gateway_id AND s.port_id=d.port_id AND s.device_id=d.device_id "
-        "WHERE d.enabled=1 "
+        "WHERE d.enabled=1 AND COALESCE(d.deleted,0)=0 AND COALESCE(d.status,'active')='active' "
         "ORDER BY d.gateway_id,d.port_id,d.device_id;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -538,8 +580,80 @@ std::vector<DeviceRecord> PcDatabase::queryDevices()
     return devices;
 }
 
+std::vector<PointConfig> PcDatabase::queryPointConfigs()
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<PointConfig> configs;
+    if (!m_db) {
+        return configs;
+    }
+
+    static const char* sql =
+        "SELECT point_id,factory_id,factory_name,area_id,area_name,"
+        "gateway_id,gateway_name,port_id,port_name,device_id,device_name,"
+        "device_type,point_key,point_name,unit,value_type,enable_alarm,"
+        "alarm_low,alarm_high,enabled,create_time_ms,update_time_ms "
+        "FROM point_config WHERE enabled=1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query point_config failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return configs;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        PointConfig config;
+        const auto textColumn = [stmt](int column) -> std::string {
+            const unsigned char* text = sqlite3_column_text(stmt, column);
+            return text ? reinterpret_cast<const char*>(text) : "";
+        };
+
+        config.pointId = textColumn(0);
+        config.factoryId = textColumn(1);
+        config.factoryName = textColumn(2);
+        config.areaId = textColumn(3);
+        config.areaName = textColumn(4);
+        config.gatewayId = textColumn(5);
+        config.gatewayName = textColumn(6);
+        config.portId = textColumn(7);
+        config.portName = textColumn(8);
+        config.deviceId = sqlite3_column_int(stmt, 9);
+        config.deviceName = textColumn(10);
+        config.deviceType = textColumn(11);
+        config.pointKey = textColumn(12);
+        config.pointName = textColumn(13);
+        config.unit = textColumn(14);
+        config.valueType = textColumn(15);
+        config.enableAlarm = sqlite3_column_int(stmt, 16) != 0;
+        config.hasAlarmLow = sqlite3_column_type(stmt, 17) != SQLITE_NULL;
+        config.alarmLow = config.hasAlarmLow ? sqlite3_column_double(stmt, 17) : 0.0;
+        config.hasAlarmHigh = sqlite3_column_type(stmt, 18) != SQLITE_NULL;
+        config.alarmHigh = config.hasAlarmHigh ? sqlite3_column_double(stmt, 18) : 0.0;
+        config.enabled = sqlite3_column_int(stmt, 19) != 0;
+        config.timestampMs = sqlite3_column_int64(stmt, 21);
+        if (config.timestampMs <= 0) {
+            config.timestampMs = sqlite3_column_int64(stmt, 20);
+        }
+
+        if (!config.gatewayId.empty() && !config.portId.empty() &&
+            config.deviceId > 0 && !config.pointKey.empty()) {
+            configs.push_back(config);
+        }
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Query point_config failed: " << sqlite3_errmsg(m_db) << std::endl;
+        configs.clear();
+    }
+
+    sqlite3_finalize(stmt);
+    return configs;
+}
+
 std::vector<TelemetryPoint> PcDatabase::queryLatestPoints()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<TelemetryPoint> points;
 
     if (!m_db) {
@@ -634,6 +748,7 @@ std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& po
                                                            bool* ok,
                                                            std::string* reason)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<TelemetryPoint> points;
     if (ok) {
         *ok = false;
@@ -736,12 +851,15 @@ bool PcDatabase::deviceExists(const std::string& gatewayId,
                               const std::string& portId,
                               int deviceId) const
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
         return false;
     }
 
     static const char* sql =
-        "SELECT 1 FROM device WHERE gateway_id=? AND port_id=? AND device_id=? LIMIT 1;";
+        "SELECT 1 FROM device "
+        "WHERE gateway_id=? AND port_id=? AND device_id=? "
+        "AND enabled=1 AND COALESCE(deleted,0)=0 AND COALESCE(status,'active')='active' LIMIT 1;";
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
@@ -758,16 +876,76 @@ bool PcDatabase::deviceExists(const std::string& gatewayId,
     return rc == SQLITE_ROW;
 }
 
+bool PcDatabase::deviceDeleted(const std::string& gatewayId,
+                               const std::string& portId,
+                               int deviceId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT 1 FROM device "
+        "WHERE gateway_id=? AND port_id=? AND device_id=? "
+        "AND (COALESCE(deleted,0)!=0 OR COALESCE(status,'active')='deleted') LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare device deleted failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    sqlite3_bind_text(stmt, 1, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, deviceId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW;
+}
+
+bool PcDatabase::reactivateDeletedDevice(const std::string& gatewayId,
+                                         const std::string& portId,
+                                         int deviceId)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "UPDATE device SET deleted=0, deleted_time_ms=0, status='active', enabled=1, update_time_ms=? "
+        "WHERE gateway_id=? AND port_id=? AND device_id=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare reactivate device failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, currentTimeMs());
+    sqlite3_bind_text(stmt, 2, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, deviceId);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
 std::string PcDatabase::queryDeviceType(const std::string& gatewayId,
                                         const std::string& portId,
                                         int deviceId) const
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
         return std::string();
     }
 
     static const char* sql =
-        "SELECT device_type FROM device WHERE gateway_id=? AND port_id=? AND device_id=? LIMIT 1;";
+        "SELECT device_type FROM device "
+        "WHERE gateway_id=? AND port_id=? AND device_id=? "
+        "AND enabled=1 AND COALESCE(deleted,0)=0 AND COALESCE(status,'active')='active' LIMIT 1;";
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
@@ -794,7 +972,11 @@ bool PcDatabase::pointConfigExists(const std::string& gatewayId,
                                    int deviceId,
                                    const std::string& pointKey) const
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0 || pointKey.empty()) {
+        return false;
+    }
+    if (!deviceExists(gatewayId, portId, deviceId)) {
         return false;
     }
 
@@ -822,6 +1004,7 @@ bool PcDatabase::pointConfigExists(const std::string& gatewayId,
 
 int PcDatabase::deviceCount() const
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         return 0;
     }
@@ -844,6 +1027,7 @@ bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
                                   const std::string& portId,
                                   int deviceId)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
         return false;
     }
@@ -852,12 +1036,16 @@ bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
         return false;
     }
 
+    bool ok = markDeviceDeleted(gatewayId, portId, deviceId, currentTimeMs());
+
     const char* tables[] = {
-        "device_status", "device", "latest_point", "point_config",
+        "device_status", "latest_point", "point_config",
         "telemetry_history", "alarm_event"
     };
-    bool ok = true;
     for (const char* table : tables) {
+        if (!ok) {
+            break;
+        }
         const int rows = deleteRowsByDevice(table, gatewayId, portId, deviceId) ? sqlite3_changes(m_db) : -1;
         std::cout << "Delete device table " << table << " rows=" << rows
                   << ", gateway: " << gatewayId
@@ -888,6 +1076,7 @@ bool PcDatabase::deleteDeviceData(const std::string& gatewayId,
 bool PcDatabase::deleteMasterData(const std::string& gatewayId,
                                   const std::string& portId)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty()) {
         return false;
     }
@@ -896,8 +1085,17 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
         return false;
     }
 
-    bool ok = deleteRowsByMaster("device_status", gatewayId, portId) &&
-              deleteRowsByMaster("device", gatewayId, portId) &&
+    const std::vector<DeviceRecord> devices = queryDevices();
+    bool ok = true;
+    const std::int64_t nowMs = currentTimeMs();
+    for (const DeviceRecord& device : devices) {
+        if (device.gatewayId == gatewayId && device.portId == portId) {
+            ok = markDeviceDeleted(gatewayId, portId, device.deviceId, nowMs) && ok;
+        }
+    }
+
+    ok = ok &&
+              deleteRowsByMaster("device_status", gatewayId, portId) &&
               deleteRowsByMaster("latest_point", gatewayId, portId) &&
               deleteRowsByMaster("point_config", gatewayId, portId) &&
               deleteRowsByMaster("telemetry_history", gatewayId, portId) &&
@@ -920,6 +1118,7 @@ bool PcDatabase::deleteMasterData(const std::string& gatewayId,
 
 bool PcDatabase::clearRuntimeData()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         return false;
     }
@@ -945,6 +1144,7 @@ bool PcDatabase::clearRuntimeData()
 
 bool PcDatabase::clearAllData()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return clearRuntimeData();
 }
 
@@ -954,6 +1154,7 @@ bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
                                              const std::vector<ConfigSnapshotDevice>& devices,
                                              const std::vector<PointConfig>& pointConfigs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || selectedDevices.empty()) {
         return false;
     }
@@ -969,7 +1170,6 @@ bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
         }
 
         ok = deleteRowsByDevice("device_status", gatewayId, selected.portId, selected.deviceId) &&
-             deleteRowsByDevice("device", gatewayId, selected.portId, selected.deviceId) &&
              deleteRowsByDevice("point_config", gatewayId, selected.portId, selected.deviceId);
         if (!ok) {
             break;
@@ -992,12 +1192,24 @@ bool PcDatabase::replaceSelectedDeviceConfig(const std::string& gatewayId,
     for (const ConfigSnapshotDevice& snapshotDevice : devices) {
         const DeviceRecord& device = snapshotDevice.device;
         if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
-            ok = upsertDevice(device) && ok;
+            if (deviceDeleted(device.gatewayId, device.portId, device.deviceId)) {
+                std::cout << "Replace selected config skipped tombstoned device, gateway: "
+                          << device.gatewayId << ", port: " << device.portId
+                          << ", device: " << device.deviceId << std::endl;
+                continue;
+            }
+            ok = upsertDevice(device, true) && ok;
         }
     }
 
     if (!pointConfigs.empty()) {
-        ok = savePointConfigs(pointConfigs) && ok;
+        std::vector<PointConfig> acceptedPointConfigs;
+        for (const PointConfig& config : pointConfigs) {
+            if (deviceExists(config.gatewayId, config.portId, config.deviceId)) {
+                acceptedPointConfigs.push_back(config);
+            }
+        }
+        ok = savePointConfigs(acceptedPointConfigs) && ok;
     }
 
     std::cout << "Replace selected config "
@@ -1018,6 +1230,7 @@ bool PcDatabase::upsertGatewayConfigSnapshot(const std::string& gatewayId,
                                              const std::vector<PointConfig>& pointConfigs,
                                              bool fullSnapshot)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty()) {
         return false;
     }
@@ -1055,11 +1268,23 @@ bool PcDatabase::upsertGatewayConfigSnapshot(const std::string& gatewayId,
     for (const ConfigSnapshotDevice& snapshotDevice : devices) {
         const DeviceRecord& device = snapshotDevice.device;
         if (device.gatewayId == gatewayId && !device.portId.empty() && device.deviceId > 0) {
+            if (deviceDeleted(device.gatewayId, device.portId, device.deviceId)) {
+                std::cout << "Config snapshot skipped tombstoned device, gateway: "
+                          << device.gatewayId << ", port: " << device.portId
+                          << ", device: " << device.deviceId << std::endl;
+                continue;
+            }
             ok = upsertDevice(device) && ok;
         }
     }
     if (!pointConfigs.empty()) {
-        ok = savePointConfigs(pointConfigs) && ok;
+        std::vector<PointConfig> acceptedPointConfigs;
+        for (const PointConfig& config : pointConfigs) {
+            if (deviceExists(config.gatewayId, config.portId, config.deviceId)) {
+                acceptedPointConfigs.push_back(config);
+            }
+        }
+        ok = savePointConfigs(acceptedPointConfigs) && ok;
     }
 
     std::cout << "Upsert config snapshot " << (ok ? "ok" : "failed")
@@ -1070,8 +1295,54 @@ bool PcDatabase::upsertGatewayConfigSnapshot(const std::string& gatewayId,
     return ok;
 }
 
+bool PcDatabase::markDeviceDeleted(const std::string& gatewayId,
+                                   const std::string& portId,
+                                   int deviceId,
+                                   std::int64_t deletedTimeMs)
+{
+    if (!m_db || gatewayId.empty() || portId.empty() || deviceId <= 0) {
+        return false;
+    }
+
+    static const char* sql =
+        "UPDATE device SET deleted=1, deleted_time_ms=?, status='deleted', enabled=0, update_time_ms=? "
+        "WHERE gateway_id=? AND port_id=? AND device_id=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare mark device deleted failed: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, deletedTimeMs);
+    sqlite3_bind_int64(stmt, 2, deletedTimeMs);
+    sqlite3_bind_text(stmt, 3, gatewayId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, portId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 5, deviceId);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
+static bool execSqlQuiet(sqlite3* db, const std::string& sql)
+{
+    if (!db) {
+        return false;
+    }
+    char* errorMessage = nullptr;
+    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errorMessage);
+    if (rc == SQLITE_OK) {
+        return true;
+    }
+    if (errorMessage) {
+        sqlite3_free(errorMessage);
+    }
+    return false;
+}
+
 bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || event.alarmId.empty() || event.gatewayId.empty()) {
         return false;
     }
@@ -1178,6 +1449,7 @@ bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
 
 bool PcDatabase::clearRecoveredAlarms()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db) {
         return false;
     }
@@ -1211,6 +1483,7 @@ bool PcDatabase::clearRecoveredAlarms()
 
 bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gateway.gatewayId.empty()) {
         return false;
     }
@@ -1253,6 +1526,7 @@ bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)
 
 bool PcDatabase::upsertGatewayRegistry(const GatewayRegistry& registry)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || registry.gatewayId.empty()) {
         return false;
     }
@@ -1297,18 +1571,21 @@ bool PcDatabase::upsertGatewayRegistry(const GatewayRegistry& registry)
 
 std::string PcDatabase::queryGatewayCmdTopic(const std::string& gatewayId)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     GatewayRegistry registry;
     return queryGatewayRegistry(gatewayId, registry) ? registry.cmdTopic : std::string();
 }
 
 std::string PcDatabase::queryGatewayUpTopic(const std::string& gatewayId)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     GatewayRegistry registry;
     return queryGatewayRegistry(gatewayId, registry) ? registry.upTopic : std::string();
 }
 
 bool PcDatabase::queryGatewayRegistry(const std::string& gatewayId, GatewayRegistry& registry)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty()) {
         return false;
     }
@@ -1345,8 +1622,33 @@ bool PcDatabase::queryGatewayRegistry(const std::string& gatewayId, GatewayRegis
     return found;
 }
 
+bool PcDatabase::gatewayRegistryExists(const std::string& gatewayId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || gatewayId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT 1 FROM gateway_registry WHERE gateway_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare gateway_registry exists failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW;
+}
+
 std::vector<GatewayRegistry> PcDatabase::getAllGatewayRegistry()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<GatewayRegistry> rows;
     if (!m_db) {
         return rows;
@@ -1387,6 +1689,7 @@ bool PcDatabase::updateGatewayRegistryHeartbeat(const std::string& gatewayId,
                                                 std::int64_t /*heartbeatTimeMs*/,
                                                 const std::string& status)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty()) {
         return false;
     }
@@ -1424,6 +1727,7 @@ bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
                                         std::int64_t /*heartbeatTimeMs*/,
                                         const std::string& status)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty()) {
         return false;
     }
@@ -1461,6 +1765,7 @@ bool PcDatabase::updateGatewayHeartbeat(const std::string& gatewayId,
 
 bool PcDatabase::upsertGatewayPort(const GatewayPort& port)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || port.gatewayId.empty() || port.portId.empty()) {
         return false;
     }
@@ -1505,6 +1810,7 @@ bool PcDatabase::upsertGatewayPort(const GatewayPort& port)
 bool PcDatabase::isGatewayPortConnected(const std::string& gatewayId,
                                         const std::string& portId)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || gatewayId.empty() || portId.empty()) {
         return false;
     }
@@ -1531,6 +1837,32 @@ bool PcDatabase::isGatewayPortConnected(const std::string& gatewayId,
     return connected;
 }
 
+bool PcDatabase::gatewayPortExists(const std::string& gatewayId,
+                                   const std::string& portId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || gatewayId.empty() || portId.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "SELECT 1 FROM gateway_port WHERE gateway_id=? AND port_id=? LIMIT 1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare gateway_port exists failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, gatewayId);
+    bindText(stmt, 2, portId);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW;
+}
+
 bool PcDatabase::createCommandLog(const std::string& commandId,
                                   std::int64_t seq,
                                   const std::string& commandType,
@@ -1539,6 +1871,7 @@ bool PcDatabase::createCommandLog(const std::string& commandId,
                                   int deviceId,
                                   std::int64_t createTimeMs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || commandId.empty() || seq <= 0 || commandType.empty()) {
         return false;
     }
@@ -1577,6 +1910,7 @@ bool PcDatabase::updateCommandLogBySeq(std::int64_t seq,
                                        const std::string& message,
                                        std::int64_t finishTimeMs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || seq <= 0 || status.empty()) {
         return false;
     }
@@ -1604,8 +1938,44 @@ bool PcDatabase::updateCommandLogBySeq(std::int64_t seq,
     return rc == SQLITE_DONE;
 }
 
+bool PcDatabase::updateCommandLogByCommandId(const std::string& commandId,
+                                             const std::string& status,
+                                             const std::string& reason,
+                                             const std::string& message,
+                                             std::int64_t finishTimeMs)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || commandId.empty() || status.empty()) {
+        return false;
+    }
+
+    static const char* sql =
+        "UPDATE command_log "
+        "SET status=?, reason=?, message=?, finish_time_ms=? "
+        "WHERE command_id=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare update command_log by command_id failed: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bindText(stmt, 1, status);
+    bindText(stmt, 2, reason);
+    bindText(stmt, 3, message);
+    sqlite3_bind_int64(stmt, 4, finishTimeMs);
+    bindText(stmt, 5, commandId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
 bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& target)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_db || seq <= 0) {
         return false;
     }
@@ -1644,6 +2014,7 @@ bool PcDatabase::queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& tar
 
 std::vector<CommandLogTarget> PcDatabase::collectCommandTimeouts(std::int64_t nowMs, std::int64_t timeoutMs)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<CommandLogTarget> results;
     if (!m_db) {
         return results;
@@ -1679,13 +2050,18 @@ std::vector<CommandLogTarget> PcDatabase::collectCommandTimeouts(std::int64_t no
     sqlite3_finalize(stmt);
 
     for (const CommandLogTarget& target : results) {
-        updateCommandLogBySeq(target.seq, "timeout", "linux_data_ack_timeout", "device execution timeout", nowMs);
+        updateCommandLogByCommandId(target.commandId,
+                                    "timeout",
+                                    "linux_data_ack_timeout",
+                                    "device execution timeout",
+                                    nowMs);
     }
     return results;
 }
 
 void PcDatabase::close()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_db) {
         sqlite3_close(m_db);
         m_db = nullptr;

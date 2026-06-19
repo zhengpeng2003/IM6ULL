@@ -613,6 +613,7 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
             return CMD_PROCESS_ERROR;
         }
         (void)data_config_sync_mark_sent(seq, "config_snapshot", snapshot, DEFAULT_PORT_ID);
+        data_ack_send(seq, cmd, 1, "", "config snapshot published");
         return CMD_PROCESS_HANDLED;
     }
 
@@ -622,6 +623,7 @@ static int handle_get_config(uint32_t seq, struct json_object *root, const char 
         return CMD_PROCESS_ERROR;
     }
 
+    data_ack_send(seq, cmd, 1, "", "config snapshot published");
     return CMD_PROCESS_HANDLED;
 }
 
@@ -730,6 +732,7 @@ static const command_entry_t command_table[] = {
     {"disconnect_port", handle_disconnect_port},
     {"add_device", handle_add_device},
     {"set_device_threshold", handle_set_device_threshold},
+    {"set_threshold", handle_set_device_threshold},
     {"remove_device", handle_remove_device},
     {"set_relay", handle_set_relay},
     {"get_config", handle_get_config},
@@ -756,6 +759,32 @@ static int process_command_message(uint32_t seq, struct json_object *root, const
     snprintf(reason, sizeof(reason), "unsupported_command");
     data_ack_send(seq, cmd, 0, reason, data_ack_message_from_reason(reason));
     return CMD_PROCESS_ERROR;
+}
+
+static struct json_object *command_effective_root(struct json_object *root)
+{
+    struct json_object *payload = NULL;
+    if (!root || !json_object_object_get_ex(root, "payload", &payload) ||
+        !payload || !json_object_is_type(payload, json_type_object))
+        return root;
+
+    struct json_object *target = NULL;
+    if (json_object_object_get_ex(root, "target", &target) && target)
+        json_object_object_add(payload, "target", json_object_get(target));
+
+    const char *copy_keys[] = {
+        "gatewayId", "gateway_id", "portId", "port_id", "cmd_id", "cmdId",
+        "commandId", "cmd", "cmdType",
+        "commandType", "command", "seq", "sequence", "timestampMs"
+    };
+    for (size_t i = 0; i < sizeof(copy_keys) / sizeof(copy_keys[0]); ++i) {
+        struct json_object *value = NULL;
+        if (!json_object_object_get_ex(payload, copy_keys[i], &value) &&
+            json_object_object_get_ex(root, copy_keys[i], &value)) {
+            json_object_object_add(payload, copy_keys[i], json_object_get(value));
+        }
+    }
+    return payload;
 }
 
 static int process_device_message(uint32_t seq, struct json_object *root)
@@ -847,6 +876,10 @@ int data_command_process_message(const char *json_str)
     struct json_object *seq_obj;
     if (json_get_object_any(root, (const char * const[]){"seq", "sequence"}, 2, &seq_obj))
         seq = (uint32_t)json_object_get_int64(seq_obj);
+    data_ack_set_current_cmd_id(json_get_string_any(root,
+                                                    (const char * const[]){"cmd_id", "cmdId", "commandId"},
+                                                    3,
+                                                    ""));
 
     int ret = CMD_PROCESS_ERROR;
     const char *msg_type = "";
@@ -855,24 +888,26 @@ int data_command_process_message(const char *json_str)
         msg_type = json_object_get_string(type_obj);
 
     if (msg_type && strcmp(msg_type, "ack") == 0) {
+        data_ack_clear_current_cmd_id();
         json_object_put(root);
         return CMD_PROCESS_HANDLED;
     }
 
     struct json_object *cmd_obj = NULL;
     json_get_object_any(root,
-                        (const char * const[]){"cmd", "commandType", "command"},
-                        3,
+                        (const char * const[]){"cmdType", "cmd", "commandType", "command"},
+                        4,
                         &cmd_obj);
     if (cmd_obj) {
         if (msg_type && msg_type[0] != '\0' && strcmp(msg_type, "command") != 0) {
             data_ack_send(seq, json_object_get_string(cmd_obj), 0,
                           "invalid_request",
                           data_ack_message_from_reason("invalid_request"));
+            data_ack_clear_current_cmd_id();
             json_object_put(root);
             return CMD_PROCESS_ERROR;
         }
-        ret = process_command_message(seq, root, json_object_get_string(cmd_obj));
+        ret = process_command_message(seq, command_effective_root(root), json_object_get_string(cmd_obj));
     } else {
         if (msg_type && msg_type[0] != '\0') {
             data_ack_send(seq, "", 0,
@@ -884,6 +919,7 @@ int data_command_process_message(const char *json_str)
         }
     }
 
+    data_ack_clear_current_cmd_id();
     json_object_put(root);
     return ret;
 }

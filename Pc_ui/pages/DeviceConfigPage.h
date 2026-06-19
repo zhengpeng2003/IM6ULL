@@ -3,21 +3,28 @@
 #include <QList>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QHash>
 #include <QWidget>
 
 #include "model/DeviceModel.h"
 
 class ConfigManager;
+class DataManager;
 class DeviceManager;
+class UiStateStore;
+class QHideEvent;
+class QShowEvent;
 class QTableWidget;
-class QTimer;
 class QPushButton;
+class QTimer;
 
 class DeviceConfigPage : public QWidget
 {
     Q_OBJECT
 public:
-    explicit DeviceConfigPage(DeviceManager *device, ConfigManager *config, QWidget *parent = nullptr);
+    explicit DeviceConfigPage(DeviceManager *device, ConfigManager *config,
+                              DataManager *dataManager, UiStateStore *stateStore,
+                              QWidget *parent = nullptr);
 
 signals:
     void addSlaveRequested(const QString &gatewayId, const QString &portId, int deviceId,
@@ -27,8 +34,14 @@ signals:
     void deleteDeviceDataRequested(const QString &gatewayId, const QString &portId, int deviceId);
 
 public slots:
+    void scheduleRefreshTables();
     void refreshTables();
+    void refreshRealtimeColumns();
     void onSyncConfigResult(const QJsonObject &root);
+
+protected:
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     struct MasterRow
@@ -53,6 +66,10 @@ private:
     void addStatusItem(QTableWidget *table, int row, int column, const QString &status) const;
     void addDeleteButton(QTableWidget *table, int row, bool master, const QString &gatewayId,
                          const QString &portId, int deviceId = 0);
+    QString realtimeTemperatureText(const QString &deviceKey) const;
+    QString realtimeHumidityText(const QString &deviceKey) const;
+    QString realtimeRelayText(const QString &deviceKey) const;
+    QString realtimeSourceText(const QString &deviceKey) const;
     void showAddSlaveDialog();
     void showSyncConfigDialog();
     void showScanPlaceholder();
@@ -60,8 +77,13 @@ private:
 private:
     DeviceManager *m_device = nullptr;
     ConfigManager *m_config = nullptr;
+    DataManager *m_dataManager = nullptr;
+    UiStateStore *m_stateStore = nullptr;
     QTableWidget *m_masterTable = nullptr;
     QTableWidget *m_slaveTable = nullptr;
     QPushButton *m_syncButton = nullptr;
     QTimer *m_refreshTimer = nullptr;
+    QTimer *m_realtimeTimer = nullptr;
+    QHash<QString, int> m_slaveRowByDeviceKey;
+    bool m_refreshDirty = false;
 };

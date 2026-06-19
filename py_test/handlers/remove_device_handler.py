@@ -16,6 +16,7 @@ class RemoveDeviceHandler(BaseHandler):
 
     def handle(self, gateway, topic, data):
         seq = self.get_seq(data)
+        cmd_id = self.get_cmd_id(data)
         slave_id = self.get_slave_id(data)
 
         print(f"[HANDLER][remove_device] seq={seq}, slave_id={slave_id}")
@@ -29,6 +30,7 @@ class RemoveDeviceHandler(BaseHandler):
                     ok=False,
                     reason="invalid_slave_id",
                     slave_id=None,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -42,6 +44,7 @@ class RemoveDeviceHandler(BaseHandler):
                     ok=False,
                     reason="device_not_found",
                     slave_id=slave_id,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -58,6 +61,7 @@ class RemoveDeviceHandler(BaseHandler):
                         ok=True,
                         reason="ok_after_5s",
                         slave_id=slave_id,
+                        cmd_id=cmd_id,
                     )
                 )
                 gateway.publish_snapshot("remove_device_delayed_ack")
@@ -75,6 +79,7 @@ class RemoveDeviceHandler(BaseHandler):
                 ok=True,
                 reason="ok",
                 slave_id=slave_id,
+                cmd_id=cmd_id,
             )
         )
 

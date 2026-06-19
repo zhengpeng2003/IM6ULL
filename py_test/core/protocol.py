@@ -84,8 +84,8 @@ def gateway_heartbeat() -> Dict[str, Any]:
 
 def config_snapshot(devices: List[Dict[str, Any]], reason: str, seq: Optional[int] = None) -> Dict[str, Any]:
     """
-    注意：你当前 Pc_data 的 MqttMessageHandler 解析的是 type=config_snapshot。
-    所以这里不能叫 device_config_snapshot。
+    Pc_data 的 MqttMessageHandler 同时兼容 config_snapshot 和 device_config_snapshot。
+    Mock 默认发送 config_snapshot，保持与当前测试流程一致。
     """
     return {
         "type": "config_snapshot",
@@ -127,11 +127,18 @@ def ack(
     reason: str,
     slave_id: Optional[int],
     device_type: str = "sensor_th",
+    cmd_id: str = "",
 ) -> Dict[str, Any]:
+    status = "success" if ok else "failed"
+    message = reason or ("success" if ok else "failed")
+
     return {
         "type": "ack",
+        "stage": "done",
+        "cmd_id": cmd_id,
 
         "cmd": cmd,
+        "cmdType": cmd,
         "command": cmd,
         "commandType": cmd,
         "action": cmd,
@@ -141,10 +148,10 @@ def ack(
 
         "ok": ok,
         "success": ok,
-        "status": "success" if ok else "failed",
+        "status": status,
 
         "reason": reason,
-        "message": reason,
+        "message": message,
 
         "timestampMs": now_ms(),
 
@@ -181,6 +188,8 @@ def telemetry_pack(devices: List[Dict[str, Any]]) -> Dict[str, Any]:
         device_type = dev.get("device_type") or dev.get("deviceType") or "sensor_th"
 
         if device_type == "relay":
+            relay_states = dev.get("relay_states") or dev.get("relayStates") or [False]
+            ch1_state = bool(relay_states[0]) if relay_states else False
             telemetry_devices.append(
                 {
                     "deviceId": str(slave_id),
@@ -203,7 +212,7 @@ def telemetry_pack(devices: List[Dict[str, Any]]) -> Dict[str, Any]:
                             "pointKey": "relay.ch1",
                             "pointName": "继电器通道1",
                             "valueType": "Boolean",
-                            "boolValue": bool(int(time.time()) % 2),
+                            "boolValue": ch1_state,
                             "unit": "",
                         }
                     ],

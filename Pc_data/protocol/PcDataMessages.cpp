@@ -31,7 +31,10 @@ std::string buildCommandAckJson(const std::string& cmdId,
                                 const std::string& commandType,
                                 const std::string& stage,
                                 const std::string& message,
-                                std::int64_t boardSeq)
+                                std::int64_t boardSeq,
+                                const std::string& gatewayId,
+                                const std::string& portId,
+                                int deviceId)
 {
     std::ostringstream oss;
     if (boardSeq <= 0) {
@@ -42,15 +45,33 @@ std::string buildCommandAckJson(const std::string& cmdId,
     oss << "\"type\":\"command_ack\",";
     oss << "\"cmd_id\":\"" << jsonEscape(cmdId) << "\",";
     oss << "\"seq\":" << seq << ",";
+    oss << "\"uiSeq\":" << seq << ",";
     oss << "\"boardSeq\":" << boardSeq << ",";
+    oss << "\"board_seq\":" << boardSeq << ",";
     oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
+    oss << "\"cmdType\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
-    oss << "\"stage\":\"" << jsonEscape(stage) << "\",";
-    oss << "\"status\":\"" << (ok ? (stage == "sent" ? "ok" : "success") : "failed") << "\",";
-    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    const bool finalDone = stage == "done";
+    const bool effectiveOk = finalDone && ok;
+    const std::string status = finalDone ? (effectiveOk ? "success" : "failed")
+                                         : (stage.empty() ? "accepted" : stage);
+    oss << "\"stage\":\"" << jsonEscape(stage.empty() ? "accepted" : stage) << "\",";
+    oss << "\"status\":\"" << jsonEscape(status) << "\",";
+    oss << "\"ok\":" << (effectiveOk ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
+    if (!gatewayId.empty()) {
+        oss << "\"gatewayId\":\"" << jsonEscape(gatewayId) << "\",";
+    }
+    if (!portId.empty()) {
+        oss << "\"portId\":\"" << jsonEscape(portId) << "\",";
+    }
+    if (deviceId > 0) {
+        oss << "\"deviceId\":" << deviceId << ",";
+        oss << "\"device_id\":" << deviceId << ",";
+        oss << "\"slave_id\":" << deviceId << ",";
+    }
     const std::int64_t nowMs = currentTimeMs();
     oss << "\"timestampMs\":" << nowMs << ",";
     oss << "\"timestamp\":" << nowMs;
@@ -147,9 +168,11 @@ std::string buildCommandLogUpdateJson(std::int64_t seq,
     oss << "\"cmd\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"command\":\"" << jsonEscape(commandType) << "\",";
     oss << "\"commandType\":\"" << jsonEscape(commandType) << "\",";
-    oss << "\"stage\":\"done\",";
+    oss << "\"cmdType\":\"" << jsonEscape(commandType) << "\",";
+    const std::string stage = (status == "sent" || status == "waiting") ? "sent" : "done";
+    oss << "\"stage\":\"" << stage << "\",";
     oss << "\"status\":\"" << jsonEscape(status) << "\",";
-    oss << "\"ok\":" << ((status == "success" || status == "ok") ? "true" : "false") << ",";
+    oss << "\"ok\":" << (status == "success" ? "true" : "false") << ",";
     oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
     oss << "\"message\":\"" << jsonEscape(message) << "\",";
     if (target) {

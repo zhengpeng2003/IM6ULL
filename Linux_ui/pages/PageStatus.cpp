@@ -30,10 +30,15 @@ void PageStatus::setMasterSummary(int masterCount,
                                   int alarmCount,
                                   const QString &mqttState)
 {
-    Q_UNUSED(masterCount);
-    Q_UNUSED(onlineSlaveCount);
-    Q_UNUSED(alarmCount);
-    Q_UNUSED(mqttState);
+    if (!summaryLabel)
+        return;
+
+    const QString stateText = mqttState.isEmpty() ? QStringLiteral("--") : mqttState;
+    summaryLabel->setText(QStringLiteral("主站 %1  在线从站 %2  告警 %3  %4")
+                              .arg(masterCount)
+                              .arg(onlineSlaveCount)
+                              .arg(alarmCount)
+                              .arg(stateText));
 }
 
 void PageStatus::setMasterList(const QList<MasterStatusInfo> &masters)
@@ -486,6 +491,7 @@ void PageStatus::initUI()
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(6, 4, 6, 4);
     mainLayout->setSpacing(4);
+    mainLayout->addWidget(summaryLabel);
     mainLayout->addLayout(bodyLayout, 1);
     mainLayout->addWidget(alarmLabel);
 

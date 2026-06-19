@@ -3,19 +3,28 @@
 #include "core/DataManager.h"
 #include "core/DeviceManager.h"
 #include "core/AlarmManager.h"
+#include "core/UiStateStore.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QHeaderView>
-#include <QTimer>
 #include <QLabel>
+#include <QShowEvent>
 #include <QHash>
 #include <QSet>
+#include <QTimer>
 
-DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmManager *alarm, QWidget *parent)
-    : QWidget(parent), m_data(data), m_device(device), m_alarm(alarm)
+namespace {
+
+constexpr int kRefreshDelayMs = 250;
+
+} // namespace
+
+DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmManager *alarm,
+                             UiStateStore *stateStore, QWidget *parent)
+    : QWidget(parent), m_data(data), m_device(device), m_alarm(alarm), m_stateStore(stateStore)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
@@ -61,23 +70,49 @@ DashboardPage::DashboardPage(DataManager *data, DeviceManager *device, AlarmMana
     tables->addWidget(m_infoTabWidget, 1);
     layout->addLayout(tables, 1);
 
-    m_timer = new QTimer(this);
-    connect(m_timer, &QTimer::timeout, this, &DashboardPage::refreshView);
-    m_timer->start(1000);
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    connect(m_refreshTimer, &QTimer::timeout, this, &DashboardPage::refreshView);
+
+    if (m_stateStore) {
+        connect(m_stateStore, &UiStateStore::stateChanged,
+                this, &DashboardPage::scheduleRefreshView);
+    }
     refreshView();
+}
+
+void DashboardPage::scheduleRefreshView()
+{
+    m_refreshDirty = true;
+    if (!isVisible()) {
+        return;
+    }
+
+    if (m_refreshTimer && !m_refreshTimer->isActive()) {
+        m_refreshTimer->start(kRefreshDelayMs);
+    }
+}
+
+void DashboardPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_refreshDirty) {
+        scheduleRefreshView();
+    }
 }
 
 void DashboardPage::refreshView()
 {
-    const auto devices = m_device->allDevices();
+    m_refreshDirty = false;
+    const auto devices = m_data ? m_data->deviceTreeSnapshot() : QList<DeviceNode>();
     const bool serviceOnline = m_data ? m_data->isServiceOnline() : false;
     QSet<QString> gateways, masters;
     QSet<QString> onlineMasters;
     QHash<QString, int> masterDeviceCounts;
     int onlineSlaveCount = 0;
-    for (const auto &d : devices) {
+    for (const DeviceNode &d : devices) {
         const QString masterKey = d.gatewayId + "/" + QString::number(d.masterSlot);
-        if (d.online) {
+        if (d.online || d.status == QStringLiteral("online")) {
             gateways.insert(d.gatewayId);
             onlineMasters.insert(masterKey);
             ++onlineSlaveCount;

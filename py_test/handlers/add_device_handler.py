@@ -16,6 +16,7 @@ class AddDeviceHandler(BaseHandler):
 
     def handle(self, gateway, topic, data):
         seq = self.get_seq(data)
+        cmd_id = self.get_cmd_id(data)
         slave_id = self.get_slave_id(data)
         device_type = self.get_device_type(data)
         poll_interval_ms = self.get_poll_interval_ms(data)
@@ -36,6 +37,7 @@ class AddDeviceHandler(BaseHandler):
                     reason="invalid_slave_id",
                     slave_id=None,
                     device_type=device_type,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -50,6 +52,7 @@ class AddDeviceHandler(BaseHandler):
                     reason="device_no_response",
                     slave_id=slave_id,
                     device_type=device_type,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -64,6 +67,7 @@ class AddDeviceHandler(BaseHandler):
                     reason="device_exists",
                     slave_id=slave_id,
                     device_type=device_type,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -78,6 +82,7 @@ class AddDeviceHandler(BaseHandler):
                     reason="port_not_found",
                     slave_id=slave_id,
                     device_type=device_type,
+                    cmd_id=cmd_id,
                 )
             )
             return True
@@ -100,6 +105,7 @@ class AddDeviceHandler(BaseHandler):
                         reason="ok_after_5s",
                         slave_id=slave_id,
                         device_type=device_type,
+                        cmd_id=cmd_id,
                     )
                 )
                 gateway.publish_snapshot("add_device_delayed_ack")
@@ -127,6 +133,7 @@ class AddDeviceHandler(BaseHandler):
                 reason="ok",
                 slave_id=slave_id,
                 device_type=device_type,
+                cmd_id=cmd_id,
             )
         )
 

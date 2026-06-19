@@ -9,8 +9,8 @@ class DiscoverHandler(BaseHandler):
     name = "discover"
 
     def can_handle(self, topic, data):
-        (void_topic, void_data) = (topic, data)
-        return False
+        _ = topic
+        return self.get_cmd(data) == "discover"
 
     def handle(self, gateway, topic, data):
         print("[HANDLER][discover] publish gateway_register and config_snapshot")

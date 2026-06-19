@@ -39,21 +39,37 @@ TopBar::TopBar(QWidget *parent) : QWidget(parent)
 
 void TopBar::setOnlineGatewayCount(int count)
 {
+    if (m_onlineGatewayCount == count) {
+        return;
+    }
+    m_onlineGatewayCount = count;
     m_gatewayLabel->setText(QStringLiteral("在线网关: %1").arg(count));
 }
 
 void TopBar::setOnlineDeviceCount(int count)
 {
+    if (m_onlineDeviceCount == count) {
+        return;
+    }
+    m_onlineDeviceCount = count;
     m_deviceLabel->setText(QStringLiteral("在线设备: %1").arg(count));
 }
 
 void TopBar::setAlarmCount(int count)
 {
+    if (m_alarmCount == count) {
+        return;
+    }
+    m_alarmCount = count;
     m_alarmLabel->setText(QStringLiteral("报警: %1").arg(count));
 }
 
 void TopBar::setServiceOnline(bool online)
 {
+    if (m_serviceOnline == online) {
+        return;
+    }
+    m_serviceOnline = online;
     m_serviceLabel->setText(online ? QStringLiteral("Pc_data 服务在线")
                                    : QStringLiteral("Pc_data 服务离线"));
 }

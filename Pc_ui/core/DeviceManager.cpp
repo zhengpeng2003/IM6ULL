@@ -2,6 +2,37 @@
 #include <QSet>
 #include <QDebug>
 
+namespace {
+
+bool configFieldsChanged(const DeviceNode &oldNode, const DeviceNode &newNode)
+{
+    return oldNode.factoryId != newNode.factoryId ||
+           oldNode.factoryName != newNode.factoryName ||
+           oldNode.areaId != newNode.areaId ||
+           oldNode.areaName != newNode.areaName ||
+           oldNode.gatewayId != newNode.gatewayId ||
+           oldNode.gatewayName != newNode.gatewayName ||
+           oldNode.masterSlot != newNode.masterSlot ||
+           oldNode.masterName != newNode.masterName ||
+           oldNode.port != newNode.port ||
+           oldNode.baud != newNode.baud ||
+           oldNode.slaveAddr != newNode.slaveAddr ||
+           oldNode.deviceId != newNode.deviceId ||
+           oldNode.deviceName != newNode.deviceName ||
+           oldNode.deviceType != newNode.deviceType ||
+           oldNode.expectTelemetry != newNode.expectTelemetry;
+}
+
+bool realtimeFieldsChanged(const DeviceNode &oldNode, const DeviceNode &newNode)
+{
+    return oldNode.online != newNode.online ||
+           oldNode.status != newNode.status ||
+           oldNode.statusReason != newNode.statusReason ||
+           oldNode.lastUpdateTime != newNode.lastUpdateTime;
+}
+
+} // namespace
+
 DeviceManager::DeviceManager(QObject *parent) : QObject(parent) {}
 
 void DeviceManager::setDevices(const QList<DeviceNode> &devices)
@@ -26,8 +57,7 @@ void DeviceManager::setDevices(const QList<DeviceNode> &devices)
     qDebug() << "DeviceManager setDevices dedup" << before << "->" << m_devices.size()
              << "dropped" << dropped << "duplicates" << duplicates;
     emit deviceConfigChanged();
-    emit onlineGatewayCountChanged(onlineGatewayCount());
-    emit onlineDeviceCountChanged(onlineDeviceCount());
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::setGateways(const QList<GatewayNode> &gateways)
@@ -39,7 +69,7 @@ void DeviceManager::setGateways(const QList<GatewayNode> &gateways)
         }
     }
     emit gatewayStatusChanged();
-    emit onlineGatewayCountChanged(onlineGatewayCount());
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::setPorts(const QList<PortNode> &ports)
@@ -52,6 +82,7 @@ void DeviceManager::setPorts(const QList<PortNode> &ports)
     }
     emit portStatusChanged();
     emit deviceConfigChanged();
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::clearAll()
@@ -62,8 +93,7 @@ void DeviceManager::clearAll()
     emit deviceConfigChanged();
     emit gatewayStatusChanged();
     emit portStatusChanged();
-    emit onlineGatewayCountChanged(0);
-    emit onlineDeviceCountChanged(0);
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::upsertDevice(const DeviceNode &node)
@@ -73,13 +103,47 @@ void DeviceManager::upsertDevice(const DeviceNode &node)
         return;
     }
     const QString key = node.key();
-    if (m_devices.contains(key)) {
-        qDebug() << "DeviceManager upsert overwrite" << key;
+    if (!m_devices.contains(key)) {
+        qDebug() << "[DBG_DEVICE] upsertDevice key:" << key
+                 << "oldLastUpdate:" << 0
+                 << "newLastUpdate:" << node.lastUpdateTime
+                 << "oldStatus:" << QStringLiteral("<missing>")
+                 << "newStatus:" << node.status
+                 << "configChanged:" << true
+                 << "realtimeChanged:" << true
+                 << "emitDeviceConfigChanged:" << true
+                 << "emitDeviceOnlineStateChanged:" << true;
+        m_devices.insert(key, node);
+        emit deviceConfigChanged();
+        emit deviceOnlineStateChanged(key, node.online);
+        emitOnlineCountsIfChanged();
+        return;
     }
+
+    const DeviceNode oldNode = m_devices.value(key);
+    const bool configChanged = configFieldsChanged(oldNode, node);
+    const bool realtimeChanged = realtimeFieldsChanged(oldNode, node);
+    qDebug() << "[DBG_DEVICE] upsertDevice key:" << key
+             << "oldLastUpdate:" << oldNode.lastUpdateTime
+             << "newLastUpdate:" << node.lastUpdateTime
+             << "oldStatus:" << oldNode.status
+             << "newStatus:" << node.status
+             << "configChanged:" << configChanged
+             << "realtimeChanged:" << realtimeChanged
+             << "emitDeviceConfigChanged:" << configChanged
+             << "emitDeviceOnlineStateChanged:" << (oldNode.online != node.online);
+    if (!configChanged && !realtimeChanged) {
+        return;
+    }
+
     m_devices.insert(key, node);
-    emit deviceConfigChanged();
-    emit onlineGatewayCountChanged(onlineGatewayCount());
-    emit onlineDeviceCountChanged(onlineDeviceCount());
+    if (configChanged) {
+        emit deviceConfigChanged();
+    }
+    if (oldNode.online != node.online) {
+        emit deviceOnlineStateChanged(key, node.online);
+    }
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
@@ -101,8 +165,7 @@ void DeviceManager::removeDeviceData(const QString &gatewayId, const QString &po
     }
 
     emit deviceConfigChanged();
-    emit onlineGatewayCountChanged(onlineGatewayCount());
-    emit onlineDeviceCountChanged(onlineDeviceCount());
+    emitOnlineCountsIfChanged();
 }
 
 void DeviceManager::removeMasterData(const QString &gatewayId, const QString &portId)
@@ -123,8 +186,7 @@ void DeviceManager::removeMasterData(const QString &gatewayId, const QString &po
     }
 
     emit deviceConfigChanged();
-    emit onlineGatewayCountChanged(onlineGatewayCount());
-    emit onlineDeviceCountChanged(onlineDeviceCount());
+    emitOnlineCountsIfChanged();
 }
 
 QList<DeviceNode> DeviceManager::allDevices() const
@@ -155,8 +217,7 @@ void DeviceManager::updateDeviceOnline(const QString &key, bool online)
     node.online = online;
     m_devices.insert(key, node);
     emit deviceOnlineStateChanged(key, online);
-    emit onlineGatewayCountChanged(onlineGatewayCount());
-    emit onlineDeviceCountChanged(onlineDeviceCount());
+    emitOnlineCountsIfChanged();
 }
 
 int DeviceManager::onlineGatewayCount() const
@@ -179,4 +240,18 @@ int DeviceManager::onlineDeviceCount() const
     int count = 0;
     for (const auto &d : m_devices) if (d.online) ++count;
     return count;
+}
+
+void DeviceManager::emitOnlineCountsIfChanged()
+{
+    const int gatewayCount = onlineGatewayCount();
+    const int deviceCount = onlineDeviceCount();
+    if (m_lastOnlineGatewayCount != gatewayCount) {
+        m_lastOnlineGatewayCount = gatewayCount;
+        emit onlineGatewayCountChanged(gatewayCount);
+    }
+    if (m_lastOnlineDeviceCount != deviceCount) {
+        m_lastOnlineDeviceCount = deviceCount;
+        emit onlineDeviceCountChanged(deviceCount);
+    }
 }

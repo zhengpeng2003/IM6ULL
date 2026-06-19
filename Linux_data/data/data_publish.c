@@ -274,7 +274,7 @@ int data_publish_gateway_register(uint32_t seq)
     char gateway_up_topic[128];
     char gateway_cmd_topic[128];
     mqtt_make_gateway_up_topic(gateway_up_topic, sizeof(gateway_up_topic));
-    mqtt_make_gateway_command_topic(gateway_cmd_topic, sizeof(gateway_cmd_topic));
+    snprintf(gateway_cmd_topic, sizeof(gateway_cmd_topic), "cmd/%s/#", DEFAULT_GATEWAY_ID);
     add_string(root, "upTopic", gateway_up_topic);
     add_string(root, "cmdTopic", gateway_cmd_topic);
 
@@ -404,10 +404,11 @@ int data_publish_device_register(uint32_t seq,
     meta.port_id = port_id_from_slot(slot);
     meta.device_id = slave_id;
     (void)ipc_server_send(json);
-    char topic[128];
-    int ret = mqtt_make_port_up_topic_for_slot(slot, topic, sizeof(topic)) == 0
-                  ? offline_publish_or_cache(topic, json, &meta)
-                  : DATA_SEND_INVALID_ARG;
+    int ret = offline_publish_or_cache(MQTT_GATEWAY_REGISTER_TOPIC, json, &meta);
+    (void)data_config_sync_mark_sent(seq,
+                                     "device_register",
+                                     json,
+                                     port_id_from_slot(slot));
     json_object_put(root);
     return ret;
 }

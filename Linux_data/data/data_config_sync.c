@@ -18,6 +18,7 @@
 #define CONFIG_SYNC_ACK_TIMEOUT_MS 5000
 #define CONFIG_SYNC_RETRY_INTERVAL_MS 8000
 #define CONFIG_SYNC_MAX_FAST_RETRY_COUNT 3
+#define CONFIG_SYNC_PENDING_MAX 8
 
 typedef struct {
     uint32_t config_version;
@@ -36,9 +37,18 @@ typedef struct {
     int last_acked_snapshot;
 } config_sync_state_t;
 
+typedef struct {
+    int used;
+    uint32_t seq;
+    char cmd[MAX_CMD_NAME_LEN];
+    char port_id[32];
+    char payload[CONFIG_SYNC_PAYLOAD_MAX];
+} config_sync_pending_t;
+
 static config_sync_state_t g_sync = {
     0, 0, 0, "idle", "", "", 0, 1, 0, 0, "", "", "", 0
 };
+static config_sync_pending_t g_pending_queue[CONFIG_SYNC_PENDING_MAX];
 static pthread_mutex_t g_sync_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_sync_seq = 50000;
 
@@ -101,6 +111,86 @@ static int is_snapshot_cmd(const char *cmd)
             strcmp(cmd, "device_config_snapshot") == 0);
 }
 
+static int has_active_pending_locked(void)
+{
+    return g_sync.pending_snapshot[0] != '\0' && g_sync.pending_seq != 0;
+}
+
+static void set_active_pending_locked(uint32_t seq,
+                                      const char *cmd,
+                                      const char *payload,
+                                      const char *port_id)
+{
+    g_sync.pending_seq = seq;
+    copy_text(g_sync.pending_cmd, sizeof(g_sync.pending_cmd), cmd);
+    copy_text(g_sync.pending_port_id, sizeof(g_sync.pending_port_id), port_id);
+    copy_text(g_sync.pending_snapshot, sizeof(g_sync.pending_snapshot), payload);
+    g_sync.retry_count = 0;
+    g_sync.retryable = 1;
+    g_sync.last_send_time_ms = sync_time_ms();
+}
+
+static int enqueue_pending_locked(uint32_t seq,
+                                  const char *cmd,
+                                  const char *payload,
+                                  const char *port_id)
+{
+    for (int i = 0; i < CONFIG_SYNC_PENDING_MAX; ++i) {
+        if (g_pending_queue[i].used &&
+            g_pending_queue[i].seq == seq &&
+            strcmp(g_pending_queue[i].cmd, cmd ? cmd : "") == 0) {
+            copy_text(g_pending_queue[i].port_id, sizeof(g_pending_queue[i].port_id), port_id);
+            copy_text(g_pending_queue[i].payload, sizeof(g_pending_queue[i].payload), payload);
+            return DATA_SEND_OK;
+        }
+    }
+
+    for (int i = 0; i < CONFIG_SYNC_PENDING_MAX; ++i) {
+        if (!g_pending_queue[i].used) {
+            g_pending_queue[i].used = 1;
+            g_pending_queue[i].seq = seq;
+            copy_text(g_pending_queue[i].cmd, sizeof(g_pending_queue[i].cmd), cmd);
+            copy_text(g_pending_queue[i].port_id, sizeof(g_pending_queue[i].port_id), port_id);
+            copy_text(g_pending_queue[i].payload, sizeof(g_pending_queue[i].payload), payload);
+            return DATA_SEND_OK;
+        }
+    }
+
+    return DATA_SEND_MQTT_QUEUE_FULL;
+}
+
+static void promote_next_pending_locked(void)
+{
+    if (has_active_pending_locked())
+        return;
+
+    for (int i = 0; i < CONFIG_SYNC_PENDING_MAX; ++i) {
+        if (!g_pending_queue[i].used)
+            continue;
+
+        set_active_pending_locked(g_pending_queue[i].seq,
+                                  g_pending_queue[i].cmd,
+                                  g_pending_queue[i].payload,
+                                  g_pending_queue[i].port_id);
+        memset(&g_pending_queue[i], 0, sizeof(g_pending_queue[i]));
+        return;
+    }
+}
+
+static int remove_queued_pending_locked(uint32_t seq, const char *cmd)
+{
+    for (int i = 0; i < CONFIG_SYNC_PENDING_MAX; ++i) {
+        if (!g_pending_queue[i].used)
+            continue;
+        if (g_pending_queue[i].seq == seq &&
+            (!cmd || cmd[0] == '\0' || strcmp(g_pending_queue[i].cmd, cmd) == 0)) {
+            memset(&g_pending_queue[i], 0, sizeof(g_pending_queue[i]));
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int data_config_sync_mark_sent(uint32_t seq,
                                const char *cmd,
                                const char *payload,
@@ -112,7 +202,6 @@ int data_config_sync_mark_sent(uint32_t seq,
     pthread_mutex_lock(&g_sync_lock);
 
     const int snapshot_cmd = is_snapshot_cmd(cmd);
-    const int keep_existing_snapshot = !snapshot_cmd && g_sync.pending_snapshot[0] != '\0';
 
     if (snapshot_cmd)
         g_sync.config_version++;
@@ -120,14 +209,12 @@ int data_config_sync_mark_sent(uint32_t seq,
     if (g_sync.config_version == 0)
         g_sync.config_version = 1;
 
-    if (!keep_existing_snapshot) {
-        g_sync.pending_seq = seq;
-        copy_text(g_sync.pending_cmd, sizeof(g_sync.pending_cmd), cmd);
-        copy_text(g_sync.pending_port_id, sizeof(g_sync.pending_port_id), port_id);
-        copy_text(g_sync.pending_snapshot, sizeof(g_sync.pending_snapshot), payload);
-        g_sync.retry_count = 0;
-        g_sync.retryable = 1;
-        g_sync.last_send_time_ms = sync_time_ms();
+    int mark_ret = DATA_SEND_OK;
+    if (!has_active_pending_locked() ||
+        (g_sync.pending_seq == seq && strcmp(g_sync.pending_cmd, cmd) == 0)) {
+        set_active_pending_locked(seq, cmd, payload, port_id);
+    } else {
+        mark_ret = enqueue_pending_locked(seq, cmd, payload, port_id);
     }
     copy_text(g_sync.reason, sizeof(g_sync.reason), "");
     if (mqtt_is_connected()) {
@@ -140,7 +227,7 @@ int data_config_sync_mark_sent(uint32_t seq,
 
     publish_state_locked();
     pthread_mutex_unlock(&g_sync_lock);
-    return DATA_SEND_OK;
+    return mark_ret;
 }
 
 static int send_pending_locked(uint32_t seq)
@@ -202,13 +289,12 @@ int data_config_sync_publish_latest_snapshot(uint32_t seq)
         json_object_put(root);
         return DATA_SEND_JSON_ERROR;
     }
-    copy_text(g_sync.pending_snapshot, sizeof(g_sync.pending_snapshot), json);
-    copy_text(g_sync.pending_cmd, sizeof(g_sync.pending_cmd), "config_snapshot");
-    copy_text(g_sync.pending_port_id, sizeof(g_sync.pending_port_id), DEFAULT_PORT_ID);
-    g_sync.pending_seq = seq;
-    g_sync.retry_count = 0;
-    g_sync.retryable = 1;
-    g_sync.last_send_time_ms = sync_time_ms();
+    if (!has_active_pending_locked() ||
+        (g_sync.pending_seq == seq && strcmp(g_sync.pending_cmd, "config_snapshot") == 0)) {
+        set_active_pending_locked(seq, "config_snapshot", json, DEFAULT_PORT_ID);
+    } else {
+        (void)enqueue_pending_locked(seq, "config_snapshot", json, DEFAULT_PORT_ID);
+    }
     copy_text(g_sync.reason, sizeof(g_sync.reason), "");
     copy_text(g_sync.status, sizeof(g_sync.status), mqtt_is_connected() ? "syncing" : "offline");
     copy_text(g_sync.message, sizeof(g_sync.message),
@@ -234,6 +320,7 @@ static int string_in_register_cmds(const char *cmd)
            (strcmp(cmd, "gateway_register") == 0 ||
             strcmp(cmd, "port_register") == 0 ||
             strcmp(cmd, "port_status") == 0 ||
+            strcmp(cmd, "device_register") == 0 ||
             strcmp(cmd, "config_snapshot") == 0 ||
             strcmp(cmd, "device_config_snapshot") == 0);
 }
@@ -287,7 +374,17 @@ void data_config_sync_handle_ack_json(const char *payload)
 
     pthread_mutex_lock(&g_sync_lock);
     const int snapshot_ack = is_snapshot_cmd(cmd);
-    if (snapshot_ack && seq != 0 && g_sync.pending_seq != 0 && seq != g_sync.pending_seq) {
+    const int active_match = seq != 0 &&
+                             g_sync.pending_seq == seq &&
+                             (!cmd || cmd[0] == '\0' || strcmp(g_sync.pending_cmd, cmd) == 0);
+    const int queued_match = !active_match && seq != 0
+                                 ? remove_queued_pending_locked(seq, cmd)
+                                 : 0;
+    if (snapshot_ack &&
+        seq != 0 &&
+        g_sync.pending_seq != 0 &&
+        seq != g_sync.pending_seq &&
+        !queued_match) {
         pthread_mutex_unlock(&g_sync_lock);
         json_object_put(root);
         return;
@@ -304,10 +401,33 @@ void data_config_sync_handle_ack_json(const char *payload)
         if (snapshot_ack) {
             g_sync.last_acked_config_version = config_version > 0 ? config_version : g_sync.config_version;
             g_sync.last_acked_snapshot = 1;
+            if (active_match) {
+                g_sync.pending_seq = 0;
+                g_sync.pending_snapshot[0] = '\0';
+                g_sync.pending_cmd[0] = '\0';
+                g_sync.pending_port_id[0] = '\0';
+            }
+            promote_next_pending_locked();
+            if (g_sync.pending_snapshot[0] != '\0') {
+                copy_text(g_sync.status, sizeof(g_sync.status), "syncing");
+                copy_text(g_sync.message, sizeof(g_sync.message), "注册表同步中，等待 Pc_data 确认");
+            } else {
+                copy_text(g_sync.status, sizeof(g_sync.status), "success");
+                copy_text(g_sync.message, sizeof(g_sync.message), "注册表已同步");
+            }
+        } else if (active_match) {
             g_sync.pending_seq = 0;
             g_sync.pending_snapshot[0] = '\0';
-            copy_text(g_sync.status, sizeof(g_sync.status), "success");
-            copy_text(g_sync.message, sizeof(g_sync.message), "注册表已同步");
+            g_sync.pending_cmd[0] = '\0';
+            g_sync.pending_port_id[0] = '\0';
+            promote_next_pending_locked();
+            if (g_sync.pending_snapshot[0] != '\0') {
+                copy_text(g_sync.status, sizeof(g_sync.status), "syncing");
+                copy_text(g_sync.message, sizeof(g_sync.message), "注册表同步中，等待 Pc_data 确认");
+            } else {
+                copy_text(g_sync.status, sizeof(g_sync.status), "success");
+                copy_text(g_sync.message, sizeof(g_sync.message), "注册类数据已确认");
+            }
         } else if (g_sync.pending_snapshot[0] != '\0') {
             copy_text(g_sync.status, sizeof(g_sync.status), "syncing");
             copy_text(g_sync.message, sizeof(g_sync.message), "注册表同步中，等待 Pc_data 确认");
@@ -331,7 +451,8 @@ void data_config_sync_handle_ack_json(const char *payload)
 void data_config_sync_tick(void)
 {
     pthread_mutex_lock(&g_sync_lock);
-    const int has_pending = g_sync.pending_snapshot[0] != '\0' && g_sync.pending_seq != 0;
+    promote_next_pending_locked();
+    const int has_pending = has_active_pending_locked();
     const int64_t now = sync_time_ms();
     if (!has_pending) {
         pthread_mutex_unlock(&g_sync_lock);

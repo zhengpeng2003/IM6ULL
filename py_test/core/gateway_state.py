@@ -106,5 +106,17 @@ class GatewayState:
     def remove_device(self, slave_id: int):
         self.devices.pop(slave_id, None)
 
+    def get_device(self, slave_id: int) -> Optional[Dict[str, Any]]:
+        return self.devices.get(slave_id)
+
+    def set_relay_states(self, slave_id: int, states: List[bool]) -> bool:
+        device = self.devices.get(slave_id)
+        if not device or device.get("device_type") != "relay":
+            return False
+
+        device["relay_states"] = list(states)
+        device["relayStates"] = list(states)
+        return True
+
     def device_list(self) -> List[Dict[str, Any]]:
         return list(self.devices.values())

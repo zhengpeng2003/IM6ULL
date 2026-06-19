@@ -24,4 +24,8 @@ private:
     QLabel *m_serviceLabel = nullptr;
     QLabel *m_timeLabel = nullptr;
     QTimer *m_timer = nullptr;
+    int m_onlineGatewayCount = -1;
+    int m_onlineDeviceCount = -1;
+    int m_alarmCount = -1;
+    bool m_serviceOnline = false;
 };

@@ -23,6 +23,7 @@ class CommandManager;
 class ConfigManager;
 class IpcClient;
 class QTimer;
+class UiStateStore;
 
 class MainWindow : public QMainWindow
 {
@@ -45,6 +46,7 @@ private:
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
     void sendDeleteDeviceData(const QString &gatewayId, const QString &portId, int deviceId);
+    void onAddDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId);
     void onRemoveDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId);
     void sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
                              const QString &deviceType, int pollIntervalMs);
@@ -72,13 +74,14 @@ private:
     AlarmManager *m_alarm = nullptr;
     CommandManager *m_command = nullptr;
     ConfigManager *m_config = nullptr;
+    UiStateStore *m_stateStore = nullptr;
 
 
 private:
     IpcClient *m_ipcClient = nullptr;
     QTimer *m_ipcTimer = nullptr;
+    QTimer *m_uiPullTimer = nullptr;
     QTimer *m_ipcWatchdogTimer = nullptr;
-    QTimer *m_snapshotFallbackTimer = nullptr;
     qint64 m_lastIpcMessageMs = 0;
     qint64 m_lastLatestPointsMs = 0;
     QString m_pendingDeleteAction;

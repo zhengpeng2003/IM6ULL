@@ -16,6 +16,8 @@ class SnapshotHandler(BaseHandler):
             or cmd == "request_config_snapshot"
             or msg_type == "get_config_snapshot"
             or cmd == "get_config_snapshot"
+            or msg_type == "get_config"
+            or cmd == "get_config"
         )
 
     def handle(self, gateway, topic, data):

@@ -27,9 +27,12 @@ class BaseHandler:
 
     def get_seq(self, data: Dict[str, Any]) -> int:
         try:
-            return int(data.get("seq") or data.get("sequence") or data.get("cmd_id") or 0)
+            return int(data.get("seq") or data.get("sequence") or 0)
         except Exception:
             return 0
+
+    def get_cmd_id(self, data: Dict[str, Any]) -> str:
+        return str(data.get("cmd_id") or data.get("cmdId") or data.get("commandId") or "")
 
     def get_slave_id(self, data: Dict[str, Any]) -> Optional[int]:
         device = data.get("device")

@@ -2,6 +2,7 @@
 #define PC_DATABASE_HPP
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -108,12 +109,13 @@ public:
     bool initTables();
     bool saveTelemetryPoints(const std::vector<TelemetryPoint>& points);
     bool savePointConfigs(const std::vector<PointConfig>& configs);
-    bool upsertDevice(const DeviceRecord& device);
+    bool upsertDevice(const DeviceRecord& device, bool allowDeletedReactivate = false);
     bool upsertGatewayStatus(const GatewayStatus& gateway);
     bool upsertGatewayRegistry(const GatewayRegistry& registry);
     std::string queryGatewayCmdTopic(const std::string& gatewayId);
     std::string queryGatewayUpTopic(const std::string& gatewayId);
     bool queryGatewayRegistry(const std::string& gatewayId, GatewayRegistry& registry);
+    bool gatewayRegistryExists(const std::string& gatewayId) const;
     std::vector<GatewayRegistry> getAllGatewayRegistry();
     bool updateGatewayRegistryHeartbeat(const std::string& gatewayId,
                                         std::int64_t heartbeatTimeMs,
@@ -124,6 +126,8 @@ public:
     bool upsertGatewayPort(const GatewayPort& port);
     bool isGatewayPortConnected(const std::string& gatewayId,
                                 const std::string& portId);
+    bool gatewayPortExists(const std::string& gatewayId,
+                           const std::string& portId) const;
     bool createCommandLog(const std::string& commandId,
                           std::int64_t seq,
                           const std::string& commandType,
@@ -136,6 +140,11 @@ public:
                                const std::string& reason,
                                const std::string& message,
                                std::int64_t finishTimeMs);
+    bool updateCommandLogByCommandId(const std::string& commandId,
+                                     const std::string& status,
+                                     const std::string& reason,
+                                     const std::string& message,
+                                     std::int64_t finishTimeMs);
     bool queryCommandTargetBySeq(std::int64_t seq, CommandLogTarget& target);
     std::vector<CommandLogTarget> collectCommandTimeouts(std::int64_t nowMs, std::int64_t timeoutMs);
     bool updateDeviceOnlineFromTelemetry(const TelemetryPoint& point);
@@ -144,6 +153,7 @@ public:
     std::vector<GatewayStatus> queryGatewayStatuses();
     std::vector<GatewayPort> queryGatewayPorts();
     std::vector<DeviceRecord> queryDevices();
+    std::vector<PointConfig> queryPointConfigs();
     std::vector<TelemetryPoint> queryLatestPoints();
     std::vector<TelemetryPoint> queryHistoryPoints(const std::string& pointId,
                                                    std::int64_t startMs,
@@ -157,6 +167,12 @@ public:
     bool deviceExists(const std::string& gatewayId,
                       const std::string& portId,
                       int deviceId) const;
+    bool deviceDeleted(const std::string& gatewayId,
+                       const std::string& portId,
+                       int deviceId) const;
+    bool reactivateDeletedDevice(const std::string& gatewayId,
+                                 const std::string& portId,
+                                 int deviceId);
     std::string queryDeviceType(const std::string& gatewayId,
                                 const std::string& portId,
                                 int deviceId) const;
@@ -199,9 +215,14 @@ private:
     bool saveHistoryPoint(const TelemetryPoint& point);
     bool savePointConfig(const PointConfig& config);
     bool upsertDeviceStatus(const DeviceRecord& device);
+    bool markDeviceDeleted(const std::string& gatewayId,
+                           const std::string& portId,
+                           int deviceId,
+                           std::int64_t deletedTimeMs);
 
 private:
     sqlite3* m_db = nullptr;
+    mutable std::recursive_mutex m_mutex;
 };
 
 #endif // PC_DATABASE_HPP

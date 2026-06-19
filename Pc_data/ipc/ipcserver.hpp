@@ -24,7 +24,7 @@ public:
     bool start();
     void stop();
 
-    void sendMessage(const std::string &msg);
+    bool sendMessage(const std::string &msg);
 
     void setMessageCallback(MessageCallback cb);
     void setClientConnectedCallback(ClientCallback cb);

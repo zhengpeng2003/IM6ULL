@@ -33,7 +33,11 @@ signals:
     void onlineDeviceCountChanged(int count);
 
 private:
+    void emitOnlineCountsIfChanged();
+
     QHash<QString, DeviceNode> m_devices;
     QHash<QString, GatewayNode> m_gateways;
     QHash<QString, PortNode> m_ports;
+    int m_lastOnlineGatewayCount = -1;
+    int m_lastOnlineDeviceCount = -1;
 };

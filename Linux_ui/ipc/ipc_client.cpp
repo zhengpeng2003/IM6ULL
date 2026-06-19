@@ -116,7 +116,7 @@ void IpcClient::onReadyRead()
                                        root.value("device_type").toString(),
                                        root.value("baud").toInt(),
                                        root.value("connected").toBool(),
-                                       status == "ok" ? message : reason);
+                                       status == "success" ? message : reason);
             }
 
             emit commandAckReceived(
