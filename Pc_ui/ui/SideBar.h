@@ -14,6 +14,6 @@ signals:
     void pageChanged(int index);
 
 private:
-    QPushButton *createButton(const QString &text, int index);
+    QPushButton *createButton(const QString &text, const QString &iconPath, int index);
     QVector<QPushButton*> m_buttons;
 };

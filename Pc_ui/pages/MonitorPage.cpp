@@ -3,50 +3,43 @@
 #include "core/DataManager.h"
 #include "core/CommandManager.h"
 #include "core/UiStateStore.h"
+#include "sensorui/DeviceDetailCardBaseUi.h"
+#include "sensorui/SensorThDetailCardUi.h"
+#include "sensorui/RelayDetailCardUi.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
-#include <QPushButton>
-#include <QDateTime>
 #include <QDebug>
+#include <QFrame>
+#include <QMap>
+#include <QScrollArea>
 #include <QShowEvent>
+#include <QSizePolicy>
+#include <QStackedWidget>
 #include <QTimer>
-#include <algorithm>
+#include <QVariant>
 
 namespace {
 
 constexpr int kRefreshDelayMs = 250;
 
-QString displayPointValue(const TelemetryPointData &point)
+bool containsDeviceKey(const QList<DeviceNode> &devices, const QString &deviceKey)
 {
-    if (!point.valid) {
-        return point.errorMessage.isEmpty()
-            ? QStringLiteral("无效")
-            : QStringLiteral("无效(%1)").arg(point.errorMessage);
+    for (const DeviceNode &device : devices) {
+        if (device.key() == deviceKey) {
+            return true;
+        }
     }
-
-    if (point.valueType == "text") {
-        return point.textValue;
-    }
-
-    if (point.valueType == "boolean") {
-        return point.numberValue != 0.0 ? QStringLiteral("ON") : QStringLiteral("OFF");
-    }
-
-    QString text = QString::number(point.numberValue, 'f', 2);
-    if (!point.unit.isEmpty()) {
-        text += QStringLiteral(" ") + point.unit;
-    }
-    return text;
+    return false;
 }
 
-QString displayPointName(const TelemetryPointData &point)
+QMap<QString, bool> variantMapToRelayStates(const QVariantMap &channels)
 {
-    if (!point.pointName.isEmpty()) {
-        return point.pointName;
+    QMap<QString, bool> result;
+    for (auto it = channels.cbegin(); it != channels.cend(); ++it) {
+        result.insert(it.key(), it.value().toBool());
     }
-
-    return point.pointKey;
+    return result;
 }
 
 } // namespace
@@ -55,6 +48,8 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command,
                          UiStateStore *stateStore, QWidget *parent)
     : QWidget(parent), m_data(data), m_command(command), m_stateStore(stateStore)
 {
+    setObjectName("MonitorPage");
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
 
@@ -64,30 +59,48 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command,
 
     auto *body = new QHBoxLayout;
     m_tree = new DeviceTreeWidget(this);
-    m_detail = new QLabel(QStringLiteral("请选择左侧设备"), this);
-    m_detail->setObjectName("DetailPanel");
-    m_detail->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    m_detail->setMinimumWidth(500);
+    m_detailScrollArea = new QScrollArea(this);
+    m_detailScrollArea->setObjectName("DeviceDetailScrollArea");
+    m_detailScrollArea->setWidgetResizable(true);
+    m_detailScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_detailScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_detailScrollArea->setFrameShape(QFrame::NoFrame);
 
-    auto *right = new QVBoxLayout;
-    right->addWidget(m_detail, 1);
-    auto *btnLayout = new QHBoxLayout;
-    m_fanOn = new QPushButton(QStringLiteral("FAN 开"), this);
-    m_fanOff = new QPushButton(QStringLiteral("FAN 关"), this);
-    btnLayout->addWidget(m_fanOn);
-    btnLayout->addWidget(m_fanOff);
-    btnLayout->addStretch();
-    right->addLayout(btnLayout);
+    m_detailStack = new QStackedWidget(m_detailScrollArea);
+    m_detailStack->setObjectName("DetailPanel");
+    m_detailStack->setMinimumWidth(500);
+    m_detailStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+
+    m_emptyCard = new DeviceDetailCardBaseUi(m_detailStack);
+    m_baseCard = new DeviceDetailCardBaseUi(m_detailStack);
+    m_sensorThCard = new SensorThDetailCardUi(m_detailStack);
+    m_relayCard = new RelayDetailCardUi(m_detailStack);
+
+    m_detailStack->addWidget(m_emptyCard);
+    m_detailStack->addWidget(m_baseCard);
+    m_detailStack->addWidget(m_sensorThCard);
+    m_detailStack->addWidget(m_relayCard);
+    m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
+
+    m_detailScrollArea->setWidget(m_detailStack);
 
     body->addWidget(m_tree, 1);
-    body->addLayout(right, 2);
+    body->addWidget(m_detailScrollArea, 2);
     layout->addLayout(body, 1);
 
     connect(m_tree, &DeviceTreeWidget::deviceSelected, this, &MonitorPage::onDeviceSelected);
     connect(m_tree, &DeviceTreeWidget::selectionLost, this, [this]() {
         m_currentKey.clear();
-        setDetailText(QStringLiteral("请选择左侧设备"));
+        m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
+        m_detailStack->setCurrentWidget(m_emptyCard);
     });
+    connect(m_relayCard, &RelayDetailCardUi::relayCommandRequested,
+            this, &MonitorPage::onRelayCommandRequested);
+    if (m_command) {
+        connect(m_command, &CommandManager::relayPendingChanged,
+                this, &MonitorPage::refreshRelayPendingState);
+    }
+
     m_treeRefreshTimer = new QTimer(this);
     m_treeRefreshTimer->setSingleShot(true);
     connect(m_treeRefreshTimer, &QTimer::timeout, this, &MonitorPage::refreshDeviceTree);
@@ -100,8 +113,6 @@ MonitorPage::MonitorPage(DataManager *data, CommandManager *command,
         connect(m_stateStore, &UiStateStore::stateChanged, this, &MonitorPage::scheduleRefreshDeviceTree);
         connect(m_stateStore, &UiStateStore::stateChanged, this, &MonitorPage::scheduleRefreshDetail);
     }
-    connect(m_fanOn, &QPushButton::clicked, this, [this](){ sendFanCommand(true); });
-    connect(m_fanOff, &QPushButton::clicked, this, [this](){ sendFanCommand(false); });
 
     refreshDeviceTree();
 }
@@ -158,14 +169,23 @@ void MonitorPage::refreshDeviceTree()
     m_tree->setDevices(devices);
     if (devices.isEmpty()) {
         m_currentKey.clear();
-        setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
-        m_fanOn->setEnabled(false);
-        m_fanOff->setEnabled(false);
+        m_emptyCard->setMessage(QStringLiteral("未收到 Pc_data 数据"));
+        m_detailStack->setCurrentWidget(m_emptyCard);
+        return;
+    }
+
+    if (!m_currentKey.isEmpty() && !containsDeviceKey(devices, m_currentKey)) {
+        m_currentKey.clear();
+        m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
+        m_detailStack->setCurrentWidget(m_emptyCard);
         return;
     }
 
     if (!m_currentKey.isEmpty()) {
         refreshDetail();
+    } else {
+        m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
+        m_detailStack->setCurrentWidget(m_emptyCard);
     }
     //m_tree->expandAll();
 }
@@ -184,76 +204,56 @@ void MonitorPage::refreshDetail()
              << "deviceCount:" << m_data->deviceTreeSnapshot().size();
     if (m_currentKey.isEmpty()) {
         if (m_data->deviceTreeSnapshot().isEmpty()) {
-            setDetailText(QStringLiteral("未收到 Pc_data 数据\n\n请确认 Pc_data 已启动并保持 IPC 连接。"));
+            m_emptyCard->setMessage(QStringLiteral("未收到 Pc_data 数据"));
+        } else {
+            m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
         }
-        m_fanOn->setEnabled(false);
-        m_fanOff->setEnabled(false);
+        m_detailStack->setCurrentWidget(m_emptyCard);
         return;
     }
 
     const auto d = m_data->deviceData(m_currentKey);
     const auto &n = d.node;
     if (n.factoryId.isEmpty()) {
-        setDetailText(QStringLiteral("当前设备暂无实时数据"));
-        m_fanOn->setEnabled(false);
-        m_fanOff->setEnabled(false);
+        m_emptyCard->setMessage(QStringLiteral("当前设备暂无实时数据"));
+        m_detailStack->setCurrentWidget(m_emptyCard);
         return;
     }
 
-    QString text;
-    text += QStringLiteral("工厂: %1\n厂房: %2\n网关: %3\n主站: RS485-%4 %5\n从站地址: %6\n设备名称: %7\n设备类型: %8\n在线状态: %9\n更新时间: %10\n\n")
-        .arg(n.factoryId, n.areaName, n.gatewayId)
-        .arg(n.masterSlot + 1).arg(n.masterName)
-        .arg(n.slaveAddr).arg(n.deviceName, n.deviceType)
-        .arg(d.serviceOffline ? QStringLiteral("服务离线") : (n.online ? QStringLiteral("在线") : QStringLiteral("离线")))
-        .arg(QDateTime::fromMSecsSinceEpoch(d.timestamp).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
-
-    text += QStringLiteral("数据状态: %1\n").arg(d.dataState.isEmpty() ? QStringLiteral("未知") : d.dataState);
-    text += QStringLiteral("解析状态: %1\n").arg(d.statusText.isEmpty() ? QStringLiteral("未知") : d.statusText);
-    text += QStringLiteral("状态等级: %1\n").arg(d.statusLevel.isEmpty() ? QStringLiteral("unknown") : d.statusLevel);
-    text += QStringLiteral("数据有效: %1\n").arg(d.valid ? QStringLiteral("是") : QStringLiteral("否"));
-    if (!d.errorMessage.isEmpty()) {
-        text += QStringLiteral("异常原因: %1\n").arg(d.errorMessage);
-    }
-
-    if (d.points.isEmpty()) {
-        text += QStringLiteral("\n测点: 暂无\n");
-        setDetailText(text);
-        return;
-    }
-
-    QList<TelemetryPointData> points = d.points;
-    std::sort(points.begin(), points.end(), [](const TelemetryPointData &left, const TelemetryPointData &right) {
-        return left.pointKey < right.pointKey;
-    });
-
-    text += QStringLiteral("\n测点列表:\n");
-    for (const TelemetryPointData &point : points) {
-        text += QStringLiteral("- %1 [%2]: %3")
-            .arg(displayPointName(point), point.pointKey, displayPointValue(point));
-        if (!point.valid && !point.errorMessage.isEmpty()) {
-            text += QStringLiteral("  原因: %1").arg(point.errorMessage);
+    if (n.deviceType == QStringLiteral("sensor_th")) {
+        m_sensorThCard->setDeviceData(d);
+        m_detailStack->setCurrentWidget(m_sensorThCard);
+    } else if (n.deviceType == QStringLiteral("relay")) {
+        m_relayCard->setDeviceData(d);
+        if (m_command) {
+            m_relayCard->setPendingRelayChannels(m_command->pendingRelayChannels(n));
         }
-        text += QStringLiteral("\n");
+        m_detailStack->setCurrentWidget(m_relayCard);
+    } else {
+        m_baseCard->setDeviceData(d);
+        m_detailStack->setCurrentWidget(m_baseCard);
+    }
+}
+
+void MonitorPage::refreshRelayPendingState()
+{
+    if (!m_command || !m_relayCard || m_currentKey.isEmpty()) {
+        return;
     }
 
-    setDetailText(text);
-    const bool controlsEnabled = d.node.deviceType == QStringLiteral("relay") && !d.serviceOffline &&
-        d.node.online && d.dataState == QStringLiteral("normal");
-    m_fanOn->setEnabled(controlsEnabled);
-    m_fanOff->setEnabled(controlsEnabled);
+    const RealtimeDeviceData data = m_data->deviceData(m_currentKey);
+    if (data.node.deviceType != QStringLiteral("relay")) {
+        return;
+    }
+
+    m_relayCard->setPendingRelayChannels(m_command->pendingRelayChannels(data.node));
 }
 
-void MonitorPage::sendFanCommand(bool on)
+void MonitorPage::onRelayCommandRequested(const DeviceNode &node, const QString &channel,
+                                          bool on, const QVariantMap &channels)
 {
-    if (m_currentKey.isEmpty()) return;
-    const auto d = m_data->deviceData(m_currentKey);
-    if (d.node.deviceType != "relay") return;
-    if (d.serviceOffline || !d.node.online || d.dataState != QStringLiteral("normal")) return;
-    m_command->sendRelayCommand(d.node, "fan", on, d.relay.channels);
-}
-
-void MonitorPage::setDetailText(const QString &text)
-{
-    m_detail->setText(text);
+    if (!m_command || node.deviceType != QStringLiteral("relay")) {
+        return;
+    }
+    m_command->sendRelayCommand(node, channel, on, variantMapToRelayStates(channels));
 }

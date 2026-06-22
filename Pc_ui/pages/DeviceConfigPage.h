@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
+#include <QVariantMap>
 #include <QWidget>
 
 #include "model/DeviceModel.h"
@@ -17,6 +18,7 @@ class QShowEvent;
 class QTableWidget;
 class QPushButton;
 class QTimer;
+class QComboBox;
 
 class DeviceConfigPage : public QWidget
 {
@@ -28,7 +30,8 @@ public:
 
 signals:
     void addSlaveRequested(const QString &gatewayId, const QString &portId, int deviceId,
-                           const QString &deviceType, int pollIntervalMs);
+                           const QString &deviceType, int pollIntervalMs,
+                           const QVariantMap &deviceOptions);
     void syncConfigRequested(const QJsonArray &targets);
     void deleteMasterDataRequested(const QString &gatewayId, const QString &portId);
     void deleteDeviceDataRequested(const QString &gatewayId, const QString &portId, int deviceId);
@@ -38,6 +41,10 @@ public slots:
     void refreshTables();
     void refreshRealtimeColumns();
     void onSyncConfigResult(const QJsonObject &root);
+    void onCommandTargetStateChanged(const QString &cmdId, const QString &commandType,
+                                     const QString &gatewayId, const QString &portId,
+                                     int deviceId, const QString &state,
+                                     const QString &reason, const QString &message);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -60,12 +67,20 @@ private:
     };
 
     QList<MasterRow> buildMasterRows() const;
+    void refreshGatewayPortCombos(const QList<MasterRow> &masters);
+    void refreshPortCombo(const QList<MasterRow> &masters);
+    QList<DeviceNode> filterSlaveDevices(const QList<DeviceNode> &devices) const;
     QString statusText(const QString &status) const;
     QString displayTime(qint64 timestampMs) const;
     void setupTable(QTableWidget *table) const;
     void addStatusItem(QTableWidget *table, int row, int column, const QString &status) const;
     void addDeleteButton(QTableWidget *table, int row, bool master, const QString &gatewayId,
                          const QString &portId, int deviceId = 0);
+    QString commandKey(const QString &commandType, const QString &gatewayId,
+                       const QString &portId, int deviceId) const;
+    bool isCommandPending(const QString &commandType, const QString &gatewayId,
+                          const QString &portId, int deviceId) const;
+    bool isFinishedCommandState(const QString &state) const;
     QString realtimeTemperatureText(const QString &deviceKey) const;
     QString realtimeHumidityText(const QString &deviceKey) const;
     QString realtimeRelayText(const QString &deviceKey) const;
@@ -81,9 +96,14 @@ private:
     UiStateStore *m_stateStore = nullptr;
     QTableWidget *m_masterTable = nullptr;
     QTableWidget *m_slaveTable = nullptr;
+    QComboBox *m_gatewayCombo = nullptr;
+    QComboBox *m_portCombo = nullptr;
     QPushButton *m_syncButton = nullptr;
     QTimer *m_refreshTimer = nullptr;
     QTimer *m_realtimeTimer = nullptr;
     QHash<QString, int> m_slaveRowByDeviceKey;
+    QHash<QString, QString> m_pendingCommandKeys;
+    QString m_selectedGatewayId;
+    QString m_selectedPortId;
     bool m_refreshDirty = false;
 };

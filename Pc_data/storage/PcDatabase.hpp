@@ -161,6 +161,9 @@ public:
                                                    int limit,
                                                    bool* ok = nullptr,
                                                    std::string* reason = nullptr);
+    bool deleteLatestPointsForDevice(const std::string& gatewayId,
+                                     const std::string& portId,
+                                     int deviceId);
     bool deleteDeviceData(const std::string& gatewayId,
                           const std::string& portId,
                           int deviceId);

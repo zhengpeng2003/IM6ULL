@@ -11,6 +11,9 @@
 
 namespace {
 
+constexpr int kRelayDefaultChannelCount = 16;
+constexpr int kRelayMaxChannelCount = 64;
+
 std::string getString(const rapidjson::Value& obj,
                       const char* key,
                       const std::string& defaultValue = "")
@@ -46,6 +49,45 @@ int getInt(const rapidjson::Value& obj, const char* key, int defaultValue = 0)
     }
 
     return defaultValue;
+}
+
+int validRelayChannelCount(int value)
+{
+    return value >= 1 && value <= kRelayMaxChannelCount ? value : 0;
+}
+
+int firstValidRelayChannelCount(const rapidjson::Value& obj,
+                                const char* firstKey,
+                                const char* secondKey)
+{
+    int value = validRelayChannelCount(getInt(obj, firstKey, 0));
+    if (value > 0) {
+        return value;
+    }
+
+    return validRelayChannelCount(getInt(obj, secondKey, 0));
+}
+
+int declaredRelayChannelCount(const rapidjson::Value& item,
+                              const rapidjson::Value& relay)
+{
+    int value = firstValidRelayChannelCount(item, "channelCount", "channel_count");
+    if (value > 0) {
+        return value;
+    }
+
+    return firstValidRelayChannelCount(relay, "channelCount", "channel_count");
+}
+
+int legacyRelayChannelCount(const rapidjson::Value& item,
+                            const rapidjson::Value& relay)
+{
+    int value = declaredRelayChannelCount(item, relay);
+    if (value <= 0) {
+        value = kRelayDefaultChannelCount;
+    }
+
+    return value > kRelayMaxChannelCount ? kRelayMaxChannelCount : value;
 }
 
 std::uint32_t getUInt32(const rapidjson::Value& obj,
@@ -254,10 +296,12 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
         const rapidjson::Value& meter = nestedObject(item, "meter");
         const rapidjson::Value& relay = nestedObject(item, "relay");
         const rapidjson::Value& sys = nestedObject(item, "sys");
+        const int declaredChannelCount = declaredRelayChannelCount(item, relay);
 
         bool hasPointTemperature = false;
         bool hasPointHumidity = false;
         bool hasPointRelay = false;
+        int maxPointChannel = 0;
         if (item.HasMember("points") && item["points"].IsArray()) {
             const rapidjson::Value& points = item["points"];
             for (rapidjson::SizeType pointIndex = 0; pointIndex < points.Size(); ++pointIndex) {
@@ -283,8 +327,9 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
                     if (channel >= 1 && channel <= 16 && on) {
                         device.relay.relayStates |= static_cast<std::uint16_t>(1u << (channel - 1));
                     }
-                    if (channel > device.relay.channelCount) {
-                        device.relay.channelCount = channel;
+                    if (channel >= 1 && channel <= kRelayMaxChannelCount &&
+                        channel > maxPointChannel) {
+                        maxPointChannel = channel;
                     }
                     hasPointRelay = true;
                 }
@@ -309,8 +354,19 @@ bool TelemetryPackParser::parseJson(const std::string& payload,
         device.meter.energy = static_cast<float>(
             getDouble(item, "energy", getDouble(meter, "energy", 0.0)));
 
+        if (device.type == DeviceType::Relay) {
+            if (declaredChannelCount > 0) {
+                device.relay.channelCount = maxPointChannel > declaredChannelCount
+                    ? maxPointChannel
+                    : declaredChannelCount;
+            } else if (maxPointChannel > 0) {
+                device.relay.channelCount = maxPointChannel;
+            } else {
+                device.relay.channelCount = legacyRelayChannelCount(item, relay);
+            }
+        }
+
         if (!hasPointRelay) {
-            device.relay.channelCount = getInt(item, "channelCount", getInt(relay, "channelCount", 16));
             device.relay.relayStates = static_cast<std::uint16_t>(
                 getInt(item, "relayStates", getInt(item, "states", getInt(relay, "relayStates", 0))));
         }

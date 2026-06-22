@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iostream>
 #include <algorithm>
+#include <set>
 
 #include "model/ModelConverter.hpp"
 #include "storage/PcDatabase.hpp"
@@ -24,6 +25,7 @@ static std::string pointRegistryKey(const std::string& gatewayId,
                                     const std::string& portId,
                                     int deviceId,
                                     const std::string& pointKey);
+static std::string telemetryDeviceKey(const TelemetryPoint& point);
 
 PcDataService::PcDataService()
 {
@@ -47,6 +49,10 @@ void PcDataService::handleTelemetryPoints(const std::vector<TelemetryPoint>& poi
               << " snapshotBefore=" << m_snapshot.size()
               << std::endl;
 
+    std::vector<TelemetryPoint> acceptedPoints;
+    acceptedPoints.reserve(points.size());
+    std::set<std::string> incomingDeviceKeys;
+
     for (auto point : points) {
         point.receiveTimeMs = receiveTimeMs;
         if (point.pointId.empty()) {
@@ -59,6 +65,23 @@ void PcDataService::handleTelemetryPoints(const std::vector<TelemetryPoint>& poi
             continue;
         }
 
+        acceptedPoints.push_back(point);
+        incomingDeviceKeys.insert(telemetryDeviceKey(point));
+    }
+
+    int removedOldCount = 0;
+    if (!incomingDeviceKeys.empty()) {
+        for (auto it = m_snapshot.begin(); it != m_snapshot.end(); ) {
+            if (incomingDeviceKeys.find(telemetryDeviceKey(it->second)) != incomingDeviceKeys.end()) {
+                it = m_snapshot.erase(it);
+                ++removedOldCount;
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    for (const TelemetryPoint& point : acceptedPoints) {
         auto old = m_snapshot.find(point.pointId);
         if (old == m_snapshot.end() || point.receiveTimeMs >= old->second.receiveTimeMs) {
             m_snapshot[point.pointId] = point;
@@ -71,6 +94,7 @@ void PcDataService::handleTelemetryPoints(const std::vector<TelemetryPoint>& poi
     std::cout << "[DBG_TELEMETRY] PcDataService handleTelemetryPoints updated="
               << updatedCount
               << " skipped=" << skippedCount
+              << " removedOld=" << removedOldCount
               << " snapshotAfter=" << m_snapshot.size()
               << std::endl;
 }
@@ -965,4 +989,9 @@ static std::string pointRegistryKey(const std::string& gatewayId,
                                     const std::string& pointKey)
 {
     return deviceRegistryKey(gatewayId, portId, deviceId) + "/" + pointKey;
+}
+
+static std::string telemetryDeviceKey(const TelemetryPoint& point)
+{
+    return deviceRegistryKey(point.gatewayId, point.portId, point.deviceId);
 }

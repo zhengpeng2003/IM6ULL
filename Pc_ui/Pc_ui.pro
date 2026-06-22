@@ -11,11 +11,16 @@ SOURCES += \
     ipc/ipcclient.cpp \
     main.cpp \
     MainWindow.cpp \
+    sensorui/DeviceDetailCardBaseUi.cpp \
+    sensorui/RelayDetailCardUi.cpp \
+    sensorui/SensorThDetailCardUi.cpp \
     ui/TopBar.cpp \
     ui/SideBar.cpp \
+    ui/CommandTaskPanel.cpp \
     ui/StatusCard.cpp \
     ui/DeviceTreeWidget.cpp \
     ui/AlarmTableWidget.cpp \
+    ui/DeviceTypeConfigRegistry.cpp \
     pages/DashboardPage.cpp \
     pages/MonitorPage.cpp \
     pages/TrendPage.cpp \
@@ -28,22 +33,21 @@ SOURCES += \
     core/CommandManager.cpp \
     core/ConfigManager.cpp \
     core/UiStateStore.cpp \
-    model/DeviceStateListModel.cpp \
-    dialogs/AddAreaDialog.cpp \
-    dialogs/AddGatewayDialog.cpp \
-    dialogs/EditMasterDialog.cpp \
-    dialogs/EditSlaveDialog.cpp \
-    dialogs/AlarmDetailDialog.cpp \
-    dialogs/ControlConfirmDialog.cpp
+    model/DeviceStateListModel.cpp
 
 HEADERS += \
     MainWindow.h \
     ipc/ipcclient.h \
+    sensorui/DeviceDetailCardBaseUi.h \
+    sensorui/RelayDetailCardUi.h \
+    sensorui/SensorThDetailCardUi.h \
     ui/TopBar.h \
     ui/SideBar.h \
+    ui/CommandTaskPanel.h \
     ui/StatusCard.h \
     ui/DeviceTreeWidget.h \
     ui/AlarmTableWidget.h \
+    ui/DeviceTypeConfigRegistry.h \
     pages/DashboardPage.h \
     pages/MonitorPage.h \
     pages/TrendPage.h \
@@ -61,12 +65,7 @@ HEADERS += \
     model/DeviceStateListModel.h \
     model/AlarmModel.h \
     model/CommandModel.h \
-    model/ConfigModel.h \
-    dialogs/AddAreaDialog.h \
-    dialogs/AddGatewayDialog.h \
-    dialogs/EditMasterDialog.h \
-    dialogs/EditSlaveDialog.h \
-    dialogs/AlarmDetailDialog.h \
-    dialogs/ControlConfirmDialog.h
+    model/ConfigModel.h
 
-RESOURCES += resources/res.qrc
+RESOURCES += \
+    res.qrc

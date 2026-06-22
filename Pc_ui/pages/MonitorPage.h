@@ -1,13 +1,18 @@
 #pragma once
+#include <QVariant>
 #include <QWidget>
 class DataManager;
 class CommandManager;
 class UiStateStore;
 class DeviceTreeWidget;
-class QLabel;
-class QPushButton;
+class DeviceDetailCardBaseUi;
+class RelayDetailCardUi;
+class SensorThDetailCardUi;
 class QShowEvent;
+class QStackedWidget;
+class QScrollArea;
 class QTimer;
+struct DeviceNode;
 
 class MonitorPage : public QWidget
 {
@@ -22,22 +27,24 @@ private slots:
     void refreshDeviceTree();
     void onDeviceSelected(const QString &deviceKey);
     void refreshDetail();
-    void sendFanCommand(bool on);
+    void refreshRelayPendingState();
+    void onRelayCommandRequested(const DeviceNode &node, const QString &channel,
+                                 bool on, const QVariantMap &channels);
 
 protected:
     void showEvent(QShowEvent *event) override;
-
-private:
-    void setDetailText(const QString &text);
 
 private:
     DataManager *m_data = nullptr;
     CommandManager *m_command = nullptr;
     UiStateStore *m_stateStore = nullptr;
     DeviceTreeWidget *m_tree = nullptr;
-    QLabel *m_detail = nullptr;
-    QPushButton *m_fanOn = nullptr;
-    QPushButton *m_fanOff = nullptr;
+    QScrollArea *m_detailScrollArea = nullptr;
+    QStackedWidget *m_detailStack = nullptr;
+    DeviceDetailCardBaseUi *m_emptyCard = nullptr;
+    DeviceDetailCardBaseUi *m_baseCard = nullptr;
+    SensorThDetailCardUi *m_sensorThCard = nullptr;
+    RelayDetailCardUi *m_relayCard = nullptr;
     QString m_currentKey;
     QTimer *m_treeRefreshTimer = nullptr;
     QTimer *m_detailRefreshTimer = nullptr;

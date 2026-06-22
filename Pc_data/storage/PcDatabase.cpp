@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <set>
 
 #include "DatabaseSchema.hpp"
@@ -13,6 +14,7 @@
 static void bindText(sqlite3_stmt* stmt, int index, const std::string& value);
 static std::string columnText(const unsigned char* value);
 static bool execSqlQuiet(sqlite3* db, const std::string& sql);
+static std::string telemetryDeviceKey(const TelemetryPoint& point);
 
 PcDatabase::PcDatabase()
 {
@@ -114,6 +116,10 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
     }
 
     bool ok = true;
+    std::vector<TelemetryPoint> acceptedPoints;
+    acceptedPoints.reserve(points.size());
+    std::map<std::string, TelemetryPoint> incomingDevices;
+
     for (const auto& point : points) {
         if (point.pointId.empty()) {
             continue;
@@ -126,6 +132,23 @@ bool PcDatabase::saveTelemetryPoints(const std::vector<TelemetryPoint>& points)
                       << ", device: " << point.deviceId
                       << ", point: " << point.pointId << std::endl;
             continue;
+        }
+
+        acceptedPoints.push_back(point);
+        incomingDevices[telemetryDeviceKey(point)] = point;
+    }
+
+    for (const auto& item : incomingDevices) {
+        const TelemetryPoint& point = item.second;
+        if (!deleteLatestPointsForDevice(point.gatewayId, point.portId, point.deviceId)) {
+            ok = false;
+            break;
+        }
+    }
+
+    for (const auto& point : acceptedPoints) {
+        if (!ok) {
+            break;
         }
 
         if (!saveLatestPoint(point) || !saveHistoryPoint(point)) {
@@ -739,6 +762,18 @@ std::vector<TelemetryPoint> PcDatabase::queryLatestPoints()
 
     sqlite3_finalize(stmt);
     return points;
+}
+
+bool PcDatabase::deleteLatestPointsForDevice(const std::string& gatewayId,
+                                             const std::string& portId,
+                                             int deviceId)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db) {
+        return false;
+    }
+
+    return deleteRowsByDevice("latest_point", gatewayId, portId, deviceId);
 }
 
 std::vector<TelemetryPoint> PcDatabase::queryHistoryPoints(const std::string& pointId,
@@ -2090,6 +2125,11 @@ static void bindText(sqlite3_stmt* stmt, int index, const std::string& value)
 static std::string columnText(const unsigned char* value)
 {
     return value ? reinterpret_cast<const char*>(value) : std::string();
+}
+
+static std::string telemetryDeviceKey(const TelemetryPoint& point)
+{
+    return point.gatewayId + "/" + point.portId + "/" + std::to_string(point.deviceId);
 }
 
 static void bindCommonPointColumns(sqlite3_stmt* stmt, int offset, const TelemetryPoint& point)

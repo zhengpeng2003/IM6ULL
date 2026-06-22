@@ -196,12 +196,12 @@ void ModelConverter::appendRelayPoints(const TelemetryPack& pack,
         channelCount = 16;
     }
 
-    if (channelCount > 16) {
-        channelCount = 16;
+    if (channelCount > 64) {
+        channelCount = 64;
     }
 
     for (int i = 0; i < channelCount; ++i) {
-        const bool isOn = (device.relay.relayStates & (1u << i)) != 0;
+        const bool isOn = i < 16 && (device.relay.relayStates & (1u << i)) != 0;
 
         TelemetryPoint point = makeBasePoint(pack, device);
 

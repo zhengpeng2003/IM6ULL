@@ -4,7 +4,7 @@
 
 static void loadStyle(QApplication &app)
 {
-    QFile file(":/style/industrial_white.qss");
+    QFile file(":/css/style/industrial_white.qss");
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         app.setStyleSheet(QString::fromUtf8(file.readAll()));
     }

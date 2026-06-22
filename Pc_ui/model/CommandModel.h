@@ -10,6 +10,7 @@ struct CommandRecord
     QString factoryId;
     QString areaId;
     QString gatewayId;
+    QString portId;
     int masterSlot = 0;
     int slaveAddr = 0;
     QString deviceType;

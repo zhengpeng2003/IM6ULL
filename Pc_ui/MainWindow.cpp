@@ -2,6 +2,7 @@
 
 #include "ui/TopBar.h"
 #include "ui/SideBar.h"
+#include "ui/CommandTaskPanel.h"
 #include "pages/DashboardPage.h"
 #include "pages/MonitorPage.h"
 #include "pages/TrendPage.h"
@@ -19,6 +20,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QStatusBar>
+#include <QPushButton>
 #include <QDebug>
 #include <QTimer>
 #include <QDateTime>
@@ -292,7 +294,22 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         const QString stage = root.value(QStringLiteral("stage")).toString();
         m_command->onCommandAck(root);
         if (command == QStringLiteral("remove_device")) {
-            if (!ok) {
+            if (stage == QStringLiteral("done") && ok) {
+                QString gatewayId = root.value(QStringLiteral("gatewayId")).toString();
+                QString portId = root.value(QStringLiteral("portId")).toString();
+                int deviceId = root.value(QStringLiteral("deviceId")).toInt(
+                    root.value(QStringLiteral("slave_id")).toInt(root.value(QStringLiteral("slaveId")).toInt()));
+                if (gatewayId.isEmpty() && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                    gatewayId = m_pendingDeleteGatewayId;
+                }
+                if (portId.isEmpty() && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                    portId = m_pendingDeletePortId;
+                }
+                if (deviceId <= 0 && m_pendingDeleteAction == QStringLiteral("delete_device_data")) {
+                    deviceId = m_pendingDeleteDeviceId;
+                }
+                onRemoveDeviceSucceeded(gatewayId, portId, deviceId);
+            } else if (!ok) {
                 m_pendingDeleteAction.clear();
                 m_pendingDeleteGatewayId.clear();
                 m_pendingDeletePortId.clear();
@@ -471,6 +488,17 @@ void MainWindow::sendDeleteDeviceData(const QString &gatewayId, const QString &p
 {
     if (!m_ipcClient || !m_ipcClient->isConnected() || !m_command ||
         gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0) {
+        if (m_deviceConfigPage) {
+            m_deviceConfigPage->onCommandTargetStateChanged(QString(),
+                                                            QStringLiteral("remove_device"),
+                                                            gatewayId,
+                                                            portId,
+                                                            deviceId,
+                                                            QStringLiteral("删除从站失败"),
+                                                            QStringLiteral("IPC 未连接或请求参数无效"),
+                                                            QString());
+        }
+        statusBar()->showMessage(QStringLiteral("删除从站失败：IPC 未连接或请求参数无效"), 8000);
         return;
     }
 
@@ -515,11 +543,27 @@ void MainWindow::onRemoveDeviceSucceeded(const QString &gatewayId, const QString
 }
 
 void MainWindow::sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
-                                     const QString &deviceType, int pollIntervalMs)
+                                     const QString &deviceType, int pollIntervalMs,
+                                     const QVariantMap &deviceOptions)
 {
-    if (m_command) {
-        m_command->sendAddDeviceCommand(gatewayId, portId, deviceId, deviceType, pollIntervalMs);
+    if (!m_ipcClient || !m_ipcClient->isConnected() || !m_command ||
+        gatewayId.isEmpty() || portId.isEmpty() || deviceId <= 0 ||
+        deviceType.isEmpty() || pollIntervalMs <= 0) {
+        if (m_deviceConfigPage) {
+            m_deviceConfigPage->onCommandTargetStateChanged(QString(),
+                                                            QStringLiteral("add_device"),
+                                                            gatewayId,
+                                                            portId,
+                                                            deviceId,
+                                                            QStringLiteral("添加从站失败"),
+                                                            QStringLiteral("IPC 未连接或请求参数无效"),
+                                                            QString());
+        }
+        statusBar()->showMessage(QStringLiteral("添加从站失败：IPC 未连接或请求参数无效"), 8000);
+        return;
     }
+
+    m_command->sendAddDeviceCommand(gatewayId, portId, deviceId, deviceType, pollIntervalMs, deviceOptions);
 }
 
 void MainWindow::sendSyncConfigRequest(const QJsonArray &targets)
@@ -622,22 +666,27 @@ void MainWindow::initUi()
 {
     setWindowTitle(QStringLiteral("Pc_mqtt 工业物联网监控平台"));
     statusBar()->showMessage(QStringLiteral("就绪"));
+    m_commandTaskButton = new QPushButton(QStringLiteral("命令任务：0 个进行中"), this);
+    m_commandTaskButton->setObjectName(QStringLiteral("CommandTaskStatusLabel"));
+    statusBar()->addPermanentWidget(m_commandTaskButton);
 
     auto *central = new QWidget(this);
-    auto *rootLayout = new QVBoxLayout(central);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->setSpacing(0);
-
-    m_topBar = new TopBar(this);
-    rootLayout->addWidget(m_topBar);
-
-    auto *body = new QWidget(this);
-    auto *bodyLayout = new QHBoxLayout(body);
-    bodyLayout->setContentsMargins(0, 0, 0, 0);
-    bodyLayout->setSpacing(0);
+    central->setObjectName("MainCentral");
+    auto *mainLayout = new QHBoxLayout(central);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
     m_sideBar = new SideBar(this);
+
+    auto *rightArea = new QWidget(this);
+    rightArea->setObjectName("MainRightArea");
+    auto *rightLayout = new QVBoxLayout(rightArea);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
+    m_topBar = new TopBar(this);
     m_stack = new QStackedWidget(this);
+    m_stack->setObjectName("MainStack");
 
     m_dashboardPage = new DashboardPage(m_data, m_device, m_alarm, m_stateStore, this);
     m_monitorPage = new MonitorPage(m_data, m_command, m_stateStore, this);
@@ -645,6 +694,8 @@ void MainWindow::initUi()
     m_deviceConfigPage = new DeviceConfigPage(m_device, m_config, m_data, m_stateStore, this);
     m_alarmLogPage = new AlarmLogPage(m_alarm, this);
     m_systemSettingPage = new SystemSettingPage(this);
+    m_commandTaskPanel = new CommandTaskPanel(this);
+    m_commandTaskPanel->hide();
 
     m_stack->addWidget(m_dashboardPage);
     m_stack->addWidget(m_monitorPage);
@@ -653,9 +704,11 @@ void MainWindow::initUi()
     m_stack->addWidget(m_alarmLogPage);
     m_stack->addWidget(m_systemSettingPage);
 
-    bodyLayout->addWidget(m_sideBar);
-    bodyLayout->addWidget(m_stack, 1);
-    rootLayout->addWidget(body, 1);
+    rightLayout->addWidget(m_topBar);
+    rightLayout->addWidget(m_stack, 1);
+
+    mainLayout->addWidget(m_sideBar);
+    mainLayout->addWidget(rightArea, 1);
 
     setCentralWidget(central);
 }
@@ -663,6 +716,28 @@ void MainWindow::initUi()
 void MainWindow::initConnections()
 {
     connect(m_sideBar, &SideBar::pageChanged, m_stack, &QStackedWidget::setCurrentIndex);
+
+    connect(m_commandTaskButton, &QPushButton::clicked, this, [this]() {
+        if (!m_commandTaskPanel) {
+            return;
+        }
+        m_commandTaskPanel->show();
+        m_commandTaskPanel->raise();
+        m_commandTaskPanel->activateWindow();
+    });
+
+    connect(m_commandTaskPanel, &CommandTaskPanel::runningTaskCountChanged,
+            this, [this](int count) {
+        if (m_commandTaskButton) {
+            m_commandTaskButton->setText(QStringLiteral("命令任务：%1 个进行中").arg(count));
+        }
+    });
+
+    connect(m_command, &CommandManager::commandTargetStateChanged,
+            m_commandTaskPanel, &CommandTaskPanel::upsertCommandTask);
+
+    connect(m_command, &CommandManager::commandTargetStateChanged,
+            m_deviceConfigPage, &DeviceConfigPage::onCommandTargetStateChanged);
 
     connect(m_stateStore, &UiStateStore::stateChanged, this, [this]() {
         if (!m_topBar || !m_stateStore) {

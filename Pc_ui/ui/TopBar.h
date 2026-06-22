@@ -21,8 +21,8 @@ private:
     QLabel *m_gatewayLabel = nullptr;
     QLabel *m_deviceLabel = nullptr;
     QLabel *m_alarmLabel = nullptr;
-    QLabel *m_serviceLabel = nullptr;
     QLabel *m_timeLabel = nullptr;
+    QLabel *m_userLabel = nullptr;
     QTimer *m_timer = nullptr;
     int m_onlineGatewayCount = -1;
     int m_onlineDeviceCount = -1;

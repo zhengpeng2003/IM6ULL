@@ -1,240 +1,1153 @@
-QWidget {
+/* =========================================================
+   Blue Industrial HMI Theme
+   蓝色工业 HMI 风格
+   ========================================================= */
+
+
+/* =========================================================
+   全局字体和基础颜色
+   ========================================================= */
+* {
+    /* 全局字体 */
     font-family: "Microsoft YaHei";
+
+    /* 全局默认字号 */
     font-size: 14px;
-    color: #111827;
-    background: #F5F7FA;
+
+    /* 全局默认文字颜色：深蓝灰 */
+    color: #1E4E89;
 }
 
-#TopBar {
+QLabel {
+    /* QLabel 默认透明背景 */
+    background: transparent;
+}
+
+QToolTip {
+    /* 提示框文字颜色 */
+    color: #1E4E89;
+
+    /* 提示框背景色：白色 */
     background: #FFFFFF;
-    border-bottom: 1px solid #E5E7EB;
+
+    /* 提示框边框颜色：清晰蓝灰 */
+    border: 1px solid #9DB8DD;
+
+    /* 提示框内边距 */
+    padding: 6px 8px;
+}
+
+
+/* =========================================================
+   Main Window 主窗口背景
+   ========================================================= */
+#MainCentral,
+#MainRightArea,
+#MainStack,
+QStackedWidget#MainStack,
+#DashboardPage,
+#MonitorPage,
+#TrendPage,
+#DeviceConfigPage,
+#AlarmLogPage,
+#SystemSettingPage {
+    /* 主页面背景色：浅蓝色，控制大面积底色 */
+    background: #CFE0F6;
+}
+
+#PageTitle {
+    /* 页面大标题文字颜色 */
+    color: #16477F;
+
+    /* 页面大标题透明背景 */
+    background: transparent;
+
+    /* 页面大标题字号 */
+    font-size: 22px;
+
+    /* 页面大标题加粗 */
+    font-weight: 700;
+}
+
+#SectionTitle {
+    /* 分区标题文字颜色 */
+    color: #16477F;
+
+    /* 分区标题透明背景 */
+    background: transparent;
+
+    /* 分区标题字号 */
+    font-size: 16px;
+
+    /* 分区标题加粗 */
+    font-weight: 700;
+}
+
+#StatsLabel {
+    /* 统计说明文字颜色：中蓝灰 */
+    color: #234F83;
+
+    /* 透明背景 */
+    background: transparent;
+
+    /* 统计文字字号 */
+    font-size: 13px;
+
+    /* 统计文字加粗 */
+    font-weight: 700;
+}
+
+
+/* =========================================================
+   TopBar 顶部栏
+   ========================================================= */
+#TopBar {
+    /* 顶部栏背景色：深蓝色，控制最上面整条标题栏背景 */
+    background: #2D5AA0;
+
+    /* 顶部栏下边分割线：浅蓝色，控制顶部栏和页面内容之间的横线 */
+    border-bottom: 1px solid #7EA0D8;
 }
 
 #TopTitle {
-    font-size: 18px;
+    /* 顶部标题文字颜色：白色 */
+    color: #FFFFFF;
+
+    /* 顶部标题字号 */
+    font-size: 17px;
+
+    /* 顶部标题加粗 */
     font-weight: 700;
-    color: #0F172A;
 }
 
+#TopMetric,
+#TopAlarmMetric,
+#TopUser {
+    /* 顶部普通信息文字颜色：浅蓝白色 */
+    color: #FFFFFF;
+
+    /* 顶部普通信息字号 */
+    font-size: 13px;
+
+    /* 顶部普通信息加粗 */
+    font-weight: 700;
+}
+
+#TopAlarmMetric {
+    /* 顶部报警文字颜色：浅红色，用来突出报警数量 */
+    color: #FFD6D6;
+}
+
+#TopStatus {
+    /* 状态标签默认背景色：浅红色 */
+    background: #FEF2F2;
+
+    /* 状态标签默认文字颜色：红色 */
+    color: #DC2626;
+
+    /* 状态标签默认边框颜色：浅红色 */
+    border: 1px solid #FCA5A5;
+
+    /* 状态标签圆角 */
+    border-radius: 12px;
+
+    /* 状态标签内边距 */
+    padding: 3px 10px;
+
+    /* 状态标签字号 */
+    font-size: 12px;
+
+    /* 状态标签加粗 */
+    font-weight: 700;
+}
+
+#TopStatus[online="true"] {
+    /* 在线状态背景色：浅绿色 */
+    background: #DCFCE7;
+
+    /* 在线状态文字颜色：绿色 */
+    color: #15803D;
+
+    /* 在线状态边框颜色：浅绿色 */
+    border-color: #86EFAC;
+}
+
+#TopStatus[online="false"] {
+    /* 离线状态背景色：浅红色 */
+    background: #FEF2F2;
+
+    /* 离线状态文字颜色：红色 */
+    color: #DC2626;
+
+    /* 离线状态边框颜色：浅红色 */
+    border-color: #FCA5A5;
+}
+
+#TopUser {
+    /* 用户名文字颜色：白色 */
+    color: #FFFFFF;
+
+    /* 用户名前面的左侧分割线颜色 */
+    border-left: 1px solid #7EA0D8;
+
+    /* 用户名左侧内边距，避免文字贴线 */
+    padding-left: 12px;
+}
+
+
+/* =========================================================
+   SideBar 左侧导航栏
+   ========================================================= */
 #SideBar {
-    background: #1E293B;
+    /* 左侧导航栏背景色：深蓝 */
+    background: #1E4E89;
+
+    /* 左侧导航栏右边分割线颜色 */
+    border-right: 1px solid #7EA0D8;
+}
+
+#SideTitle {
+    /* 左侧标题文字颜色 */
+    color: #FFFFFF;
+
+    /* 左侧标题字号 */
+    font-size: 16px;
+
+    /* 左侧标题加粗 */
+    font-weight: 700;
+
+    /* 左侧标题内边距 */
+    padding: 8px 10px 14px 10px;
 }
 
 #SideButton {
-    color: #CBD5E1;
+    /* 左侧按钮默认文字颜色：浅蓝白 */
+    color: #FFFFFF;
+
+    /* 左侧按钮默认背景透明 */
     background: transparent;
+
+    /* 左侧按钮无边框 */
     border: none;
-    border-radius: 6px;
-    padding-left: 16px;
+
+    /* 左侧按钮圆角 */
+    border-radius: 7px;
+
+    /* 左侧按钮左内边距 */
+    padding-left: 18px;
+
+    /* 左侧按钮右内边距 */
+    padding-right: 10px;
+
+    /* 左侧按钮文字靠左 */
     text-align: left;
+
+    /* 左侧按钮字号 */
+    font-size: 15px;
+    /* 左侧按钮加粗 */
+    font-weight: 700;
+
+    /* 左侧按钮最小高度 */
+    min-height: 42px;
 }
 
 #SideButton:hover {
-    background: #334155;
+    /* 鼠标悬停背景色：亮一点的蓝色 */
+    background: #356FAE;
+
+    /* 鼠标悬停文字颜色 */
     color: #FFFFFF;
 }
 
 #SideButton:checked {
-    background: #2563EB;
+    /* 当前选中的导航按钮背景色：亮蓝色 */
+    background: #0B84E5;
+
+    /* 当前选中的导航按钮文字颜色 */
     color: #FFFFFF;
 }
 
-#PageTitle, .PageTitle {
-    font-size: 22px;
+
+/* =========================================================
+   Cards / Panels 卡片和面板
+   ========================================================= */
+#PageCard,
+#DashboardCard,
+#SystemSettingCard,
+#DetailPanel,
+#FilterPanel,
+#ChartPanel,
+#TablePanel,
+#AlarmLogPanel,
+#MonitorControlPanel {
+    /* 卡片背景色：白色 */
+    background: #FFFFFF;
+
+    /* 卡片边框颜色：清晰蓝灰分割线 */
+    border: 1px solid #B7CBEA;
+
+    /* 卡片圆角 */
+    border-radius: 8px;
+}
+
+#DashboardCardTitle,
+#SystemSettingCardTitle {
+    /* 卡片标题文字颜色 */
+    color: #16477F;
+
+    /* 卡片标题字号 */
+    font-size: 15px;
+
+    /* 卡片标题加粗 */
     font-weight: 700;
-    color: #0F172A;
 }
 
 #StatusCard {
+    /* 状态卡片背景色 */
     background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 10px;
+
+    /* 状态卡片边框颜色 */
+    border: 1px solid #B7CBEA;
+
+    /* 状态卡片圆角 */
+    border-radius: 8px;
 }
 
 #CardTitle {
-    color: #64748B;
+    /* 小卡片标题颜色 */
+    color: #234F83;
+
+    /* 小卡片标题字号 */
+    font-size: 13px;
+
+    /* 小卡片标题加粗 */
+    font-weight: 700;
 }
 
 #CardValue {
-    color: #2563EB;
+    /* 小卡片数值颜色：主蓝色 */
+    color: #1E5AA8;
+
+    /* 小卡片数值字号 */
     font-size: 28px;
+
+    /* 小卡片数值加粗 */
     font-weight: 700;
 }
 
 #CardSubText {
-    color: #94A3B8;
+    /* 小卡片辅助文字颜色 */
+    color: #3F6C9D;
+
+    /* 小卡片辅助文字字号 */
     font-size: 12px;
+
+    font-weight: 600;
 }
 
-#DetailPanel {
+
+/* =========================================================
+   Tables / Tree 表格和树控件
+   ========================================================= */
+QTableWidget,
+QTreeWidget {
+    /* 表格背景色 */
     background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    padding: 16px;
-}
 
-QPushButton {
-    background: #2563EB;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 7px 14px;
-}
+    /* 表格隔行背景色：很浅的蓝色 */
+    alternate-background-color: #EEF5FF;
 
-QPushButton:hover {
-    background: #1D4ED8;
-}
+    /* 表格边框颜色：清晰蓝灰 */
+    border: 1px solid #B7CBEA;
 
-QPushButton[danger="true"] {
-    background: #DC2626;
-}
-
-QPushButton[danger="true"]:hover {
-    background: #B91C1C;
-}
-
-QTableWidget, QTreeWidget, QLineEdit, QComboBox {
-    background: #FFFFFF;
-    border: 1px solid #E5E7EB;
+    /* 表格圆角 */
     border-radius: 6px;
-    padding: 4px;
+
+    /* 表格网格线颜色 */
+    gridline-color: #D4E2F5;
+
+    /* 表格选中项背景色 */
+    selection-background-color: #CFE2FF;
+
+    /* 表格选中项文字颜色 */
+    selection-color: #123A66;
+
+    /* 去掉焦点虚线 */
+    outline: none;
+}
+
+QTableWidget::item,
+QTreeWidget::item {
+    /* 表格项最小高度 */
+    min-height: 24px;
+
+    /* 表格项内边距 */
+    padding: 3px 6px;
+
+    /* 表格项无边框 */
+    border: none;
+
+    color: #1E4E89;
+}
+
+QTableWidget::item:selected,
+QTreeWidget::item:selected {
+    /* 表格项选中背景色 */
+    background: #CFE2FF;
+
+    /* 表格项选中文字颜色 */
+    color: #123A66;
 }
 
 QHeaderView::section {
-    background: #F1F5F9;
-    color: #111827;
-    padding: 6px;
+    /* 表头背景色：浅蓝 */
+    background: #E7F0FF;
+
+    /* 表头文字颜色 */
+    color: #1E4E89;
+
+    /* 表头内边距 */
+    padding: 5px 8px;
+
+    /* 先清掉默认边框 */
     border: none;
-}
 
-QLabel[state="online"] {
-    color: #16A34A;
-    font-weight: 600;
-}
+    /* 表头右侧竖向分割线 */
+    border-right: 1px solid #B7CBEA;
 
-QLabel[state="offline"] {
-    color: #6B7280;
-    font-weight: 600;
-}
+    /* 表头下方横向分割线 */
+    border-bottom: 1px solid #B7CBEA;
 
-#AlarmLogPanel {
-    background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
-}
-
-#AlarmFilterLabel {
-    color: #374151;
-    font-weight: 600;
-    background: transparent;
-}
-
-#AlarmPrimaryButton {
-    min-width: 56px;
-    padding: 7px 16px;
-}
-
-#AlarmSecondaryButton {
-    background: #FFFFFF;
-    color: #334155;
-    border: 1px solid #E5E7EB;
-    min-width: 72px;
-}
-
-#AlarmSecondaryButton:hover {
-    background: #F8FAFC;
-    color: #0F172A;
-}
-
-#AlarmSecondaryButton:disabled {
-    color: #94A3B8;
-    background: #F8FAFC;
-}
-
-#AlarmDangerOutlineButton {
-    background: #FFFFFF;
-    color: #EF4444;
-    border: 1px solid #FECACA;
+    /* 表头文字加粗 */
     font-weight: 700;
-    min-width: 118px;
+
+    font-size: 13px;
 }
 
+QTableCornerButton::section {
+    /* 表格左上角按钮背景色 */
+    background: #E7F0FF;
+
+    /* 清掉默认边框 */
+    border: none;
+
+    /* 左上角按钮右侧分割线 */
+    border-right: 1px solid #B7CBEA;
+
+    /* 左上角按钮下方分割线 */
+    border-bottom: 1px solid #B7CBEA;
+}
+
+
+/* =========================================================
+   Forms 输入框、下拉框、复选框
+   ========================================================= */
+QLineEdit,
+QComboBox {
+    /* 输入框背景色 */
+    background: #FFFFFF;
+
+    /* 输入框文字颜色 */
+    color: #1E4E89;
+
+    /* 输入框边框颜色 */
+    border: 1px solid #A9C2E8;
+
+    /* 输入框圆角 */
+    border-radius: 6px;
+
+    /* 输入框内边距 */
+    padding: 4px 8px;
+
+    /* 输入框最小高度 */
+    min-height: 21px;
+
+    /* 输入框选中文字背景色 */
+    selection-background-color: #CFE2FF;
+
+    /* 输入框选中文字颜色 */
+    selection-color: #123A66;
+}
+
+QLineEdit:focus,
+QComboBox:focus {
+    /* 输入框获得焦点时边框颜色：亮蓝色 */
+    border-color: #2F6FD6;
+}
+
+QLineEdit:disabled,
+QComboBox:disabled {
+    /* 输入框禁用背景色 */
+    background: #EEF5FF;
+
+    /* 输入框禁用文字颜色 */
+    color: #5F7FA8;
+
+    /* 输入框禁用边框颜色 */
+    border-color: #C9D9F0;
+}
+
+QComboBox::drop-down {
+    /* 下拉按钮区域宽度 */
+    width: 22px;
+
+    /* 下拉按钮无外边框 */
+    border: none;
+
+    /* 下拉按钮左侧分割线 */
+    border-left: 1px solid #D4E2F5;
+}
+
+QComboBox QAbstractItemView {
+    /* 下拉列表背景色 */
+    background: #FFFFFF;
+
+    /* 下拉列表边框颜色 */
+    border: 1px solid #9DB8DD;
+
+    /* 下拉列表选中背景色 */
+    selection-background-color: #CFE2FF;
+
+    /* 下拉列表选中文字颜色 */
+    selection-color: #123A66;
+}
+
+QCheckBox {
+    /* 复选框文字颜色 */
+    color: #1E4E89;
+
+    font-weight: 600;
+}
+
+QCheckBox::indicator {
+    /* 复选框小方块宽度 */
+    width: 14px;
+
+    /* 复选框小方块高度 */
+    height: 14px;
+}
+
+
+/* =========================================================
+   Buttons 按钮
+   ========================================================= */
+QPushButton {
+    /* 默认按钮背景色：主蓝色 */
+    background: #1E5AA8;
+
+    /* 默认按钮文字颜色 */
+    color: #FFFFFF;
+
+    /* 默认按钮边框颜色 */
+    border: 1px solid #1E5AA8;
+
+    /* 默认按钮圆角 */
+    border-radius: 5px;
+
+    /* 默认按钮内边距 */
+    padding: 5px 12px;
+
+    /* 默认按钮文字加粗 */
+    font-weight: 700;
+
+    /* 默认按钮最小高度 */
+    min-height: 18px;
+}
+
+QPushButton:hover {
+    /* 按钮悬停背景色：深一点的蓝色 */
+    background: #174C93;
+
+    /* 按钮悬停边框色 */
+    border-color: #174C93;
+}
+
+QPushButton:pressed {
+    /* 按钮按下背景色：更深蓝 */
+    background: #123F7D;
+
+    /* 按钮按下边框色 */
+    border-color: #123F7D;
+}
+
+QPushButton:disabled {
+    /* 按钮禁用背景色 */
+    background: #D8E4F5;
+
+    /* 按钮禁用边框色 */
+    border-color: #D8E4F5;
+
+    /* 按钮禁用文字颜色 */
+    color: #5F7FA8;
+}
+
+QPushButton[danger="true"] {
+    /* 危险按钮背景色：红色 */
+    background: #DC2626;
+
+    /* 危险按钮边框色 */
+    border-color: #DC2626;
+
+    /* 危险按钮文字颜色 */
+    color: #FFFFFF;
+}
+
+QPushButton[danger="true"]:hover {
+    /* 危险按钮悬停背景色：深红 */
+    background: #B91C1C;
+
+    /* 危险按钮悬停边框色 */
+    border-color: #B91C1C;
+}
+
+QPushButton[secondary="true"],
+QPushButton[outline="true"],
+#AlarmSecondaryButton,
+#SystemSettingSecondaryButton,
+#SystemSettingOutlineButton {
+    /* 次级按钮背景色：白色 */
+    background: #FFFFFF;
+
+    /* 次级按钮文字颜色：蓝色 */
+    color: #1E5AA8;
+
+    /* 次级按钮边框颜色：蓝灰 */
+    border: 1px solid #9DB8DD;
+}
+
+QPushButton[secondary="true"]:hover,
+QPushButton[outline="true"]:hover,
+#AlarmSecondaryButton:hover,
+#SystemSettingSecondaryButton:hover,
+#SystemSettingOutlineButton:hover {
+    /* 次级按钮悬停背景色：浅蓝 */
+    background: #EAF2FF;
+
+    /* 次级按钮悬停文字颜色 */
+    color: #174C93;
+
+    /* 次级按钮悬停边框色 */
+    border-color: #7EA0D8;
+}
+
+QPushButton[secondary="true"][danger="true"],
+QPushButton[outline="true"][danger="true"],
+#AlarmDangerOutlineButton {
+    /* 危险描边按钮背景色 */
+    background: #FFFFFF;
+
+    /* 危险描边按钮文字颜色 */
+    color: #DC2626;
+
+    /* 危险描边按钮边框颜色 */
+    border: 1px solid #FCA5A5;
+}
+
+QPushButton[secondary="true"][danger="true"]:hover,
+QPushButton[outline="true"][danger="true"]:hover,
 #AlarmDangerOutlineButton:hover {
+    /* 危险描边按钮悬停背景色 */
     background: #FEF2F2;
+
+    /* 危险描边按钮悬停边框色 */
+    border-color: #F87171;
 }
 
 #AlarmInlineButton {
+    /* 行内按钮背景透明 */
     background: transparent;
-    color: #2563EB;
+
+    /* 行内按钮文字颜色 */
+    color: #1E5AA8;
+
+    /* 行内按钮无边框 */
     border: none;
-    padding: 4px 8px;
+
+    /* 行内按钮内边距 */
+    padding: 3px 6px;
+
+    /* 行内按钮加粗 */
     font-weight: 700;
 }
 
 #AlarmInlineButton:hover {
-    color: #1D4ED8;
-    background: transparent;
+    /* 行内按钮悬停背景色 */
+    background: #EAF2FF;
+
+    /* 行内按钮悬停文字色 */
+    color: #174C93;
 }
 
-#SystemSettingCard {
-    background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
-}
 
-#SystemSettingCardTitle {
-    color: #111827;
-    font-size: 15px;
+/* =========================================================
+   State Labels 状态标签
+   ========================================================= */
+QLabel[state="online"] {
+    /* 在线文字颜色：绿色 */
+    color: #008F45;
+
+    /* 在线文字加粗 */
     font-weight: 700;
+}
+
+QLabel[state="offline"] {
+    /* 离线文字颜色：蓝灰 */
+    color: #3F6C9D;
+
+    /* 离线文字加粗 */
+    font-weight: 700;
+}
+
+QLabel[state="alarm"] {
+    /* 报警文字颜色：红色 */
+    color: #DC2626;
+
+    /* 报警文字加粗 */
+    font-weight: 700;
+}
+
+
+/* =========================================================
+   Dashboard 仪表盘页面
+   ========================================================= */
+#DashboardTrendHint {
+    /* 趋势提示文字颜色 */
+    color: #234F83;
+
+    /* 趋势提示字号 */
+    font-size: 12px;
+
+    /* 趋势提示加粗 */
+    font-weight: 700;
+}
+
+#DashboardChart {
+    /* 仪表盘图表背景色 */
+    background: #FFFFFF;
+
+    /* 图表无边框 */
+    border: none;
+}
+
+#DashboardAlarmErrorTabs {
+    /* 告警/错误 Tab 背景透明 */
     background: transparent;
+}
+
+#DashboardAlarmErrorTabs::pane {
+    /* Tab 内容区域边框 */
+    border: 1px solid #B7CBEA;
+
+    /* Tab 内容区域圆角 */
+    border-radius: 6px;
+
+    /* Tab 内容区域背景 */
+    background: #FFFFFF;
+
+    /* 调整 Tab 内容区域位置 */
+    top: -1px;
+}
+
+#DashboardAlarmErrorTabs QTabBar::tab {
+    min-width: 70px;
+    height: 26px;
+    padding: 0 6px;
+    margin-right: 0px;
+    border: 1px solid #B7CBEA;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    background: #E7F0FF;
+    color: #1E4E89;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+#DashboardAlarmErrorTabs QTabBar::tab:selected {
+    /* 选中 Tab 背景色 */
+    background: #FFFFFF;
+
+    /* 选中 Tab 文字颜色 */
+    color: #1E5AA8;
+
+    /* 选中 Tab 加粗 */
+    font-weight: 700;
+}
+
+#DashboardAlarmErrorTabs QTabBar::tab:hover {
+    /* Tab 悬停背景色 */
+    background: #D7E8FF;
+}
+
+
+/* =========================================================
+   Monitor 监控页面
+   ========================================================= */
+#DetailPanel {
+    /* 详情面板文字颜色 */
+    color: #1E4E89;
+
+    /* 详情面板内边距 */
+    padding: 16px;
+}
+
+#DeviceDetailScrollArea {
+    /* 设备详情滚动区域背景透明 */
+    background: transparent;
+
+    /* 设备详情滚动区域无边框 */
+    border: none;
+}
+
+#DeviceDetailScrollArea > QWidget {
+    /* 保持滚动区域视口透明 */
+    background: transparent;
+}
+
+#DeviceDetailScrollArea QScrollBar:vertical {
+    /* 设备详情垂直滚动条背景透明 */
+    background: transparent;
+
+    /* 设备详情垂直滚动条宽度 */
+    width: 10px;
+
+    /* 设备详情垂直滚动条外边距 */
+    margin: 0;
+}
+
+#DeviceDetailScrollArea QScrollBar::handle:vertical {
+    /* 设备详情垂直滚动条滑块颜色 */
+    background: #9DBBE3;
+
+    /* 设备详情垂直滚动条滑块圆角 */
+    border-radius: 5px;
+
+    /* 设备详情垂直滚动条滑块最小高度 */
+    min-height: 32px;
+}
+
+#DeviceDetailScrollArea QScrollBar::handle:vertical:hover {
+    /* 设备详情垂直滚动条滑块悬停颜色 */
+    background: #6F96CF;
+}
+
+#DeviceDetailScrollArea QScrollBar::add-line:vertical,
+#DeviceDetailScrollArea QScrollBar::sub-line:vertical,
+#DeviceDetailScrollArea QScrollBar::add-page:vertical,
+#DeviceDetailScrollArea QScrollBar::sub-page:vertical {
+    /* 隐藏设备详情垂直滚动条上下按钮区域 */
+    height: 0;
+
+    /* 背景透明 */
+    background: transparent;
+}
+
+#MonitorControlPanel {
+    /* 监控控制面板内边距 */
+    padding: 10px 12px;
+}
+
+
+/* =========================================================
+   Trend 趋势页面
+   ========================================================= */
+#FilterPanel {
+    /* 筛选面板内边距 */
+    padding: 10px 12px;
+}
+
+#ChartPanel {
+    /* 图表面板内边距 */
+    padding: 10px;
+}
+
+#TablePanel {
+    /* 表格面板内边距 */
+    padding: 10px;
+}
+
+
+/* =========================================================
+   Device Config 设备配置页面
+   ========================================================= */
+#PageCard #SectionTitle {
+    /* 页面卡片里的分区标题字号 */
+    font-size: 16px;
+}
+
+QTableWidget QPushButton {
+    /* 表格内按钮最小宽度 */
+    min-width: 48px;
+
+    /* 表格内按钮内边距 */
+    padding: 3px 8px;
+
+    min-height: 17px;
+
+    font-size: 12px;
+
+    font-weight: 600;
+
+    border-radius: 4px;
+}
+
+#DeviceConfigPage QTableWidget QPushButton {
+    /* 表格内按钮最小宽度 */
+    min-width: 42px;
+
+    /* 表格内按钮内边距 */
+    padding: 2px 6px;
+
+    min-height: 16px;
+
+    font-size: 12px;
+
+    font-weight: 600;
+
+    border-radius: 4px;
+}
+
+#DeviceConfigPage QTableWidget QPushButton[danger="true"] {
+    background: #DC2626;
+    border-color: #DC2626;
+    color: #FFFFFF;
+}
+
+#DeviceConfigPage QTableWidget QPushButton[danger="true"]:hover {
+    background: #B91C1C;
+    border-color: #B91C1C;
+}
+
+/* =========================================================
+   Command Task Panel 命令任务面板
+   ========================================================= */
+#CommandTaskPanel {
+    background: #FFFFFF;
+    border: 1px solid #B7CBEA;
+    border-radius: 8px;
+}
+
+#CommandTaskTitle {
+    color: #16477F;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+#CommandTaskCountLabel {
+    color: #234F83;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#CommandTaskTable {
+    background: #FFFFFF;
+    alternate-background-color: #EEF5FF;
+    border: 1px solid #B7CBEA;
+    border-radius: 6px;
+    gridline-color: #D4E2F5;
+    color: #1E4E89;
+}
+
+#CommandTaskStatusLabel {
+    background: #EAF2FF;
+    color: #1E5AA8;
+    border: 1px solid #9DB8DD;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#CommandTaskStatusLabel:hover {
+    background: #D7E8FF;
+    border-color: #7EA0D8;
+}
+
+#CommandTaskClearButton {
+    background: #FFFFFF;
+    color: #1E5AA8;
+    border: 1px solid #9DB8DD;
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#CommandTaskClearButton:hover {
+    background: #EAF2FF;
+    color: #174C93;
+    border-color: #7EA0D8;
+}
+
+#CommandTaskCloseButton {
+    background: #1E5AA8;
+    color: #FFFFFF;
+    border: 1px solid #1E5AA8;
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#CommandTaskCloseButton:hover {
+    background: #174C93;
+    border-color: #174C93;
+}
+
+
+/* =========================================================
+   Alarm Log 告警日志页面
+   ========================================================= */
+#AlarmFilterLabel {
+    /* 告警筛选标签文字颜色 */
+    color: #234F83;
+
+    /* 告警筛选标签加粗 */
+    font-weight: 700;
+}
+
+#AlarmPrimaryButton {
+    /* 告警主按钮最小宽度 */
+    min-width: 52px;
+}
+
+#AlarmSecondaryButton {
+    /* 告警次级按钮最小宽度 */
+    min-width: 66px;
+}
+
+#AlarmDangerOutlineButton {
+    /* 告警危险描边按钮最小宽度 */
+    min-width: 108px;
+}
+
+
+/* =========================================================
+   System Setting 系统设置页面
+   ========================================================= */
+#SystemSettingCard {
+    /* 系统设置卡片圆角 */
+    border-radius: 8px;
 }
 
 #SystemSettingFieldLabel {
-    color: #374151;
+    /* 系统设置字段名颜色 */
+    color: #234F83;
+
+    /* 系统设置字段名字号 */
     font-size: 12px;
-    font-weight: 600;
-    background: transparent;
+
+    /* 系统设置字段名加粗 */
+    font-weight: 700;
 }
 
 #SystemSettingStatus {
-    color: #6B7280;
+    /* 系统设置状态默认颜色 */
+    color: #234F83;
+
+    /* 系统设置状态字号 */
     font-size: 12px;
+
+    /* 系统设置状态加粗 */
     font-weight: 700;
-    background: transparent;
 }
 
 #SystemSettingStatus[ok="true"] {
-    color: #16A34A;
+    /* 系统设置正常状态颜色：绿色 */
+    color: #008F45;
 }
 
 #SystemSettingStatus[ok="false"] {
-    color: #EF4444;
+    /* 系统设置异常状态颜色：红色 */
+    color: #DC2626;
 }
 
 #SystemSettingPrimaryButton {
-    background: #059669;
-    color: #FFFFFF;
-    min-width: 74px;
-    padding: 7px 12px;
-}
-
-#SystemSettingPrimaryButton:hover {
-    background: #047857;
-}
-
-#SystemSettingSecondaryButton, #SystemSettingOutlineButton {
-    background: #FFFFFF;
-    color: #1D4ED8;
-    border: 1px solid #DBEAFE;
-    min-width: 74px;
-    padding: 7px 12px;
-}
-
-#SystemSettingSecondaryButton:hover, #SystemSettingOutlineButton:hover {
-    background: #EFF6FF;
+    /* 系统设置主按钮最小宽度 */
+    min-width: 68px;
 }
 
 #SystemSettingWideButton {
-    background: #2563EB;
-    min-height: 30px;
+    /* 系统设置宽按钮最小高度 */
+    min-height: 28px;
+}
+
+
+/* =========================================================
+   ScrollBar 滚动条
+   ========================================================= */
+QScrollBar:vertical {
+    /* 垂直滚动条背景透明 */
+    background: transparent;
+
+    /* 垂直滚动条宽度 */
+    width: 8px;
+
+    /* 垂直滚动条外边距 */
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    /* 垂直滚动条滑块颜色 */
+    background: #9DB8DD;
+
+    /* 垂直滚动条滑块圆角 */
+    border-radius: 4px;
+
+    /* 垂直滚动条滑块最小高度 */
+    min-height: 32px;
+}
+
+QScrollBar::handle:vertical:hover {
+    /* 垂直滚动条滑块悬停颜色 */
+    background: #7EA0D8;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    /* 隐藏垂直滚动条上下按钮区域 */
+    height: 0;
+
+    /* 背景透明 */
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    /* 水平滚动条背景透明 */
+    background: transparent;
+
+    /* 水平滚动条高度 */
+    height: 8px;
+
+    /* 水平滚动条外边距 */
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    /* 水平滚动条滑块颜色 */
+    background: #9DB8DD;
+
+    /* 水平滚动条滑块圆角 */
+    border-radius: 4px;
+
+    /* 水平滚动条滑块最小宽度 */
+    min-width: 32px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    /* 水平滚动条滑块悬停颜色 */
+    background: #7EA0D8;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    /* 隐藏水平滚动条左右按钮区域 */
+    width: 0;
+
+    /* 背景透明 */
+    background: transparent;
 }

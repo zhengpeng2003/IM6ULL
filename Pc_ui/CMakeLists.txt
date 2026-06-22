@@ -15,6 +15,13 @@ file(GLOB_RECURSE PROJECT_SOURCES
     "resources/*.qrc"
 )
 
+list(APPEND PROJECT_SOURCES
+    "sensorui/DeviceDetailCardBaseUi.cpp"
+    "sensorui/SensorThDetailCardUi.cpp"
+    "sensorui/RelayDetailCardUi.cpp"
+)
+list(REMOVE_DUPLICATES PROJECT_SOURCES)
+
 qt_add_executable(Pc_mqtt
     ${PROJECT_SOURCES}
 )

@@ -42,11 +42,13 @@ bool statusIsOk(const QString &status)
 SystemSettingPage::SystemSettingPage(QWidget *parent)
     : QWidget(parent)
 {
+    setObjectName("SystemSettingPage");
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 14, 18, 18);
     layout->setSpacing(14);
 
-    auto *title = new QLabel(QStringLiteral("6. 系统设置界面"), this);
+    auto *title = new QLabel(QStringLiteral("系统设置"), this);
     title->setObjectName("PageTitle");
     title->setAlignment(Qt::AlignCenter);
     layout->addWidget(title);
@@ -357,6 +359,7 @@ void SystemSettingPage::setStatusText(const QString &text, bool ok)
 
     m_statusLabel->setText(text);
     m_statusLabel->setProperty("ok", ok);
+    m_statusLabel->setProperty("state", ok ? QStringLiteral("online") : QStringLiteral("alarm"));
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);
 }

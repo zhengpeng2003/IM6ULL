@@ -4,6 +4,7 @@
 #include "core/DataManager.h"
 #include "core/DeviceManager.h"
 #include "core/UiStateStore.h"
+#include "ui/DeviceTypeConfigRegistry.h"
 
 #include <QAbstractItemView>
 #include <QColor>
@@ -22,6 +23,7 @@
 #include <QMap>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QShowEvent>
 #include <QSpinBox>
 #include <QStringList>
@@ -30,6 +32,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVariantMap>
 #include <QVBoxLayout>
 
 namespace {
@@ -59,6 +62,17 @@ QString defaultPortName(const DeviceNode &node)
     return QStringLiteral("RS485-%1").arg(node.masterSlot + 1);
 }
 
+QString gatewayDisplayName(const QString &gatewayId, const QString &gatewayName)
+{
+    return gatewayName.isEmpty() ? gatewayId : QStringLiteral("%1 (%2)").arg(gatewayName, gatewayId);
+}
+
+QString masterDisplayName(const QString &portNameValue, const QString &portId, const QString &devicePath)
+{
+    const QString portName = portNameValue.isEmpty() ? portId : portNameValue;
+    return devicePath.isEmpty() ? portName : QStringLiteral("%1 / %2").arg(portName, devicePath);
+}
+
 QTableWidgetItem *readonlyItem(const QString &text)
 {
     auto *item = new QTableWidgetItem(text);
@@ -76,6 +90,8 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     Q_UNUSED(m_config);
     Q_UNUSED(m_stateStore);
 
+    setObjectName("DeviceConfigPage");
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
     layout->setSpacing(14);
@@ -84,9 +100,15 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     title->setObjectName("PageTitle");
     layout->addWidget(title);
 
+    auto *masterCard = new QWidget(this);
+    masterCard->setObjectName("PageCard");
+    auto *masterCardLayout = new QVBoxLayout(masterCard);
+    masterCardLayout->setContentsMargins(14, 12, 14, 14);
+    masterCardLayout->setSpacing(10);
+
     auto *masterHeader = new QHBoxLayout;
     auto *masterTitle = new QLabel(QStringLiteral("主站配置"), this);
-    masterTitle->setObjectName("PageTitle");
+    masterTitle->setObjectName("SectionTitle");
     m_syncButton = new QPushButton(QStringLiteral("配置同步"), this);
     auto *scanMaster = new QPushButton(QStringLiteral("扫描主站"), this);
     scanMaster->setEnabled(false);
@@ -95,13 +117,13 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
     masterHeader->addStretch();
     masterHeader->addWidget(m_syncButton);
     masterHeader->addWidget(scanMaster);
-    layout->addLayout(masterHeader);
+    masterCardLayout->addLayout(masterHeader);
 
     m_masterTable = new QTableWidget(this);
     m_masterTable->setColumnCount(10);
     m_masterTable->setHorizontalHeaderLabels({
-        QStringLiteral("主站名称"),
         QStringLiteral("网关"),
+        QStringLiteral("主站名称"),
         QStringLiteral("串口设备"),
         QStringLiteral("波特率"),
         QStringLiteral("区域"),
@@ -112,20 +134,38 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
         QStringLiteral("操作")
     });
     setupTable(m_masterTable);
-    layout->addWidget(m_masterTable, 1);
+    masterCardLayout->addWidget(m_masterTable, 1);
+    layout->addWidget(masterCard, 1);
+
+    auto *slaveCard = new QWidget(this);
+    slaveCard->setObjectName("PageCard");
+    auto *slaveCardLayout = new QVBoxLayout(slaveCard);
+    slaveCardLayout->setContentsMargins(14, 12, 14, 14);
+    slaveCardLayout->setSpacing(10);
 
     auto *slaveHeader = new QHBoxLayout;
     auto *slaveTitle = new QLabel(QStringLiteral("从站配置"), this);
-    slaveTitle->setObjectName("PageTitle");
+    slaveTitle->setObjectName("SectionTitle");
+    m_gatewayCombo = new QComboBox(this);
+    m_gatewayCombo->setMinimumWidth(160);
+    m_portCombo = new QComboBox(this);
+    m_portCombo->setMinimumWidth(160);
     auto *addSlave = new QPushButton(QStringLiteral("添加从站"), this);
     auto *scanSlave = new QPushButton(QStringLiteral("扫描从站"), this);
     scanSlave->setEnabled(false);
     scanSlave->setToolTip(QStringLiteral("后端扫描链路未完整接入，暂时禁用以避免误操作"));
     slaveHeader->addWidget(slaveTitle);
+
+    slaveHeader->addSpacing(16);
+    slaveHeader->addWidget(new QLabel(QStringLiteral("网关"), this));
+    slaveHeader->addWidget(m_gatewayCombo);
+    slaveHeader->addWidget(new QLabel(QStringLiteral("端口"), this));
+    slaveHeader->addWidget(m_portCombo);
+
     slaveHeader->addStretch();
     slaveHeader->addWidget(addSlave);
     slaveHeader->addWidget(scanSlave);
-    layout->addLayout(slaveHeader);
+    slaveCardLayout->addLayout(slaveHeader);
 
     m_slaveTable = new QTableWidget(this);
     m_slaveTable->setColumnCount(13);
@@ -145,12 +185,23 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
         QStringLiteral("操作")
     });
     setupTable(m_slaveTable);
-    layout->addWidget(m_slaveTable, 1);
+    slaveCardLayout->addWidget(m_slaveTable, 1);
+    layout->addWidget(slaveCard, 1);
 
     connect(scanMaster, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
     connect(m_syncButton, &QPushButton::clicked, this, &DeviceConfigPage::showSyncConfigDialog);
     connect(addSlave, &QPushButton::clicked, this, &DeviceConfigPage::showAddSlaveDialog);
     connect(scanSlave, &QPushButton::clicked, this, &DeviceConfigPage::showScanPlaceholder);
+    connect(m_gatewayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        m_selectedGatewayId = m_gatewayCombo ? m_gatewayCombo->currentData().toString() : QString();
+        m_selectedPortId.clear();
+        refreshPortCombo(buildMasterRows());
+        refreshTables();
+    });
+    connect(m_portCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        m_selectedPortId = m_portCombo ? m_portCombo->currentData().toString() : QString();
+        refreshTables();
+    });
 
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setSingleShot(true);
@@ -226,11 +277,15 @@ void DeviceConfigPage::refreshTables()
     m_refreshDirty = false;
     const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
     const QList<MasterRow> masters = buildMasterRows();
+    refreshGatewayPortCombos(masters);
+    const QList<DeviceNode> visibleDevices = filterSlaveDevices(devices);
     m_slaveRowByDeviceKey.clear();
     qDebug() << "[DBG_PAGE] DeviceConfigPage refreshTables executed deviceCount:"
              << devices.size()
              << "masterRowCount:" << masters.size()
-             << "slaveRowCount:" << devices.size();
+             << "slaveRowCount:" << visibleDevices.size()
+             << "gatewayFilter:" << m_selectedGatewayId
+             << "portFilter:" << m_selectedPortId;
 
     m_masterTable->setRowCount(masters.size());
     for (int row = 0; row < masters.size(); ++row) {
@@ -239,8 +294,8 @@ void DeviceConfigPage::refreshTables()
             ? QStringLiteral("RS485-%1").arg(m.masterSlot + 1)
             : m.portName;
 
-        m_masterTable->setItem(row, 0, readonlyItem(portName));
-        m_masterTable->setItem(row, 1, readonlyItem(m.gatewayName.isEmpty() ? m.gatewayId : m.gatewayName));
+        m_masterTable->setItem(row, 0, readonlyItem(m.gatewayName.isEmpty() ? m.gatewayId : m.gatewayName));
+        m_masterTable->setItem(row, 1, readonlyItem(portName));
         m_masterTable->setItem(row, 2, readonlyItem(m.devicePath.isEmpty() ? m.portId : m.devicePath));
         m_masterTable->setItem(row, 3, readonlyItem(QString::number(m.baud)));
         m_masterTable->setItem(row, 4, readonlyItem(m.areaName));
@@ -257,9 +312,9 @@ void DeviceConfigPage::refreshTables()
         }
     }
 
-    m_slaveTable->setRowCount(devices.size());
-    for (int row = 0; row < devices.size(); ++row) {
-        const DeviceNode &d = devices.at(row);
+    m_slaveTable->setRowCount(visibleDevices.size());
+    for (int row = 0; row < visibleDevices.size(); ++row) {
+        const DeviceNode &d = visibleDevices.at(row);
         const QString portName = defaultPortName(d);
 
         m_slaveTable->setItem(row, 0, readonlyItem(portName));
@@ -389,6 +444,87 @@ QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows() const
     return rows.values();
 }
 
+void DeviceConfigPage::refreshGatewayPortCombos(const QList<MasterRow> &masters)
+{
+    if (!m_gatewayCombo) {
+        return;
+    }
+
+    QMap<QString, QString> gatewayNames;
+    for (const MasterRow &m : masters) {
+        if (!m.gatewayId.isEmpty() && !m.portId.isEmpty()) {
+            gatewayNames.insert(m.gatewayId, gatewayDisplayName(m.gatewayId, m.gatewayName));
+        }
+    }
+
+    const QString previousGatewayId = m_selectedGatewayId;
+    {
+        const QSignalBlocker blocker(m_gatewayCombo);
+        m_gatewayCombo->clear();
+        for (auto it = gatewayNames.cbegin(); it != gatewayNames.cend(); ++it) {
+            m_gatewayCombo->addItem(it.value(), it.key());
+        }
+        if (m_gatewayCombo->count() == 0) {
+            m_gatewayCombo->addItem(QStringLiteral("暂无网关"), QString());
+            m_selectedGatewayId.clear();
+        } else {
+            int index = m_gatewayCombo->findData(previousGatewayId);
+            if (index < 0) {
+                index = 0;
+            }
+            m_gatewayCombo->setCurrentIndex(index);
+            m_selectedGatewayId = m_gatewayCombo->currentData().toString();
+        }
+    }
+
+    refreshPortCombo(masters);
+}
+
+void DeviceConfigPage::refreshPortCombo(const QList<MasterRow> &masters)
+{
+    if (!m_portCombo) {
+        return;
+    }
+
+    const QString previousPortId = m_selectedPortId;
+    const QSignalBlocker blocker(m_portCombo);
+    m_portCombo->clear();
+    for (const MasterRow &m : masters) {
+        if (m.gatewayId == m_selectedGatewayId && !m.portId.isEmpty()) {
+            const QString portName = m.portName.isEmpty() ? m.portId : m.portName;
+            m_portCombo->addItem(portName, m.portId);
+        }
+    }
+
+    if (m_portCombo->count() == 0) {
+        m_portCombo->addItem(QStringLiteral("暂无端口"), QString());
+        m_selectedPortId.clear();
+        return;
+    }
+
+    int index = m_portCombo->findData(previousPortId);
+    if (index < 0) {
+        index = 0;
+    }
+    m_portCombo->setCurrentIndex(index);
+    m_selectedPortId = m_portCombo->currentData().toString();
+}
+
+QList<DeviceNode> DeviceConfigPage::filterSlaveDevices(const QList<DeviceNode> &devices) const
+{
+    QList<DeviceNode> filtered;
+    if (m_selectedGatewayId.isEmpty() || m_selectedPortId.isEmpty()) {
+        return filtered;
+    }
+
+    for (const DeviceNode &device : devices) {
+        if (device.gatewayId == m_selectedGatewayId && device.port == m_selectedPortId) {
+            filtered.append(device);
+        }
+    }
+    return filtered;
+}
+
 QString DeviceConfigPage::statusText(const QString &status) const
 {
     if (status == QStringLiteral("online") || status == QStringLiteral("connected")) {
@@ -443,6 +579,10 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
 {
     auto *button = new QPushButton(QStringLiteral("删除"), table);
     button->setProperty("danger", true);
+    if (!master && isCommandPending(QStringLiteral("remove_device"), gatewayId, portId, deviceId)) {
+        button->setEnabled(false);
+        button->setToolTip(QStringLiteral("该从站删除命令正在执行，请在命令任务中查看进度"));
+    }
     bool serviceOffline = false;
     if (m_dataManager) {
         const QList<DeviceNode> devices = m_dataManager->deviceTreeSnapshot();
@@ -480,6 +620,14 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         if (master) {
             emit deleteMasterDataRequested(gatewayId, portId);
         } else {
+            const QString key = commandKey(QStringLiteral("remove_device"), gatewayId, portId, deviceId);
+            if (m_pendingCommandKeys.contains(key)) {
+                QMessageBox::information(this,
+                                         QStringLiteral("删除从站"),
+                                         QStringLiteral("该从站删除命令正在执行，请在命令任务中查看进度。"));
+                return;
+            }
+            m_pendingCommandKeys.insert(key, QStringLiteral("remove_device"));
             qDebug() << "DeviceConfigPage delete slave clicked"
                      << "gatewayId" << gatewayId
                      << "portId" << portId
@@ -488,6 +636,26 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         }
     });
     table->setCellWidget(row, table->columnCount() - 1, button);
+}
+
+QString DeviceConfigPage::commandKey(const QString &commandType, const QString &gatewayId,
+                                     const QString &portId, int deviceId) const
+{
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(commandType, gatewayId, portId)
+        .arg(deviceId);
+}
+
+bool DeviceConfigPage::isCommandPending(const QString &commandType, const QString &gatewayId,
+                                        const QString &portId, int deviceId) const
+{
+    return m_pendingCommandKeys.contains(commandKey(commandType, gatewayId, portId, deviceId));
+}
+
+bool DeviceConfigPage::isFinishedCommandState(const QString &state) const
+{
+    return state.contains(QStringLiteral("成功")) ||
+           state.contains(QStringLiteral("失败"));
 }
 
 QString DeviceConfigPage::realtimeTemperatureText(const QString &deviceKey) const
@@ -542,13 +710,7 @@ QString DeviceConfigPage::realtimeSourceText(const QString &deviceKey) const
 void DeviceConfigPage::showAddSlaveDialog()
 {
     const QList<MasterRow> masters = buildMasterRows();
-
-    QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("添加从站"));
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *form = new QFormLayout;
-
-    auto *masterCombo = new QComboBox(&dialog);
+    QMap<QString, QString> gatewayNames;
     for (const MasterRow &m : masters) {
         if (m.gatewayId.isEmpty() || m.portId.isEmpty()) {
             continue;
@@ -556,11 +718,49 @@ void DeviceConfigPage::showAddSlaveDialog()
         if (m.status != QStringLiteral("connected") && m.status != QStringLiteral("online")) {
             continue;
         }
+        gatewayNames.insert(m.gatewayId, gatewayDisplayName(m.gatewayId, m.gatewayName));
+    }
 
-        const QString gatewayName = m.gatewayName.isEmpty() ? m.gatewayId : m.gatewayName;
-        const QString portName = m.portName.isEmpty() ? m.portId : m.portName;
-        masterCombo->addItem(QStringLiteral("%1 / %2").arg(gatewayName, portName),
-                             masterKey(m.gatewayId, m.portId));
+    if (gatewayNames.isEmpty()) {
+        QMessageBox::information(this,
+                                 QStringLiteral("添加从站"),
+                                 QStringLiteral("暂无已连接主站，请先确认板端端口已连接并已上报。"));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("添加从站"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+
+    auto *gatewayCombo = new QComboBox(&dialog);
+    for (auto it = gatewayNames.cbegin(); it != gatewayNames.cend(); ++it) {
+        gatewayCombo->addItem(it.value(), it.key());
+    }
+
+    auto *masterCombo = new QComboBox(&dialog);
+    auto updateMasterCombo = [&]() {
+        const QString gatewayId = gatewayCombo->currentData().toString();
+        masterCombo->clear();
+        for (const MasterRow &m : masters) {
+            if (m.gatewayId != gatewayId || m.portId.isEmpty()) {
+                continue;
+            }
+            if (m.status != QStringLiteral("connected") && m.status != QStringLiteral("online")) {
+                continue;
+            }
+            masterCombo->addItem(masterDisplayName(m.portName, m.portId, m.devicePath), m.portId);
+        }
+        masterCombo->setEnabled(masterCombo->count() > 0);
+    };
+    const int selectedGatewayIndex = gatewayCombo->findData(m_selectedGatewayId);
+    if (selectedGatewayIndex >= 0) {
+        gatewayCombo->setCurrentIndex(selectedGatewayIndex);
+    }
+    updateMasterCombo();
+    const int selectedPortIndex = masterCombo->findData(m_selectedPortId);
+    if (selectedPortIndex >= 0) {
+        masterCombo->setCurrentIndex(selectedPortIndex);
     }
 
     auto *slaveAddr = new QSpinBox(&dialog);
@@ -568,8 +768,9 @@ void DeviceConfigPage::showAddSlaveDialog()
     slaveAddr->setValue(1);
 
     auto *deviceType = new QComboBox(&dialog);
-    deviceType->addItem(QStringLiteral("温湿度传感器"), QStringLiteral("sensor_th"));
-    deviceType->addItem(QStringLiteral("继电器"), QStringLiteral("relay"));
+    for (const DeviceTypeOption &option : DeviceTypeConfigRegistry::deviceTypes()) {
+        deviceType->addItem(option.displayName, option.type);
+    }
 
     auto *pollInterval = new QSpinBox(&dialog);
     pollInterval->setRange(100, 600000);
@@ -577,15 +778,47 @@ void DeviceConfigPage::showAddSlaveDialog()
     pollInterval->setValue(1000);
     pollInterval->setSuffix(QStringLiteral(" ms"));
 
+    form->addRow(QStringLiteral("网关"), gatewayCombo);
     form->addRow(QStringLiteral("主站"), masterCombo);
     form->addRow(QStringLiteral("从站地址"), slaveAddr);
     form->addRow(QStringLiteral("设备类型"), deviceType);
     form->addRow(QStringLiteral("轮询周期"), pollInterval);
     layout->addLayout(form);
 
+    auto *optionsGroup = new QWidget(&dialog);
+    auto *optionsLayout = new QVBoxLayout(optionsGroup);
+    optionsLayout->setContentsMargins(0, 0, 0, 0);
+    auto *optionsTitle = new QLabel(QStringLiteral("设备参数"), optionsGroup);
+    optionsLayout->addWidget(optionsTitle);
+    QWidget *currentOptionsWidget = nullptr;
+    auto updateOptionsWidget = [&]() {
+        if (currentOptionsWidget) {
+            optionsLayout->removeWidget(currentOptionsWidget);
+            currentOptionsWidget->deleteLater();
+            currentOptionsWidget = nullptr;
+        }
+
+        currentOptionsWidget = DeviceTypeConfigRegistry::createOptionsWidget(deviceType->currentData().toString(),
+                                                                             optionsGroup);
+        if (currentOptionsWidget) {
+            optionsLayout->addWidget(currentOptionsWidget);
+        }
+        optionsGroup->setVisible(currentOptionsWidget != nullptr);
+    };
+    updateOptionsWidget();
+    layout->addWidget(optionsGroup);
+
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     layout->addWidget(box);
 
+    connect(deviceType,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            &dialog,
+            [&](int) { updateOptionsWidget(); });
+    connect(gatewayCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            &dialog,
+            [&](int) { updateMasterCombo(); });
     connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
@@ -600,18 +833,55 @@ void DeviceConfigPage::showAddSlaveDialog()
         return;
     }
 
-    const QString selected = masterCombo->currentData().toString();
-    const int split = selected.indexOf(QStringLiteral("/"));
-    if (split <= 0 || split >= selected.size() - 1) {
+    const QString gatewayId = gatewayCombo->currentData().toString();
+    const QString portId = masterCombo->currentData().toString();
+    if (gatewayId.isEmpty() || portId.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("添加从站"), QStringLiteral("主站信息无效"));
         return;
     }
 
-    emit addSlaveRequested(selected.left(split),
-                           selected.mid(split + 1),
-                           slaveAddr->value(),
-                           deviceType->currentData().toString(),
-                           pollInterval->value());
+    const int deviceId = slaveAddr->value();
+    const QString key = commandKey(QStringLiteral("add_device"), gatewayId, portId, deviceId);
+    if (m_pendingCommandKeys.contains(key)) {
+        QMessageBox::information(this,
+                                 QStringLiteral("添加从站"),
+                                 QStringLiteral("该从站添加命令正在执行，请在命令任务中查看进度。"));
+        return;
+    }
+    m_pendingCommandKeys.insert(key, QStringLiteral("add_device"));
+
+    const QString selectedDeviceType = deviceType->currentData().toString();
+    const QVariantMap deviceOptions = DeviceTypeConfigRegistry::collectOptions(selectedDeviceType,
+                                                                               currentOptionsWidget);
+    emit addSlaveRequested(gatewayId,
+                           portId,
+                           deviceId,
+                           selectedDeviceType,
+                           pollInterval->value(),
+                           deviceOptions);
+}
+
+void DeviceConfigPage::onCommandTargetStateChanged(const QString &cmdId, const QString &commandType,
+                                                   const QString &gatewayId, const QString &portId,
+                                                   int deviceId, const QString &state,
+                                                   const QString &reason, const QString &message)
+{
+    Q_UNUSED(cmdId);
+    Q_UNUSED(reason);
+    Q_UNUSED(message);
+
+    if (commandType != QStringLiteral("add_device") &&
+        commandType != QStringLiteral("remove_device")) {
+        return;
+    }
+
+    const QString key = commandKey(commandType, gatewayId, portId, deviceId);
+    if (isFinishedCommandState(state)) {
+        m_pendingCommandKeys.remove(key);
+    } else {
+        m_pendingCommandKeys.insert(key, commandType);
+    }
+    scheduleRefreshTables();
 }
 
 void DeviceConfigPage::showSyncConfigDialog()

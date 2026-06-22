@@ -34,11 +34,13 @@ QLabel *filterLabel(const QString &text, QWidget *parent)
 AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
     : QWidget(parent), m_alarm(alarm)
 {
+    setObjectName("AlarmLogPage");
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 14, 18, 18);
     layout->setSpacing(12);
 
-    auto *title = new QLabel(QStringLiteral("5. 报警日志界面"), this);
+    auto *title = new QLabel(QStringLiteral("报警日志"), this);
     title->setObjectName("PageTitle");
     title->setAlignment(Qt::AlignCenter);
     layout->addWidget(title);
@@ -49,7 +51,10 @@ AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
     panelLayout->setContentsMargins(12, 12, 12, 22);
     panelLayout->setSpacing(16);
 
-    auto *tools = new QHBoxLayout;
+    auto *filterPanel = new QWidget(panel);
+    filterPanel->setObjectName("FilterPanel");
+    auto *tools = new QHBoxLayout(filterPanel);
+    tools->setContentsMargins(12, 10, 12, 10);
     tools->setSpacing(12);
 
     m_levelCombo = new QComboBox(this);
@@ -91,7 +96,7 @@ AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
     tools->addWidget(queryButton);
     tools->addWidget(exportButton);
     tools->addStretch();
-    panelLayout->addLayout(tools);
+    panelLayout->addWidget(filterPanel);
 
     m_table = new AlarmTableWidget(this);
     panelLayout->addWidget(m_table, 1);

@@ -60,6 +60,8 @@ QString axisTimeFormat(qint64 startMs, qint64 endMs)
 TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *parent)
     : QWidget(parent), m_data(data), m_stateStore(stateStore)
 {
+    setObjectName("TrendPage");
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 18, 18, 18);
 
@@ -73,7 +75,11 @@ TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *paren
     body->addWidget(m_tree, 1);
 
     auto *right = new QVBoxLayout;
-    auto *filters = new QHBoxLayout;
+    auto *filterPanel = new QWidget(this);
+    filterPanel->setObjectName("FilterPanel");
+    auto *filters = new QHBoxLayout(filterPanel);
+    filters->setContentsMargins(12, 10, 12, 10);
+    filters->setSpacing(10);
     m_rangeCombo = new QComboBox(this);
     m_rangeCombo->addItem(QStringLiteral("最近30分钟"), 30 * 60 * 1000);
     m_rangeCombo->addItem(QStringLiteral("最近1小时"), 60 * 60 * 1000);
@@ -85,7 +91,7 @@ TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *paren
     filters->addWidget(m_rangeCombo);
     filters->addWidget(queryButton);
     filters->addStretch();
-    right->addLayout(filters);
+    right->addWidget(filterPanel);
 
     m_series = new QLineSeries(this);
     m_axisX = new QDateTimeAxis(this);
@@ -108,14 +114,24 @@ TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *paren
                       QDateTime::fromMSecsSinceEpoch(now));
     m_axisY->setRange(0.0, 1.0);
 
-    auto *view = new QChartView(chart, this);
-    right->addWidget(view, 3);
+    auto *chartPanel = new QWidget(this);
+    chartPanel->setObjectName("ChartPanel");
+    auto *chartLayout = new QVBoxLayout(chartPanel);
+    chartLayout->setContentsMargins(10, 10, 10, 10);
+    auto *view = new QChartView(chart, chartPanel);
+    chartLayout->addWidget(view);
+    right->addWidget(chartPanel, 3);
 
     m_statsLabel = new QLabel(QStringLiteral("请选择左侧测点后查询历史数据"), this);
     m_statsLabel->setObjectName("StatsLabel");
     right->addWidget(m_statsLabel);
 
-    m_historyTable = new QTableWidget(this);
+    auto *tablePanel = new QWidget(this);
+    tablePanel->setObjectName("TablePanel");
+    auto *tableLayout = new QVBoxLayout(tablePanel);
+    tableLayout->setContentsMargins(10, 10, 10, 10);
+
+    m_historyTable = new QTableWidget(tablePanel);
     m_historyTable->setColumnCount(4);
     m_historyTable->setHorizontalHeaderLabels(QStringList()
         << QStringLiteral("时间")
@@ -128,7 +144,8 @@ TrendPage::TrendPage(DataManager *data, UiStateStore *stateStore, QWidget *paren
     m_historyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_historyTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_historyTable->setAlternatingRowColors(true);
-    right->addWidget(m_historyTable, 2);
+    tableLayout->addWidget(m_historyTable);
+    right->addWidget(tablePanel, 2);
 
     body->addLayout(right, 3);
     layout->addLayout(body, 1);

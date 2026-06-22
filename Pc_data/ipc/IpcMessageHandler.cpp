@@ -733,10 +733,15 @@ void IpcMessageHandler::handle(const std::string& msg)
             }
             std::string deviceType;
             int pollIntervalMs = 1000;
+            const rapidjson::Value* deviceOptions = nullptr;
             if (commandType == "add_device") {
                 if (root.IsObject() && root.HasMember("device") && root["device"].IsObject()) {
                     deviceType = getJsonStringAny(root["device"], {"deviceType", "device_type"});
-                    pollIntervalMs = getJsonInt(root["device"], "pollIntervalMs", pollIntervalMs);
+                    pollIntervalMs = getJsonIntAny(root["device"], {"pollIntervalMs", "poll_interval_ms"}, pollIntervalMs);
+                    if (root["device"].HasMember("device_options") &&
+                        root["device"]["device_options"].IsObject()) {
+                        deviceOptions = &root["device"]["device_options"];
+                    }
                 }
                 if (deviceType.empty() && root.IsObject()) {
                     deviceType = getJsonStringAny(requestPayload, {"deviceType", "device_type"});
@@ -784,6 +789,17 @@ void IpcMessageHandler::handle(const std::string& msg)
             if (commandType == "add_device") {
                 payload << ",\"device_type\":\"" << jsonEscape(deviceType) << "\""
                         << ",\"poll_interval_ms\":" << pollIntervalMs;
+                payload << ",\"device\":{\"slave_id\":" << deviceId
+                        << ",\"deviceId\":" << deviceId
+                        << ",\"slaveAddress\":" << deviceId
+                        << ",\"device_type\":\"" << jsonEscape(deviceType) << "\""
+                        << ",\"deviceType\":\"" << jsonEscape(deviceType) << "\""
+                        << ",\"poll_interval_ms\":" << pollIntervalMs
+                        << ",\"pollIntervalMs\":" << pollIntervalMs;
+                if (deviceOptions) {
+                    payload << ",\"device_options\":" << jsonValueToString(*deviceOptions);
+                }
+                payload << "}";
                 if (root.IsObject() && root.HasMember("thresholds") && root["thresholds"].IsObject()) {
                     payload << ",\"threshold_enabled\":" << (getJsonBoolAny(root, {"threshold_enabled", "thresholdEnabled"}, true) ? "true" : "false")
                             << ",\"thresholds\":" << jsonValueToString(root["thresholds"]);

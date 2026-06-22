@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QString>
 #include <QStackedWidget>
+#include <QVariantMap>
 
 class TopBar;
 class SideBar;
@@ -15,6 +16,7 @@ class TrendPage;
 class DeviceConfigPage;
 class AlarmLogPage;
 class SystemSettingPage;
+class CommandTaskPanel;
 
 class DataManager;
 class DeviceManager;
@@ -22,6 +24,7 @@ class AlarmManager;
 class CommandManager;
 class ConfigManager;
 class IpcClient;
+class QPushButton;
 class QTimer;
 class UiStateStore;
 
@@ -49,7 +52,8 @@ private:
     void onAddDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId);
     void onRemoveDeviceSucceeded(const QString &gatewayId, const QString &portId, int deviceId);
     void sendAddSlaveCommand(const QString &gatewayId, const QString &portId, int deviceId,
-                             const QString &deviceType, int pollIntervalMs);
+                             const QString &deviceType, int pollIntervalMs,
+                             const QVariantMap &deviceOptions);
     void sendSyncConfigRequest(const QJsonArray &targets);
     void sendClearRecoveredAlarms();
     void sendClearAllData();
@@ -68,6 +72,8 @@ private:
     DeviceConfigPage *m_deviceConfigPage = nullptr;
     AlarmLogPage *m_alarmLogPage = nullptr;
     SystemSettingPage *m_systemSettingPage = nullptr;
+    CommandTaskPanel *m_commandTaskPanel = nullptr;
+    QPushButton *m_commandTaskButton = nullptr;
 
     DataManager *m_data = nullptr;
     DeviceManager *m_device = nullptr;
