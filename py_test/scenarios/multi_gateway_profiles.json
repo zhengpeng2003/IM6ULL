@@ -1,0 +1,124 @@
+{
+  "mqtt": {
+    "host": "127.0.0.1",
+    "port": 1883,
+    "username": null,
+    "password": null
+  },
+  "gateways": [
+    {
+      "gatewayId": "gateway_001",
+      "gatewayName": "Mock i.MX6ULL",
+      "factoryId": "factory_001",
+      "factoryName": "默认工厂",
+      "areaId": "area_001",
+      "areaName": "默认区域",
+      "telemetry_interval_sec": 2.0,
+      "heartbeat_interval_sec": 10.0,
+      "ports": [
+        {
+          "portId": "port_001",
+          "portName": "RS485-1",
+          "slot": 0,
+          "port": "/dev/ttymxc2",
+          "path": "/dev/ttymxc2",
+          "baud": 38400,
+          "devices": [
+            {
+              "slave_id": 1,
+              "device_type": "sensor_th",
+              "poll_interval_ms": 1000
+            }
+          ]
+        }
+      ],
+      "behavior": {
+        "profile": "legacy",
+        "set_relay": {
+          "ack_delay_sec": 2.0
+        }
+      }
+    },
+    {
+      "gatewayId": "gateway_002",
+      "gatewayName": "Mock i.MX6ULL Abnormal",
+      "factoryId": "factory_001",
+      "factoryName": "默认工厂",
+      "areaId": "area_001",
+      "areaName": "默认区域",
+      "telemetry_interval_sec": 2.0,
+      "heartbeat_interval_sec": 10.0,
+      "ports": [
+        {
+          "portId": "port_001",
+          "portName": "RS485-1",
+          "slot": 0,
+          "port": "/dev/ttymxc2",
+          "path": "/dev/ttymxc2",
+          "baud": 38400,
+          "devices": [
+            {
+              "slave_id": 1,
+              "device_type": "sensor_th",
+              "poll_interval_ms": 1000
+            },
+            {
+              "slave_id": 7,
+              "device_type": "relay",
+              "poll_interval_ms": 1000,
+              "channel_count": 4
+            }
+          ]
+        }
+      ],
+      "behavior": {
+        "profile": "custom",
+        "add_device": {
+          "rules": [
+            {
+              "slave_id": 2,
+              "action": "device_no_response"
+            },
+            {
+              "slave_id": 4,
+              "action": "port_not_found"
+            },
+            {
+              "slave_id": 8,
+              "action": "delay_ack",
+              "delay_ack_sec": 3.0,
+              "reason": "ok_after_3s",
+              "snapshot_reason": "add_device_delayed_ack"
+            },
+            {
+              "slave_id": 9,
+              "action": "force_device_type",
+              "force_device_type": "relay"
+            }
+          ]
+        },
+        "remove_device": {
+          "rules": [
+            {
+              "slave_id": 2,
+              "action": "device_not_found"
+            },
+            {
+              "slave_id": 5,
+              "action": "delay_ack",
+              "delay_ack_sec": 3.0,
+              "reason": "ok_after_3s",
+              "snapshot_reason": "remove_device_delayed_ack"
+            }
+          ]
+        },
+        "set_relay": {
+          "ack_delay_sec": 1.0
+        },
+        "set_threshold": {
+          "rules": []
+        }
+      }
+    }
+  ]
+}

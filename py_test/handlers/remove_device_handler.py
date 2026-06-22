@@ -5,7 +5,6 @@ import threading
 import time
 
 from handlers.base_handler import BaseHandler
-from core import protocol
 
 
 class RemoveDeviceHandler(BaseHandler):
@@ -18,72 +17,55 @@ class RemoveDeviceHandler(BaseHandler):
         seq = self.get_seq(data)
         cmd_id = self.get_cmd_id(data)
         slave_id = self.get_slave_id(data)
+        port_id = self.get_port_id(data, gateway.port_id_from_topic(topic) or gateway.default_port_id())
 
-        print(f"[HANDLER][remove_device] seq={seq}, slave_id={slave_id}")
-        print(f"[RX CMD] remove_device seq={seq} slave_id={slave_id}")
+        print(f"[HANDLER][remove_device] seq={seq}, port_id={port_id}, slave_id={slave_id}")
 
         if slave_id is None:
-            gateway.publish(
-                protocol.ack(
-                    cmd="remove_device",
-                    seq=seq,
-                    ok=False,
-                    reason="invalid_slave_id",
-                    slave_id=None,
-                    cmd_id=cmd_id,
-                )
+            gateway.publish_ack(
+                cmd="remove_device",
+                seq=seq,
+                ok=False,
+                reason="invalid_slave_id",
+                slave_id=None,
+                cmd_id=cmd_id,
+                port_id=port_id,
             )
             return True
 
-        # 2：模拟设备不存在
-        if slave_id == 2:
-            gateway.publish(
-                protocol.ack(
-                    cmd="remove_device",
-                    seq=seq,
-                    ok=False,
-                    reason="device_not_found",
-                    slave_id=slave_id,
-                    cmd_id=cmd_id,
-                )
+        exists = gateway.state.exists(port_id, slave_id)
+        decision = gateway.behavior.evaluate_remove_device(port_id, slave_id, exists)
+
+        if not decision.ok:
+            gateway.publish_ack(
+                cmd="remove_device",
+                seq=seq,
+                ok=False,
+                reason=decision.reason,
+                slave_id=slave_id,
+                cmd_id=cmd_id,
+                port_id=port_id,
             )
             return True
 
-        # 5：模拟延迟删除
-        if slave_id == 5:
-            def delayed_remove():
-                time.sleep(5)
-                gateway.state.remove_device(slave_id)
-                gateway.publish(
-                    protocol.ack(
-                        cmd="remove_device",
-                        seq=seq,
-                        ok=True,
-                        reason="ok_after_5s",
-                        slave_id=slave_id,
-                        cmd_id=cmd_id,
-                    )
-                )
-                gateway.publish_snapshot("remove_device_delayed_ack")
-
-            threading.Thread(target=delayed_remove, daemon=True).start()
-            return True
-
-        # 默认：真实删除
-        gateway.state.remove_device(slave_id)
-
-        gateway.publish(
-            protocol.ack(
+        def complete_success():
+            if decision.delay_ack_sec > 0:
+                time.sleep(decision.delay_ack_sec)
+            gateway.state.remove_device(port_id, slave_id)
+            gateway.publish_ack(
                 cmd="remove_device",
                 seq=seq,
                 ok=True,
-                reason="ok",
+                reason=decision.reason,
                 slave_id=slave_id,
                 cmd_id=cmd_id,
+                port_id=port_id,
             )
-        )
+            gateway.publish_snapshot(decision.snapshot_reason or "remove_device_success")
 
-        # 关键：删除后发 config_snapshot，让 Pc_data/Pc_ui 刷新设备表
-        gateway.publish_snapshot("remove_device_success")
+        if decision.delay_ack_sec > 0:
+            threading.Thread(target=complete_success, daemon=True).start()
+        else:
+            complete_success()
 
         return True

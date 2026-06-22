@@ -5,7 +5,6 @@ import threading
 import time
 
 from handlers.base_handler import BaseHandler
-from core import protocol
 
 
 class AddDeviceHandler(BaseHandler):
@@ -18,126 +17,73 @@ class AddDeviceHandler(BaseHandler):
         seq = self.get_seq(data)
         cmd_id = self.get_cmd_id(data)
         slave_id = self.get_slave_id(data)
+        port_id = self.get_port_id(data, gateway.port_id_from_topic(topic) or gateway.default_port_id())
         device_type = self.get_device_type(data)
         poll_interval_ms = self.get_poll_interval_ms(data)
         threshold_config = self.get_threshold_config(data)
+        device_options = self.get_device_options(data)
 
         print(
             f"[HANDLER][add_device] "
-            f"seq={seq}, slave_id={slave_id}, type={device_type}, interval={poll_interval_ms}"
+            f"seq={seq}, port_id={port_id}, slave_id={slave_id}, type={device_type}, interval={poll_interval_ms}"
         )
-        print(f"[RX CMD] add_device seq={seq} slave_id={slave_id}")
 
         if slave_id is None:
-            gateway.publish(
-                protocol.ack(
-                    cmd="add_device",
-                    seq=seq,
-                    ok=False,
-                    reason="invalid_slave_id",
-                    slave_id=None,
-                    device_type=device_type,
-                    cmd_id=cmd_id,
-                )
+            gateway.publish_ack(
+                cmd="add_device",
+                seq=seq,
+                ok=False,
+                reason="invalid_slave_id",
+                slave_id=None,
+                device_type=device_type,
+                cmd_id=cmd_id,
+                port_id=port_id,
             )
             return True
 
-        # 2：模拟 Modbus 设备无响应
-        if slave_id == 2:
-            gateway.publish(
-                protocol.ack(
-                    cmd="add_device",
-                    seq=seq,
-                    ok=False,
-                    reason="device_no_response",
-                    slave_id=slave_id,
-                    device_type=device_type,
-                    cmd_id=cmd_id,
-                )
+        exists = gateway.state.exists(port_id, slave_id)
+        decision = gateway.behavior.evaluate_add_device(port_id, slave_id, device_type, exists)
+        final_device_type = decision.force_device_type or device_type
+
+        if not decision.ok:
+            gateway.publish_ack(
+                cmd="add_device",
+                seq=seq,
+                ok=False,
+                reason=decision.reason,
+                slave_id=slave_id,
+                device_type=final_device_type,
+                cmd_id=cmd_id,
+                port_id=port_id,
             )
             return True
 
-        # 3：模拟重复设备
-        if slave_id == 3 and gateway.state.exists(slave_id):
-            gateway.publish(
-                protocol.ack(
-                    cmd="add_device",
-                    seq=seq,
-                    ok=False,
-                    reason="device_exists",
-                    slave_id=slave_id,
-                    device_type=device_type,
-                    cmd_id=cmd_id,
-                )
+        def complete_success():
+            if decision.delay_ack_sec > 0:
+                time.sleep(decision.delay_ack_sec)
+            gateway.state.add_device(
+                port_id,
+                slave_id,
+                device_type=final_device_type,
+                poll_interval_ms=poll_interval_ms,
+                threshold_config=threshold_config,
+                device_options=device_options,
             )
-            return True
-
-        # 4：模拟端口不存在
-        if slave_id == 4:
-            gateway.publish(
-                protocol.ack(
-                    cmd="add_device",
-                    seq=seq,
-                    ok=False,
-                    reason="port_not_found",
-                    slave_id=slave_id,
-                    device_type=device_type,
-                    cmd_id=cmd_id,
-                )
-            )
-            return True
-
-        # 6：模拟延迟 ACK
-        if slave_id == 6:
-            def delayed_ack():
-                time.sleep(5)
-                gateway.state.add_device(
-                    slave_id=slave_id,
-                    device_type=device_type,
-                    poll_interval_ms=poll_interval_ms,
-                    threshold_config=threshold_config,
-                )
-                gateway.publish(
-                    protocol.ack(
-                        cmd="add_device",
-                        seq=seq,
-                        ok=True,
-                        reason="ok_after_5s",
-                        slave_id=slave_id,
-                        device_type=device_type,
-                        cmd_id=cmd_id,
-                    )
-                )
-                gateway.publish_snapshot("add_device_delayed_ack")
-
-            threading.Thread(target=delayed_ack, daemon=True).start()
-            return True
-
-        # 7：强制模拟继电器
-        if slave_id == 7:
-            device_type = "relay"
-
-        # 默认：真实成功
-        gateway.state.add_device(
-            slave_id=slave_id,
-            device_type=device_type,
-            poll_interval_ms=poll_interval_ms,
-            threshold_config=threshold_config,
-        )
-
-        gateway.publish(
-            protocol.ack(
+            gateway.publish_ack(
                 cmd="add_device",
                 seq=seq,
                 ok=True,
-                reason="ok",
+                reason=decision.reason,
                 slave_id=slave_id,
-                device_type=device_type,
+                device_type=final_device_type,
                 cmd_id=cmd_id,
+                port_id=port_id,
             )
-        )
+            gateway.publish_snapshot(decision.snapshot_reason or "add_device_success")
 
-        # 关键：ACK 后立刻发 config_snapshot，让 Pc_data/Pc_ui 同步真实设备表
-        gateway.publish_snapshot("add_device_success")
+        if decision.delay_ack_sec > 0:
+            threading.Thread(target=complete_success, daemon=True).start()
+        else:
+            complete_success()
 
         return True

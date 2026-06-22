@@ -1,12 +1,27 @@
 # core/gateway_state.py
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from core.gateway_config import PortConfig, default_threshold_config, legacy_default_config
+
+
+def mock_device_name(slave_id: int) -> str:
+    return f"Device {slave_id}"
 
 
 class GatewayState:
-    def __init__(self):
-        self.devices: Dict[int, Dict[str, Any]] = {}
+    def __init__(self, ports: Optional[List[PortConfig]] = None, default_port_id: Optional[str] = None):
+        self.default_port_id = default_port_id or (ports[0].portId if ports else "port_001")
+        self.port_configs: Dict[str, PortConfig] = {}
+        self.ports: Dict[str, Dict[str, Any]] = {}
+        if ports:
+            for port in ports:
+                self.add_port(port)
+
+    def add_port(self, port: PortConfig):
+        self.port_configs[port.portId] = port
+        self.ports.setdefault(port.portId, {"devices": {}})
 
     def init_default(self):
         """
@@ -14,109 +29,166 @@ class GatewayState:
         这样 Pc_data 收到 gateway_register + config_snapshot 后，
         Pc_ui 能看到网关和初始设备。
         """
-        self.add_device(
-            slave_id=1,
-            device_type="sensor_th",
-            poll_interval_ms=1000,
-            threshold_config={
-                "thresholds": {
-                    "temperature": {
-                        "enable_alarm": True,
-                        "enableAlarm": True,
-                        "alarm_low": 0.0,
-                        "alarmLow": 0.0,
-                        "alarm_high": 35.0,
-                        "alarmHigh": 35.0,
-                    },
-                    "humidity": {
-                        "enable_alarm": True,
-                        "enableAlarm": True,
-                        "alarm_low": 0.0,
-                        "alarmLow": 0.0,
-                        "alarm_high": 80.0,
-                        "alarmHigh": 80.0,
-                    },
-                }
-            },
-        )
+        legacy = legacy_default_config()
+        self.default_port_id = legacy.default_port_id
+        for port in legacy.ports:
+            self.add_port(port)
+            for dev in port.devices:
+                self.add_device(
+                    port.portId,
+                    dev.slave_id,
+                    device_type=dev.device_type,
+                    poll_interval_ms=dev.poll_interval_ms,
+                    threshold_config=dev.threshold_config,
+                    device_options=dev.device_options,
+                )
+
+    def init_from_config(self, ports: List[PortConfig]):
+        for port in ports:
+            self.add_port(port)
+            for dev in port.devices:
+                self.add_device(
+                    port.portId,
+                    dev.slave_id,
+                    device_type=dev.device_type,
+                    poll_interval_ms=dev.poll_interval_ms,
+                    threshold_config=dev.threshold_config,
+                    device_options=dev.device_options,
+                )
 
     def clear(self):
-        self.devices.clear()
+        for port_state in self.ports.values():
+            port_state["devices"].clear()
 
-    def exists(self, slave_id: int) -> bool:
-        return slave_id in self.devices
+    def exists(self, *args, port_id: Optional[str] = None, slave_id: Optional[int] = None) -> bool:
+        port_id, slave_id = self._port_slave(args, port_id, slave_id)
+        return slave_id in self._devices(port_id)
 
     def add_device(
         self,
-        slave_id: int,
+        *args,
+        slave_id: Optional[int] = None,
         device_type: str = "sensor_th",
         poll_interval_ms: int = 1000,
         threshold_config: Optional[Dict[str, Any]] = None,
+        device_options: Optional[Dict[str, Any]] = None,
+        port_id: Optional[str] = None,
     ):
+        port_id, slave_id = self._port_slave(args, port_id, slave_id)
+        if slave_id is None:
+            return
         if threshold_config is None:
-            threshold_config = {
-                "thresholds": {
-                    "temperature": {
-                        "enable_alarm": True,
-                        "enableAlarm": True,
-                        "alarm_low": 0.0,
-                        "alarmLow": 0.0,
-                        "alarm_high": 35.0,
-                        "alarmHigh": 35.0,
-                    },
-                    "humidity": {
-                        "enable_alarm": True,
-                        "enableAlarm": True,
-                        "alarm_low": 0.0,
-                        "alarmLow": 0.0,
-                        "alarm_high": 80.0,
-                        "alarmHigh": 80.0,
-                    },
-                }
-            }
+            threshold_config = default_threshold_config()
+        if device_options is None:
+            device_options = {}
 
-        self.devices[slave_id] = {
+        relay_channel_count = 8
+        if device_type == "relay":
+            try:
+                requested_count = int(device_options.get("relay_channel_count", relay_channel_count))
+                if 1 <= requested_count <= 64:
+                    relay_channel_count = requested_count
+            except Exception:
+                relay_channel_count = 8
+
+        device = {
             "deviceId": slave_id,
             "device_id": slave_id,
             "slave_id": slave_id,
             "slaveAddr": slave_id,
             "slaveAddress": slave_id,
-
             "deviceType": device_type,
             "device_type": device_type,
-
-            "deviceName": f"继电器从站{slave_id}" if device_type == "relay" else f"温湿度从站{slave_id}",
-            "device_name": f"继电器从站{slave_id}" if device_type == "relay" else f"温湿度从站{slave_id}",
-
+            "deviceName": mock_device_name(slave_id),
+            "device_name": mock_device_name(slave_id),
             "pollIntervalMs": poll_interval_ms,
             "poll_interval_ms": poll_interval_ms,
-
             "enabled": True,
             "status": "online",
             "comm_status": "online",
             "data_status": "normal",
-
             "threshold_enabled": True,
             "thresholdEnabled": True,
-
             "threshold_config": threshold_config,
             "thresholdConfig": threshold_config,
         }
+        if device_type == "relay":
+            relay_states = [False] * relay_channel_count
+            device["relay_states"] = relay_states
+            device["relayStates"] = list(relay_states)
+            device["channelCount"] = relay_channel_count
+            device["channel_count"] = relay_channel_count
 
-    def remove_device(self, slave_id: int):
-        self.devices.pop(slave_id, None)
+        self._devices(port_id)[int(slave_id)] = device
 
-    def get_device(self, slave_id: int) -> Optional[Dict[str, Any]]:
-        return self.devices.get(slave_id)
+    def remove_device(self, *args, port_id: Optional[str] = None, slave_id: Optional[int] = None):
+        port_id, slave_id = self._port_slave(args, port_id, slave_id)
+        self._devices(port_id).pop(slave_id, None)
 
-    def set_relay_states(self, slave_id: int, states: List[bool]) -> bool:
-        device = self.devices.get(slave_id)
+    def get_device(self, *args, port_id: Optional[str] = None, slave_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        port_id, slave_id = self._port_slave(args, port_id, slave_id)
+        return self._devices(port_id).get(slave_id)
+
+    def set_relay_states(self, *args, states: Optional[List[bool]] = None, port_id: Optional[str] = None, slave_id: Optional[int] = None) -> bool:
+        parsed_args = list(args)
+        if states is None and parsed_args:
+            states = parsed_args.pop()
+        port_id, slave_id = self._port_slave(tuple(parsed_args), port_id, slave_id)
+        device = self._devices(port_id).get(slave_id)
         if not device or device.get("device_type") != "relay":
             return False
 
-        device["relay_states"] = list(states)
-        device["relayStates"] = list(states)
+        relay_states = list(states or [])
+        device["relay_states"] = relay_states
+        device["relayStates"] = list(relay_states)
+        device["channelCount"] = len(relay_states)
+        device["channel_count"] = len(relay_states)
         return True
 
-    def device_list(self) -> List[Dict[str, Any]]:
-        return list(self.devices.values())
+    def list_devices(self, port_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        return list(self._devices(port_id or self.default_port_id).values())
+
+    def list_ports(self) -> List[str]:
+        return list(self.ports.keys())
+
+    def device_list(self, port_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        return self.list_devices(port_id or self.default_port_id)
+
+    def build_snapshot_ports(self) -> List[Dict[str, Any]]:
+        snapshot_ports = []
+        for port_id in self.list_ports():
+            port = self.port_configs.get(port_id) or PortConfig(portId=port_id)
+            snapshot_ports.append(
+                {
+                    "portId": port.portId,
+                    "portName": port.portName,
+                    "slot": port.slot,
+                    "port": port.port,
+                    "path": port.path,
+                    "baud": port.baud,
+                    "connected": True,
+                    "status": "connected",
+                    "devices": self.list_devices(port_id),
+                }
+            )
+        return snapshot_ports
+
+    def _devices(self, port_id: Optional[str]) -> Dict[int, Dict[str, Any]]:
+        actual_port_id = port_id or self.default_port_id
+        self.ports.setdefault(actual_port_id, {"devices": {}})
+        return self.ports[actual_port_id]["devices"]
+
+    def _port_slave(self, args, port_id: Optional[str], slave_id: Optional[int]):
+        if len(args) == 1:
+            slave_id = args[0]
+        elif len(args) >= 2:
+            port_id = args[0]
+            slave_id = args[1]
+        if port_id is None:
+            port_id = self.default_port_id
+        if slave_id is not None:
+            try:
+                slave_id = int(slave_id)
+            except Exception:
+                slave_id = None
+        return port_id, slave_id

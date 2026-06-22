@@ -34,6 +34,22 @@ class BaseHandler:
     def get_cmd_id(self, data: Dict[str, Any]) -> str:
         return str(data.get("cmd_id") or data.get("cmdId") or data.get("commandId") or "")
 
+    def get_port_id(self, data: Dict[str, Any], default: str = "port_001") -> str:
+        target = data.get("target")
+        if isinstance(target, dict):
+            value = target.get("portId") or target.get("port_id")
+            if value:
+                return str(value)
+
+        device = data.get("device")
+        if isinstance(device, dict):
+            value = device.get("portId") or device.get("port_id")
+            if value:
+                return str(value)
+
+        value = data.get("portId") or data.get("port_id")
+        return str(value) if value else default
+
     def get_slave_id(self, data: Dict[str, Any]) -> Optional[int]:
         device = data.get("device")
 
@@ -104,6 +120,14 @@ class BaseHandler:
             return self.normalize_threshold_config(cfg)
 
         return self.default_threshold_config()
+
+    def get_device_options(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        device = data.get("device")
+        if isinstance(device, dict):
+            options = device.get("device_options")
+            if isinstance(options, dict):
+                return options
+        return {}
 
     def normalize_threshold_config(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         """
