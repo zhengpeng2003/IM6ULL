@@ -32,6 +32,18 @@ class SetThresholdHandler(BaseHandler):
             )
             return True
 
+        if threshold_config is None:
+            gateway.publish_ack(
+                cmd="set_threshold",
+                seq=seq,
+                ok=False,
+                reason="invalid_threshold_config",
+                slave_id=slave_id,
+                cmd_id=cmd_id,
+                port_id=port_id,
+            )
+            return True
+
         device = gateway.state.get_device(port_id, slave_id)
         decision = gateway.behavior.evaluate_set_threshold(
             port_id=port_id,
@@ -53,6 +65,11 @@ class SetThresholdHandler(BaseHandler):
 
         device["threshold_config"] = threshold_config
         device["thresholdConfig"] = threshold_config
+        enabled = bool(threshold_config.get("threshold_enabled", threshold_config.get("thresholdEnabled", True)))
+        device["threshold_enabled"] = enabled
+        device["thresholdEnabled"] = enabled
+        device["threshold_config_source"] = "pc_data"
+        device["thresholdConfigSource"] = "pc_data"
 
         gateway.publish_ack(
             cmd="set_threshold",

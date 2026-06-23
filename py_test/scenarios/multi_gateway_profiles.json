@@ -8,7 +8,7 @@
   "gateways": [
     {
       "gatewayId": "gateway_001",
-      "gatewayName": "Mock i.MX6ULL",
+      "gatewayName": "Mock i.MX6ULL Normal",
       "factoryId": "factory_001",
       "factoryName": "默认工厂",
       "areaId": "area_001",
@@ -30,6 +30,15 @@
               "poll_interval_ms": 1000
             }
           ]
+        },
+        {
+          "portId": "port_002",
+          "portName": "RS485-2",
+          "slot": 1,
+          "port": "/dev/ttymxc3",
+          "path": "/dev/ttymxc3",
+          "baud": 38400,
+          "devices": []
         }
       ],
       "behavior": {
@@ -56,19 +65,16 @@
           "port": "/dev/ttymxc2",
           "path": "/dev/ttymxc2",
           "baud": 38400,
-          "devices": [
-            {
-              "slave_id": 1,
-              "device_type": "sensor_th",
-              "poll_interval_ms": 1000
-            },
-            {
-              "slave_id": 7,
-              "device_type": "relay",
-              "poll_interval_ms": 1000,
-              "channel_count": 4
-            }
-          ]
+          "devices": []
+        },
+        {
+          "portId": "port_002",
+          "portName": "RS485-2",
+          "slot": 1,
+          "port": "/dev/ttymxc3",
+          "path": "/dev/ttymxc3",
+          "baud": 38400,
+          "devices": []
         }
       ],
       "behavior": {
@@ -84,6 +90,12 @@
               "action": "port_not_found"
             },
             {
+              "slave_id": 7,
+              "action": "force_device_type",
+              "force_device_type": "relay",
+              "reason": "ok"
+            },
+            {
               "slave_id": 8,
               "action": "delay_ack",
               "delay_ack_sec": 3.0,
@@ -92,8 +104,28 @@
             },
             {
               "slave_id": 9,
-              "action": "force_device_type",
-              "force_device_type": "relay"
+              "action": "success",
+              "reason": "ok"
+            },
+            {
+              "slave_id": 10,
+              "action": "success",
+              "reason": "ok"
+            },
+            {
+              "slave_id": 11,
+              "action": "success",
+              "reason": "ok"
+            },
+            {
+              "slave_id": 12,
+              "action": "success",
+              "reason": "ok"
+            },
+            {
+              "slave_id": 13,
+              "action": "success",
+              "reason": "ok"
             }
           ]
         },

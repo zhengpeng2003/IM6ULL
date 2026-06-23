@@ -16,6 +16,19 @@ class BehaviorDecision:
     snapshot_reason: str = ""
 
 
+@dataclass
+class TemperatureSpikeConfig:
+    enabled: bool = False
+    port_id: str = "port_001"
+    slave_id: int = 1
+    start_after_sec: float = 20.0
+    duration_sec: float = 30.0
+    normal_base: float = 25.0
+    normal_jitter: float = 0.3
+    spike_base: float = 35.0
+    spike_jitter: float = 0.5
+
+
 class BehaviorProfile:
     def __init__(self, cfg: Optional[Dict[str, Any]] = None):
         self.cfg = cfg if isinstance(cfg, dict) else {}
@@ -30,44 +43,44 @@ class BehaviorProfile:
         return cls(cfg)
 
     def evaluate_add_device(self, port_id: str, slave_id: int, device_type: str, exists: bool) -> BehaviorDecision:
+        if exists:
+            return BehaviorDecision(ok=False, reason="device_exists")
+
         rule = self._rule("add_device", slave_id)
         if rule:
             return self._decision_from_rule(rule)
 
-        if self.legacy:
-            if slave_id == 2:
-                return BehaviorDecision(ok=False, reason="device_no_response")
-            if slave_id == 3 and exists:
-                return BehaviorDecision(ok=False, reason="device_exists")
-            if slave_id == 4:
-                return BehaviorDecision(ok=False, reason="port_not_found")
-            if slave_id == 6:
-                return BehaviorDecision(
-                    ok=True,
-                    reason="ok_after_5s",
-                    delay_ack_sec=5.0,
-                    snapshot_reason="add_device_delayed_ack",
-                )
-            if slave_id == 7:
-                return BehaviorDecision(ok=True, reason="ok", force_device_type="relay")
+        if slave_id == 2:
+            return BehaviorDecision(ok=False, reason="device_no_response")
+        if slave_id == 4:
+            return BehaviorDecision(ok=False, reason="port_not_found")
+        if slave_id == 8:
+            return BehaviorDecision(
+                ok=True,
+                reason="ok_after_3s",
+                delay_ack_sec=3.0,
+                snapshot_reason="add_device_delayed_ack",
+            )
+        if slave_id == 7:
+            return BehaviorDecision(ok=True, reason="ok", force_device_type="relay")
 
         return BehaviorDecision(ok=True, reason="ok")
 
     def evaluate_remove_device(self, port_id: str, slave_id: int, exists: bool) -> BehaviorDecision:
+        if not exists:
+            return BehaviorDecision(ok=False, reason="device_not_found")
+
         rule = self._rule("remove_device", slave_id)
         if rule:
             return self._decision_from_rule(rule)
 
-        if self.legacy:
-            if slave_id == 2:
-                return BehaviorDecision(ok=False, reason="device_not_found")
-            if slave_id == 5:
-                return BehaviorDecision(
-                    ok=True,
-                    reason="ok_after_5s",
-                    delay_ack_sec=5.0,
-                    snapshot_reason="remove_device_delayed_ack",
-                )
+        if slave_id == 5:
+            return BehaviorDecision(
+                ok=True,
+                reason="ok_after_3s",
+                delay_ack_sec=3.0,
+                snapshot_reason="remove_device_delayed_ack",
+            )
 
         return BehaviorDecision(ok=True, reason="ok")
 
@@ -102,6 +115,30 @@ class BehaviorProfile:
 
         return BehaviorDecision(ok=True, reason="ok")
 
+    def temperature_spike(self) -> TemperatureSpikeConfig:
+        telemetry = self.cfg.get("telemetry")
+        section = telemetry.get("temperature_spike") if isinstance(telemetry, dict) else None
+        if not isinstance(section, dict):
+            section = self.cfg.get("temperature_spike")
+        if not isinstance(section, dict):
+            return TemperatureSpikeConfig(enabled=False)
+
+        enabled = bool(section.get("enabled", True))
+        return TemperatureSpikeConfig(
+            enabled=enabled,
+            port_id=str(section.get("port_id") or section.get("portId") or "port_001"),
+            slave_id=self._int_value(section.get("slave_id", section.get("slaveId", section.get("deviceId", 1))), 1),
+            start_after_sec=self._float_value(
+                section.get("start_after_sec", section.get("startAfterSec", section.get("delay_sec", 20.0))),
+                20.0,
+            ),
+            duration_sec=self._float_value(section.get("duration_sec", section.get("durationSec", 30.0)), 30.0),
+            normal_base=self._float_value(section.get("normal_base", section.get("normalBase", 25.0)), 25.0),
+            normal_jitter=self._float_value(section.get("normal_jitter", section.get("normalJitter", 0.3)), 0.3),
+            spike_base=self._float_value(section.get("spike_base", section.get("spikeBase", 35.0)), 35.0),
+            spike_jitter=self._float_value(section.get("spike_jitter", section.get("spikeJitter", 0.5)), 0.5),
+        )
+
     def _default_set_relay_delay(self) -> float:
         default = float(getattr(config, "SET_RELAY_ACK_DELAY_SEC", 0.0) or 0.0)
         section = self.cfg.get("set_relay")
@@ -111,6 +148,18 @@ class BehaviorProfile:
             except Exception:
                 return default
         return default if self.legacy else 0.0
+
+    def _int_value(self, value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    def _float_value(self, value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
 
     def _rule(self, section_name: str, slave_id: int) -> Dict[str, Any]:
         section = self.cfg.get(section_name)

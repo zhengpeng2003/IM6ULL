@@ -68,6 +68,8 @@ struct AlarmEvent
 {
     std::string alarmId;
     std::int64_t timestampMs = 0;
+    std::int64_t ackTimeMs = 0;
+    std::int64_t recoverTimeMs = 0;
     std::string factoryId;
     std::string factoryName;
     std::string areaId;
@@ -189,7 +191,10 @@ public:
     bool clearRuntimeData();
     bool clearAllData();
     bool clearRecoveredAlarms();
+    bool clearAcknowledgedAlarms();
+    bool acknowledgeAlarm(const std::string& alarmId, std::int64_t ackTimeMs);
     bool saveAlarmEvent(const AlarmEvent& event);
+    std::vector<AlarmEvent> queryAlarmEvents();
     bool replaceSelectedDeviceConfig(const std::string& gatewayId,
                                      const std::vector<DbSelectedDevice>& selectedDevices,
                                      const std::vector<GatewayPort>& ports,

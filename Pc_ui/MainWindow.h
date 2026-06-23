@@ -45,6 +45,7 @@ private:
     void requestDevices();
     void requestGatewayStatus();
     void requestPortStatus();
+    void requestAlarmEvents();
     void requestFullSnapshot();
     void sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit);
     void sendDeleteMasterData(const QString &gatewayId, const QString &portId);
@@ -55,6 +56,8 @@ private:
                              const QString &deviceType, int pollIntervalMs,
                              const QVariantMap &deviceOptions);
     void sendSyncConfigRequest(const QJsonArray &targets);
+    void sendAcknowledgeAlarm(const QString &alarmId);
+    void sendClearAcknowledgedAlarms();
     void sendClearRecoveredAlarms();
     void sendClearAllData();
     void requestMqttConfig();

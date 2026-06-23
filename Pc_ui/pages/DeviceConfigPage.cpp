@@ -814,12 +814,20 @@ void DeviceConfigPage::showAddSlaveDialog()
     connect(deviceType,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             &dialog,
-            [&](int) { updateOptionsWidget(); });
+            [&](int) {
+                updateOptionsWidget();
+            });
     connect(gatewayCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             &dialog,
             [&](int) { updateMasterCombo(); });
-    connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(box, &QDialogButtonBox::accepted, &dialog, [&]() {
+        if (DeviceTypeConfigRegistry::validateOptions(deviceType->currentData().toString(),
+                                                      currentOptionsWidget,
+                                                      &dialog)) {
+            dialog.accept();
+        }
+    });
     connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
     if (masterCombo->count() == 0) {

@@ -1,5 +1,6 @@
 #include "AlarmManager.h"
 #include <QDateTime>
+#include <QJsonArray>
 #include <QRegularExpression>
 
 namespace {
@@ -36,21 +37,7 @@ int masterSlotFromPortId(const QString &portId)
     return portNumber - 1;
 }
 
-} // namespace
-
-AlarmManager::AlarmManager(QObject *parent) : QObject(parent) {}
-
-QList<AlarmRecord> AlarmManager::alarms() const { return m_alarms.values(); }
-QList<AlarmRecord> AlarmManager::latestAlarms(int limit) const { return m_alarms.values().mid(0, limit); }
-
-int AlarmManager::activeAlarmCount() const
-{
-    int count = 0;
-    for (const auto &a : m_alarms) if (a.state == "active") ++count;
-    return count;
-}
-
-void AlarmManager::onAlarmMessage(const QJsonObject &obj)
+AlarmRecord alarmRecordFromJson(const QJsonObject &obj)
 {
     AlarmRecord a;
     a.alarmId = stringValue(obj, "alarm_id", "alarmId");
@@ -74,6 +61,8 @@ void AlarmManager::onAlarmMessage(const QJsonObject &obj)
         a.state = "acknowledged";
     }
     a.startTime = int64Value(obj, "timestampMs", int64Value(obj, "timestamp", QDateTime::currentMSecsSinceEpoch()));
+    a.ackTime = int64Value(obj, "ackTimeMs", int64Value(obj, "ack_time_ms", 0));
+    a.recoverTime = int64Value(obj, "recoverTimeMs", int64Value(obj, "recover_time_ms", 0));
     if (a.alarmId.isEmpty()) {
         a.alarmId = QStringLiteral("%1.%2.%3.%4.%5")
             .arg(a.gatewayId.isEmpty() ? QStringLiteral("unknown_gateway") : a.gatewayId,
@@ -82,10 +71,42 @@ void AlarmManager::onAlarmMessage(const QJsonObject &obj)
             .arg(a.pointKey.isEmpty() ? QStringLiteral("unknown") : a.pointKey,
                  a.alarmType.isEmpty() ? QStringLiteral("emergency") : a.alarmType);
     }
+    return a;
+}
 
+} // namespace
+
+AlarmManager::AlarmManager(QObject *parent) : QObject(parent) {}
+
+QList<AlarmRecord> AlarmManager::alarms() const { return m_alarms.values(); }
+QList<AlarmRecord> AlarmManager::latestAlarms(int limit) const { return m_alarms.values().mid(0, limit); }
+
+int AlarmManager::activeAlarmCount() const
+{
+    int count = 0;
+    for (const auto &a : m_alarms) if (a.state == "active") ++count;
+    return count;
+}
+
+void AlarmManager::onAlarmMessage(const QJsonObject &obj)
+{
+    const AlarmRecord a = alarmRecordFromJson(obj);
     const bool existed = m_alarms.contains(a.alarmId);
     m_alarms.insert(a.alarmId, a);
     existed ? emit alarmUpdated(a) : emit alarmAdded(a);
+    emit alarmsChanged();
+    emit activeAlarmCountChanged(activeAlarmCount());
+}
+
+void AlarmManager::onAlarmSnapshot(const QJsonArray &alarms)
+{
+    m_alarms.clear();
+    for (const QJsonValue &value : alarms) {
+        if (value.isObject()) {
+            const AlarmRecord alarm = alarmRecordFromJson(value.toObject());
+            m_alarms.insert(alarm.alarmId, alarm);
+        }
+    }
     emit alarmsChanged();
     emit activeAlarmCountChanged(activeAlarmCount());
 }

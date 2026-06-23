@@ -16,9 +16,12 @@ public:
 public slots:
     void refreshTable();
     void acknowledgeVisibleActiveAlarms();
+    void clearAcknowledgedAlarms();
     void clearRecoveredAlarms();
 signals:
+    void acknowledgeAlarmRequested(const QString &alarmId);
     void clearRecoveredAlarmsRequested();
+    void clearAcknowledgedAlarmsRequested();
 
 private:
     QList<AlarmRecord> filteredAlarms() const;

@@ -385,6 +385,39 @@ void IpcMessageHandler::handle(const std::string& msg)
     std::string gatewayId;
     std::string portId;
     int deviceId = 0;
+    std::string alarmId;
+
+    if (parseGetAlarmEventsRequest(msg)) {
+        if (m_database.isOpen()) {
+            m_ipc.sendMessage(buildAlarmEventsSnapshotJson(m_database.queryAlarmEvents()));
+        } else {
+            m_ipc.sendMessage(buildAlarmEventsSnapshotJson(std::vector<AlarmEvent>()));
+        }
+        std::cout << "send alarm_events_snapshot done" << std::endl;
+        return;
+    }
+
+    if (parseAckAlarmRequest(msg, alarmId)) {
+        bool dbOk = false;
+        if (m_database.isOpen()) {
+            dbOk = m_database.acknowledgeAlarm(alarmId, currentTimeMs());
+        } else {
+            std::cout << "ack_alarm skipped: database is not open" << std::endl;
+        }
+
+        const std::string reason = dbOk ? "" : "ack_alarm_failed";
+        m_ipc.sendMessage(buildAlarmActionAckJson("ack_alarm", dbOk, reason, alarmId));
+        if (m_database.isOpen()) {
+            m_ipc.sendMessage(buildAlarmEventsSnapshotJson(m_database.queryAlarmEvents()));
+        }
+
+        std::cout << "ack_alarm done, alarmId: "
+                  << alarmId
+                  << ", dbOk: "
+                  << dbOk
+                  << std::endl;
+        return;
+    }
 
     if (parseDeleteDeviceRequest(msg, gatewayId, portId, deviceId)) {
         bool dbOk = false;
@@ -456,9 +489,32 @@ void IpcMessageHandler::handle(const std::string& msg)
         }
 
         const std::string reason = dbOk ? "" : "clear_recovered_alarms_failed";
-        m_ipc.sendMessage(buildDeleteDataAckJson("clear_recovered_alarms", dbOk, reason));
+        m_ipc.sendMessage(buildAlarmActionAckJson("clear_recovered_alarms", dbOk, reason));
+        if (m_database.isOpen()) {
+            m_ipc.sendMessage(buildAlarmEventsSnapshotJson(m_database.queryAlarmEvents()));
+        }
 
         std::cout << "clear_recovered_alarms done, dbOk: "
+                  << dbOk
+                  << std::endl;
+        return;
+    }
+
+    if (parseClearAcknowledgedAlarmsRequest(msg)) {
+        bool dbOk = false;
+        if (m_database.isOpen()) {
+            dbOk = m_database.clearAcknowledgedAlarms();
+        } else {
+            std::cout << "clear_acknowledged_alarms skipped: database is not open" << std::endl;
+        }
+
+        const std::string reason = dbOk ? "" : "clear_acknowledged_alarms_failed";
+        m_ipc.sendMessage(buildAlarmActionAckJson("clear_acknowledged_alarms", dbOk, reason));
+        if (m_database.isOpen()) {
+            m_ipc.sendMessage(buildAlarmEventsSnapshotJson(m_database.queryAlarmEvents()));
+        }
+
+        std::cout << "clear_acknowledged_alarms done, dbOk: "
                   << dbOk
                   << std::endl;
         return;

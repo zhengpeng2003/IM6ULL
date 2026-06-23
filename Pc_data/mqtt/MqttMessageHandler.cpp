@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <iostream>
 #include <mutex>
 #include <set>
@@ -349,6 +350,13 @@ double getJsonDoubleCompat(const rapidjson::Value& obj, const char* key, double 
 {
     if (obj.IsObject() && obj.HasMember(key) && obj[key].IsNumber()) {
         return obj[key].GetDouble();
+    }
+    if (obj.IsObject() && obj.HasMember(key) && obj[key].IsString()) {
+        try {
+            return std::stod(obj[key].GetString());
+        } catch (...) {
+            return defaultValue;
+        }
     }
     return defaultValue;
 }
@@ -804,7 +812,15 @@ bool fillAlarmEventFromObject(const rapidjson::Value& root, AlarmEvent& event, s
     event.gatewayName = getJsonStringCompat(root, "gateway_name", "gatewayName");
     event.portId = getJsonStringCompat(root, "port_id", "portId");
     event.portName = getJsonStringCompat(root, "port_name", "portName");
-    event.deviceId = getJsonInt(root, "deviceId", getJsonInt(root, "device_id", getJsonInt(root, "slave_addr", 0)));
+    event.deviceId = getJsonInt(root,
+                                "deviceId",
+                                getJsonInt(root,
+                                           "device_id",
+                                           getJsonInt(root,
+                                                      "slave_id",
+                                                      getJsonInt(root,
+                                                                 "slaveAddr",
+                                                                 getJsonInt(root, "slaveAddress", 0)))));
     event.deviceName = getJsonStringCompat(root, "device_name", "deviceName");
     event.deviceType = getJsonStringCompat(root, "device_type", "deviceType");
     event.pointKey = getJsonStringCompat(root, "point_key", "pointKey");
@@ -825,6 +841,8 @@ bool fillAlarmEventFromObject(const rapidjson::Value& root, AlarmEvent& event, s
     if (event.alarmId.empty()) event.alarmId = getJsonString(root, "alarmId");
     if (event.alarmType.empty()) event.alarmType = "emergency";
     if (event.pointKey.empty()) event.pointKey = "unknown";
+    if (event.pointName.empty() && event.pointKey == "temperature") event.pointName = "温度";
+    if (event.pointName.empty() && event.pointKey == "humidity") event.pointName = "湿度";
     if (event.level.empty()) event.level = "warning";
     if (event.message.empty()) event.message = "emergency alarm";
     if (event.alarmId.empty()) event.alarmId = buildStableAlarmId(event);
@@ -1158,34 +1176,67 @@ void MqttMessageHandler::handle(const std::string& topic, const std::string& pay
             return;
         }
 
-        AlarmEvent event;
-        std::string reason;
+        try {
+            AlarmEvent event;
+            std::string reason;
 
-        if (!parseAlarmEventPayload(payload, event, reason)) {
-            std::cout << "[MQTT RX] alarm_event parse failed: " << reason << std::endl;
-            return;
-        }
+            if (!parseAlarmEventPayload(payload, event, reason)) {
+                std::cout << "[MQTT RX] alarm_event parse failed: " << reason
+                          << ", topic=" << topic
+                          << ", payloadBytes=" << payload.size() << std::endl;
+                return;
+            }
 
-        if ((!event.gatewayId.empty() && event.gatewayId != topicGatewayId) ||
-            (hasPortTopic && !event.portId.empty() && event.portId != topicPortId)) {
-            std::cout << "[MQTT RX] alarm_event ignored: topic payload mismatch, topicGateway="
-                      << topicGatewayId
-                      << ", topicPort=" << topicPortId
-                      << ", payloadGateway=" << event.gatewayId
-                      << ", payloadPort=" << event.portId << std::endl;
-            return;
-        }
+            if ((!event.gatewayId.empty() && event.gatewayId != topicGatewayId) ||
+                (hasPortTopic && !event.portId.empty() && event.portId != topicPortId)) {
+                std::cout << "[MQTT RX] alarm_event ignored: topic payload mismatch, topicGateway="
+                          << topicGatewayId
+                          << ", topicPort=" << topicPortId
+                          << ", payloadGateway=" << event.gatewayId
+                          << ", payloadPort=" << event.portId
+                          << ", alarmId=" << event.alarmId << std::endl;
+                return;
+            }
 
-        const bool dbOk = m_database.isOpen() && m_database.saveAlarmEvent(event);
+            if (event.portId.empty()) {
+                event.portId = topicPortId;
+            }
+            if (event.gatewayId.empty()) {
+                event.gatewayId = topicGatewayId;
+            }
+            if (event.alarmId.empty()) {
+                event.alarmId = buildStableAlarmId(event);
+            }
 
-        std::cout << "[MQTT RX] alarm_event " << (dbOk ? "ok" : "failed")
-                  << ", alarmId: " << event.alarmId
-                  << ", legacy: " << (messageType == "command") << std::endl;
+            const bool dbOpen = m_database.isOpen();
+            const bool dbOk = dbOpen && m_database.saveAlarmEvent(event);
 
-        if (dbOk && m_ipc.hasClient()) {
-            m_ipc.sendMessage(buildAlarmEventJson(event));
-        } else if (!m_ipc.hasClient()) {
-            std::cout << "[MQTT RX] Pc_ui not connected, alarm_event stored only" << std::endl;
+            std::cout << "[MQTT RX] alarm_event " << (dbOk ? "ok" : "failed")
+                      << ", alarmId: " << event.alarmId
+                      << ", gatewayId: " << event.gatewayId
+                      << ", portId: " << event.portId
+                      << ", deviceId: " << event.deviceId
+                      << ", pointKey: " << event.pointKey
+                      << ", state: " << event.state
+                      << ", dbOpen: " << (dbOpen ? "true" : "false")
+                      << ", legacy: " << (messageType == "command") << std::endl;
+
+            if (dbOk && m_ipc.hasClient()) {
+                const bool sendOk = m_ipc.sendMessage(buildAlarmEventJson(event));
+                std::cout << "[MQTT RX] alarm_event ipc send "
+                          << (sendOk ? "ok" : "failed")
+                          << ", alarmId: " << event.alarmId << std::endl;
+            } else if (!m_ipc.hasClient()) {
+                std::cout << "[MQTT RX] Pc_ui not connected, alarm_event stored only" << std::endl;
+            }
+        } catch (const std::exception& ex) {
+            std::cout << "[MQTT RX] alarm_event exception ignored: " << ex.what()
+                      << ", topic=" << topic
+                      << ", payloadBytes=" << payload.size() << std::endl;
+        } catch (...) {
+            std::cout << "[MQTT RX] alarm_event unknown exception ignored, topic="
+                      << topic
+                      << ", payloadBytes=" << payload.size() << std::endl;
         }
 
         return;

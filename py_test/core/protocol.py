@@ -49,6 +49,14 @@ def mock_device_name(slave_id: int) -> str:
     return f"Device {slave_id}"
 
 
+def jitter_value(base: float, jitter: float) -> float:
+    return round(base + random.uniform(-jitter, jitter), 2)
+
+
+def stable_alarm_id(gateway_id: str, port_id: str, device_id: int, point_key: str, alarm_type: str) -> str:
+    return f"{gateway_id or 'unknown_gateway'}.{port_id or 'unknown_port'}.{device_id}.{point_key or 'unknown'}.{alarm_type or 'emergency'}"
+
+
 def _port_payload(port: PortConfig, devices: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     payload = {
         "portId": port.portId,
@@ -187,10 +195,94 @@ def ack(
     }
 
 
+def alarm_event(
+    device: Dict[str, Any],
+    state: str,
+    value: float,
+    threshold: float,
+    context: Optional[GatewayConfig] = None,
+    port_id: Optional[str] = None,
+    alarm_type: str = "threshold_high",
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    ctx = _ctx(context)
+    port = _port(ctx, port_id)
+    slave_id = int(device.get("slave_id", device.get("device_id", device.get("deviceId", 0))) or 0)
+    device_type = str(device.get("device_type") or device.get("deviceType") or "sensor_th")
+    point_key = "temperature"
+    alarm_id = stable_alarm_id(ctx.gatewayId, port.portId, slave_id, point_key, alarm_type)
+    active = state == "active"
+    timestamp = now_ms()
+    if message is None:
+        if not active:
+            message = "temperature recovered"
+        elif alarm_type == "threshold_low":
+            message = "temperature low"
+        else:
+            message = "temperature high"
+    seq = next_seq()
+
+    payload = {
+        "type": "alarm_event",
+        "version": 1,
+        "seq": seq,
+        "sequence": seq,
+        "timestampMs": timestamp,
+        "gatewayId": ctx.gatewayId,
+        "gateway_id": ctx.gatewayId,
+        "gatewayName": ctx.gatewayName,
+        "gateway_name": ctx.gatewayName,
+        "factoryId": ctx.factoryId,
+        "factory_id": ctx.factoryId,
+        "factoryName": ctx.factoryName,
+        "factory_name": ctx.factoryName,
+        "areaId": ctx.areaId,
+        "area_id": ctx.areaId,
+        "areaName": ctx.areaName,
+        "area_name": ctx.areaName,
+        "portId": port.portId,
+        "port_id": port.portId,
+        "portName": port.portName,
+        "port_name": port.portName,
+        "deviceId": slave_id,
+        "device_id": slave_id,
+        "slave_id": slave_id,
+        "slaveAddr": slave_id,
+        "slaveAddress": slave_id,
+        "deviceType": device_type,
+        "device_type": device_type,
+        "deviceName": device.get("deviceName") or device.get("device_name") or mock_device_name(slave_id),
+        "device_name": device.get("device_name") or device.get("deviceName") or mock_device_name(slave_id),
+        "pointKey": point_key,
+        "point_key": point_key,
+        "pointName": "温度",
+        "point_name": "温度",
+        "alarmType": alarm_type,
+        "alarm_type": alarm_type,
+        "level": "warning",
+        "alarm_level": "warning",
+        "state": state,
+        "status": state,
+        "value": round(float(value), 2),
+        "trigger_value": round(float(value), 2),
+        "threshold": float(threshold),
+        "threshold_value": float(threshold),
+        "message": message,
+        "alarm_message": message,
+        "alarm_id": alarm_id,
+        "alarmId": alarm_id,
+    }
+    if not active:
+        payload["recover_time_ms"] = timestamp
+        payload["recoverTimeMs"] = timestamp
+    return payload
+
+
 def telemetry_pack(
     devices: List[Dict[str, Any]],
     context: Optional[GatewayConfig] = None,
     port_id: Optional[str] = None,
+    values_by_slave: Optional[Dict[int, Dict[str, float]]] = None,
 ) -> Dict[str, Any]:
     ctx = _ctx(context)
     telemetry_devices = []
@@ -232,6 +324,9 @@ def telemetry_pack(
                 }
             )
         else:
+            values = values_by_slave.get(slave_id, {}) if isinstance(values_by_slave, dict) else {}
+            temperature = values.get("temperature", jitter_value(25.0, 0.3))
+            humidity = values.get("humidity", jitter_value(60.0, 0.8))
             telemetry_devices.append(
                 {
                     "deviceId": str(slave_id),
@@ -251,14 +346,14 @@ def telemetry_pack(
                             "pointKey": "temperature",
                             "pointName": "温度",
                             "valueType": "Number",
-                            "numberValue": round(25.0 + random.random() * 3.0, 2),
+                            "numberValue": round(float(temperature), 2),
                             "unit": "℃",
                         },
                         {
                             "pointKey": "humidity",
                             "pointName": "湿度",
                             "valueType": "Number",
-                            "numberValue": round(60.0 + random.random() * 5.0, 2),
+                            "numberValue": round(float(humidity), 2),
                             "unit": "%",
                         },
                     ],

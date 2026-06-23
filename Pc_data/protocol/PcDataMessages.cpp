@@ -499,6 +499,90 @@ std::string buildDeleteDataAckJson(const std::string& action,
     return oss.str();
 }
 
+std::string buildAlarmActionAckJson(const std::string& action,
+                                    bool ok,
+                                    const std::string& reason,
+                                    const std::string& alarmId)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"alarm_action_ack\",";
+    oss << "\"action\":\"" << jsonEscape(action) << "\",";
+    oss << "\"ok\":" << (ok ? "true" : "false") << ",";
+    oss << "\"reason\":\"" << jsonEscape(reason) << "\",";
+    if (!alarmId.empty()) {
+        oss << "\"alarm_id\":\"" << jsonEscape(alarmId) << "\",";
+        oss << "\"alarmId\":\"" << jsonEscape(alarmId) << "\",";
+    }
+    oss << "\"timestamp\":" << currentTimeMs();
+    oss << "}";
+
+    return oss.str();
+}
+
+std::string buildAlarmEventsSnapshotJson(const std::vector<AlarmEvent>& events)
+{
+    std::ostringstream oss;
+
+    oss << "{";
+    oss << "\"type\":\"alarm_events_snapshot\",";
+    oss << "\"count\":" << events.size() << ",";
+    oss << "\"alarms\":[";
+
+    for (size_t i = 0; i < events.size(); ++i) {
+        const AlarmEvent& event = events[i];
+        if (i > 0) {
+            oss << ",";
+        }
+
+        oss << "{";
+        oss << "\"alarm_id\":\"" << jsonEscape(event.alarmId) << "\",";
+        oss << "\"alarmId\":\"" << jsonEscape(event.alarmId) << "\",";
+        oss << "\"timestampMs\":" << event.timestampMs << ",";
+        oss << "\"ack_time_ms\":" << event.ackTimeMs << ",";
+        oss << "\"ackTimeMs\":" << event.ackTimeMs << ",";
+        oss << "\"recover_time_ms\":" << event.recoverTimeMs << ",";
+        oss << "\"recoverTimeMs\":" << event.recoverTimeMs << ",";
+        oss << "\"factoryId\":\"" << jsonEscape(event.factoryId) << "\",";
+        oss << "\"factory_id\":\"" << jsonEscape(event.factoryId) << "\",";
+        oss << "\"areaId\":\"" << jsonEscape(event.areaId) << "\",";
+        oss << "\"area_id\":\"" << jsonEscape(event.areaId) << "\",";
+        oss << "\"areaName\":\"" << jsonEscape(event.areaName) << "\",";
+        oss << "\"area_name\":\"" << jsonEscape(event.areaName) << "\",";
+        oss << "\"gatewayId\":\"" << jsonEscape(event.gatewayId) << "\",";
+        oss << "\"gateway_id\":\"" << jsonEscape(event.gatewayId) << "\",";
+        oss << "\"portId\":\"" << jsonEscape(event.portId) << "\",";
+        oss << "\"port_id\":\"" << jsonEscape(event.portId) << "\",";
+        oss << "\"deviceId\":" << event.deviceId << ",";
+        oss << "\"device_id\":" << event.deviceId << ",";
+        oss << "\"deviceName\":\"" << jsonEscape(event.deviceName) << "\",";
+        oss << "\"device_name\":\"" << jsonEscape(event.deviceName) << "\",";
+        oss << "\"deviceType\":\"" << jsonEscape(event.deviceType) << "\",";
+        oss << "\"device_type\":\"" << jsonEscape(event.deviceType) << "\",";
+        oss << "\"pointKey\":\"" << jsonEscape(event.pointKey) << "\",";
+        oss << "\"point_key\":\"" << jsonEscape(event.pointKey) << "\",";
+        oss << "\"pointName\":\"" << jsonEscape(event.pointName) << "\",";
+        oss << "\"point_name\":\"" << jsonEscape(event.pointName) << "\",";
+        oss << "\"alarmType\":\"" << jsonEscape(event.alarmType) << "\",";
+        oss << "\"alarm_type\":\"" << jsonEscape(event.alarmType) << "\",";
+        oss << "\"level\":\"" << jsonEscape(event.level) << "\",";
+        oss << "\"alarm_level\":\"" << jsonEscape(event.level) << "\",";
+        oss << "\"message\":\"" << jsonEscape(event.message) << "\",";
+        oss << "\"alarm_message\":\"" << jsonEscape(event.message) << "\",";
+        oss << "\"state\":\"" << jsonEscape(event.state) << "\",";
+        oss << "\"status\":\"" << jsonEscape(event.state) << "\",";
+        oss << "\"value\":" << event.value << ",";
+        oss << "\"trigger_value\":" << event.value << ",";
+        oss << "\"threshold\":" << event.threshold << ",";
+        oss << "\"threshold_value\":" << event.threshold;
+        oss << "}";
+    }
+
+    oss << "]}";
+    return oss.str();
+}
+
 std::string buildMqttConfigJson(const MqttConfig& config,
                                 const std::string& status)
 {
@@ -691,6 +775,50 @@ bool parseClearRecoveredAlarmsRequest(const std::string& msg)
     }
 
     return getJsonString(root, "type") == "clear_recovered_alarms";
+}
+
+bool parseClearAcknowledgedAlarmsRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    return getJsonString(root, "type") == "clear_acknowledged_alarms";
+}
+
+bool parseAckAlarmRequest(const std::string& msg, std::string& alarmId)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    if (getJsonString(root, "type") != "ack_alarm") {
+        return false;
+    }
+
+    alarmId = getJsonString(root, "alarm_id");
+    if (alarmId.empty()) {
+        alarmId = getJsonString(root, "alarmId");
+    }
+    return true;
+}
+
+bool parseGetAlarmEventsRequest(const std::string& msg)
+{
+    rapidjson::Document root;
+    root.Parse(msg.c_str());
+
+    if (root.HasParseError() || !root.IsObject()) {
+        return false;
+    }
+
+    return getJsonString(root, "type") == "get_alarm_events";
 }
 
 bool parseClearAllDataRequest(const std::string& msg)

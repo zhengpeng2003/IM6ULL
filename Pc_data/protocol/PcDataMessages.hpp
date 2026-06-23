@@ -44,6 +44,11 @@ std::string buildHistoryPointsJson(const std::string& pointId,
 std::string buildDeleteDataAckJson(const std::string& action,
                                    bool ok,
                                    const std::string& reason);
+std::string buildAlarmActionAckJson(const std::string& action,
+                                    bool ok,
+                                    const std::string& reason,
+                                    const std::string& alarmId = std::string());
+std::string buildAlarmEventsSnapshotJson(const std::vector<AlarmEvent>& events);
 std::string buildMqttConfigJson(const MqttConfig& config,
                                 const std::string& status);
 std::string buildMqttConfigAckJson(bool ok,
@@ -82,6 +87,9 @@ bool parseDeleteMasterRequest(const std::string& msg,
                               std::string& gatewayId,
                               std::string& portId);
 bool parseClearRecoveredAlarmsRequest(const std::string& msg);
+bool parseClearAcknowledgedAlarmsRequest(const std::string& msg);
+bool parseAckAlarmRequest(const std::string& msg, std::string& alarmId);
+bool parseGetAlarmEventsRequest(const std::string& msg);
 bool parseClearAllDataRequest(const std::string& msg);
 
 #endif // PC_DATA_MESSAGES_HPP

@@ -86,6 +86,7 @@ void MainWindow::initIpc()
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         m_lastIpcMessageMs = now;
         m_lastLatestPointsMs = now;
+        requestAlarmEvents();
     });
 
     connect(m_ipcClient, &IpcClient::disconnected, this, [this]() {
@@ -207,6 +208,22 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
         return;
     }
 
+    if (type == "alarm_events_snapshot") {
+        if (m_alarm) {
+            m_alarm->onAlarmSnapshot(root.value(QStringLiteral("alarms")).toArray());
+        }
+        return;
+    }
+
+    if (type == "alarm_action_ack") {
+        qDebug() << "alarm action ack:" << root;
+        if (!root.value(QStringLiteral("ok")).toBool()) {
+            statusBar()->showMessage(QStringLiteral("报警操作失败：%1")
+                                     .arg(root.value(QStringLiteral("reason")).toString()), 8000);
+        }
+        return;
+    }
+
     if (type == "latest_points" ||
         type == "devices_snapshot" ||
         type == "gateway_status_snapshot" ||
@@ -250,8 +267,6 @@ void MainWindow::handleIpcMessage(const QByteArray &frame)
                 onRemoveDeviceSucceeded(m_pendingDeleteGatewayId,
                                         m_pendingDeletePortId,
                                         m_pendingDeleteDeviceId);
-            } else if (action == "clear_recovered_alarms" && m_alarm) {
-                m_alarm->clearRecoveredAlarms();
             } else if (action == "clear_all_data") {
                 if (m_stateStore) {
                     m_stateStore->clearRuntimeData();
@@ -423,12 +438,21 @@ void MainWindow::requestPortStatus()
     m_ipcClient->sendMessage(QString(R"({"type":"get_port_status"})"));
 }
 
+void MainWindow::requestAlarmEvents()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        return;
+    }
+    m_ipcClient->sendMessage(QString(R"({"type":"get_alarm_events"})"));
+}
+
 void MainWindow::requestFullSnapshot()
 {
     requestLatestPoints();
     requestDevices();
     requestGatewayStatus();
     requestPortStatus();
+    requestAlarmEvents();
 }
 
 void MainWindow::sendHistoryQuery(const QString &pointId, qint64 startMs, qint64 endMs, int limit)
@@ -580,6 +604,35 @@ void MainWindow::sendSyncConfigRequest(const QJsonArray &targets)
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 
+void MainWindow::sendAcknowledgeAlarm(const QString &alarmId)
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected() || alarmId.isEmpty()) {
+        qDebug() << "ack_alarm skipped: IPC is not connected or alarmId is empty.";
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("ack_alarm"));
+    payload.insert(QStringLiteral("alarm_id"), alarmId);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::sendClearAcknowledgedAlarms()
+{
+    if (!m_ipcClient || !m_ipcClient->isConnected()) {
+        qDebug() << "clear_acknowledged_alarms skipped: IPC is not connected.";
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("clear_acknowledged_alarms"));
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
 void MainWindow::sendClearRecoveredAlarms()
 {
     if (!m_ipcClient || !m_ipcClient->isConnected()) {
@@ -590,11 +643,6 @@ void MainWindow::sendClearRecoveredAlarms()
     QJsonObject payload;
     payload.insert(QStringLiteral("type"), QStringLiteral("clear_recovered_alarms"));
     payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
-
-    m_pendingDeleteAction = QStringLiteral("clear_recovered_alarms");
-    m_pendingDeleteGatewayId.clear();
-    m_pendingDeletePortId.clear();
-    m_pendingDeleteDeviceId = 0;
 
     m_ipcClient->sendMessage(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
@@ -762,6 +810,12 @@ void MainWindow::initConnections()
 
     connect(m_deviceConfigPage, &DeviceConfigPage::syncConfigRequested,
             this, &MainWindow::sendSyncConfigRequest);
+
+    connect(m_alarmLogPage, &AlarmLogPage::acknowledgeAlarmRequested,
+            this, &MainWindow::sendAcknowledgeAlarm);
+
+    connect(m_alarmLogPage, &AlarmLogPage::clearAcknowledgedAlarmsRequested,
+            this, &MainWindow::sendClearAcknowledgedAlarms);
 
     connect(m_alarmLogPage, &AlarmLogPage::clearRecoveredAlarmsRequested,
             this, &MainWindow::sendClearRecoveredAlarms);

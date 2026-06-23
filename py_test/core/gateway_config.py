@@ -45,7 +45,7 @@ class DeviceConfig:
     slave_id: int
     device_type: str = "sensor_th"
     poll_interval_ms: int = 1000
-    threshold_config: Dict[str, Any] = field(default_factory=default_threshold_config)
+    threshold_config: Optional[Dict[str, Any]] = None
     device_options: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -113,7 +113,6 @@ def legacy_default_config() -> GatewayConfig:
                         slave_id=1,
                         device_type="sensor_th",
                         poll_interval_ms=1000,
-                        threshold_config=default_threshold_config(),
                     )
                 ]
             )
@@ -145,8 +144,10 @@ def _load_device(raw: Dict[str, Any]) -> DeviceConfig:
         device_options = dict(device_options)
         device_options["relay_channel_count"] = _as_int(channel_count, 8)
     threshold_config = raw.get("threshold_config") or raw.get("thresholdConfig")
+    if not isinstance(threshold_config, dict) and isinstance(raw.get("thresholds"), dict):
+        threshold_config = {"thresholds": raw.get("thresholds")}
     if not isinstance(threshold_config, dict):
-        threshold_config = default_threshold_config()
+        threshold_config = None
     return DeviceConfig(
         slave_id=_as_int(raw.get("slave_id", raw.get("slaveId", raw.get("deviceId", 0))), 0),
         device_type=str(raw.get("device_type") or raw.get("deviceType") or "sensor_th"),

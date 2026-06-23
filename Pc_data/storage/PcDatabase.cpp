@@ -1385,13 +1385,15 @@ bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
     const std::string pointId = event.alarmId;
     const std::string state = event.state.empty() ? "active" : event.state;
     const bool recovered = state == "recovered";
+    const bool acknowledged = state == "acked" || state == "acknowledged";
     const std::int64_t nowMs = event.timestampMs > 0 ? event.timestampMs : currentTimeMs();
+    const std::int64_t ackTimeMs = event.ackTimeMs > 0 ? event.ackTimeMs : (acknowledged ? nowMs : 0);
 
     static const char* updateSql =
         "UPDATE alarm_event SET "
         "factory_id=?,factory_name=?,area_id=?,area_name=?,gateway_id=?,gateway_name=?,"
         "port_id=?,port_name=?,device_id=?,device_name=?,device_type=?,point_key=?,point_name=?,"
-        "alarm_level=?,alarm_message=?,recover_time_ms=?,status=?,trigger_value=?,threshold_value=?,error_message=? "
+        "alarm_level=?,alarm_message=?,recover_time_ms=?,ack_time_ms=?,status=?,acked=?,trigger_value=?,threshold_value=?,error_message=? "
         "WHERE point_id=? AND alarm_type=? AND status IN ('active','acked','acknowledged');";
 
     sqlite3_stmt* stmt = nullptr;
@@ -1418,7 +1420,9 @@ bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
     bindText(stmt, i++, event.level.empty() ? "warning" : event.level);
     bindText(stmt, i++, event.message);
     if (recovered) sqlite3_bind_int64(stmt, i++, nowMs); else sqlite3_bind_null(stmt, i++);
+    if (ackTimeMs > 0) sqlite3_bind_int64(stmt, i++, ackTimeMs); else sqlite3_bind_null(stmt, i++);
     bindText(stmt, i++, state);
+    sqlite3_bind_int(stmt, i++, acknowledged ? 1 : 0);
     sqlite3_bind_double(stmt, i++, event.value);
     sqlite3_bind_double(stmt, i++, event.threshold);
     bindText(stmt, i++, event.alarmId);
@@ -1439,8 +1443,8 @@ bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
         "INSERT INTO alarm_event ("
         "point_id,factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,port_id,port_name,"
         "device_id,device_name,device_type,point_key,point_name,alarm_type,alarm_level,alarm_message,"
-        "start_time_ms,recover_time_ms,status,trigger_value,threshold_value,error_message"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+        "start_time_ms,recover_time_ms,ack_time_ms,status,acked,trigger_value,threshold_value,error_message"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
 
     rc = sqlite3_prepare_v2(m_db, insertSql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -1468,7 +1472,9 @@ bool PcDatabase::saveAlarmEvent(const AlarmEvent& event)
     bindText(stmt, i++, event.message);
     sqlite3_bind_int64(stmt, i++, nowMs);
     if (recovered) sqlite3_bind_int64(stmt, i++, nowMs); else sqlite3_bind_null(stmt, i++);
+    if (ackTimeMs > 0) sqlite3_bind_int64(stmt, i++, ackTimeMs); else sqlite3_bind_null(stmt, i++);
     bindText(stmt, i++, state);
+    sqlite3_bind_int(stmt, i++, acknowledged ? 1 : 0);
     sqlite3_bind_double(stmt, i++, event.value);
     sqlite3_bind_double(stmt, i++, event.threshold);
     bindText(stmt, i++, event.alarmId);
@@ -1514,6 +1520,143 @@ bool PcDatabase::clearRecoveredAlarms()
 
     std::cout << "Clear recovered alarms ok" << std::endl;
     return true;
+}
+
+bool PcDatabase::clearAcknowledgedAlarms()
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db) {
+        return false;
+    }
+
+    static const char* sql =
+        "DELETE FROM alarm_event "
+        "WHERE status IN ('acked','acknowledged','已确认') OR acked=1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare clear acknowledged alarms failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Clear acknowledged alarms failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    std::cout << "Clear acknowledged alarms ok" << std::endl;
+    return true;
+}
+
+bool PcDatabase::acknowledgeAlarm(const std::string& alarmId, std::int64_t ackTimeMs)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_db || alarmId.empty()) {
+        return false;
+    }
+
+    const std::int64_t nowMs = ackTimeMs > 0 ? ackTimeMs : currentTimeMs();
+    static const char* sql =
+        "UPDATE alarm_event "
+        "SET status='acknowledged', state='acknowledged', acked=1, ack_time_ms=? "
+        "WHERE point_id=?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare acknowledge alarm failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, nowMs);
+    bindText(stmt, 2, alarmId);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Acknowledge alarm failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return false;
+    }
+
+    return sqlite3_changes(m_db) > 0;
+}
+
+std::vector<AlarmEvent> PcDatabase::queryAlarmEvents()
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<AlarmEvent> events;
+    if (!m_db) {
+        return events;
+    }
+
+    static const char* sql =
+        "SELECT point_id,start_time_ms,ack_time_ms,recover_time_ms,"
+        "factory_id,factory_name,area_id,area_name,gateway_id,gateway_name,"
+        "port_id,port_name,device_id,device_name,device_type,point_key,point_name,"
+        "alarm_type,alarm_level,alarm_message,status,trigger_value,threshold_value,error_message "
+        "FROM alarm_event ORDER BY start_time_ms DESC, alarm_id DESC;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Prepare query alarm events failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+        return events;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        AlarmEvent event;
+        event.alarmId = columnText(sqlite3_column_text(stmt, 0));
+        event.timestampMs = sqlite3_column_int64(stmt, 1);
+        event.ackTimeMs = sqlite3_column_int64(stmt, 2);
+        event.recoverTimeMs = sqlite3_column_int64(stmt, 3);
+        event.factoryId = columnText(sqlite3_column_text(stmt, 4));
+        event.factoryName = columnText(sqlite3_column_text(stmt, 5));
+        event.areaId = columnText(sqlite3_column_text(stmt, 6));
+        event.areaName = columnText(sqlite3_column_text(stmt, 7));
+        event.gatewayId = columnText(sqlite3_column_text(stmt, 8));
+        event.gatewayName = columnText(sqlite3_column_text(stmt, 9));
+        event.portId = columnText(sqlite3_column_text(stmt, 10));
+        event.portName = columnText(sqlite3_column_text(stmt, 11));
+        event.deviceId = sqlite3_column_int(stmt, 12);
+        event.deviceName = columnText(sqlite3_column_text(stmt, 13));
+        event.deviceType = columnText(sqlite3_column_text(stmt, 14));
+        event.pointKey = columnText(sqlite3_column_text(stmt, 15));
+        event.pointName = columnText(sqlite3_column_text(stmt, 16));
+        event.alarmType = columnText(sqlite3_column_text(stmt, 17));
+        event.level = columnText(sqlite3_column_text(stmt, 18));
+        event.message = columnText(sqlite3_column_text(stmt, 19));
+        event.state = columnText(sqlite3_column_text(stmt, 20));
+        if (event.state == "acked") {
+            event.state = "acknowledged";
+        }
+        event.value = sqlite3_column_double(stmt, 21);
+        event.threshold = sqlite3_column_double(stmt, 22);
+        events.push_back(event);
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Query alarm events failed: "
+                  << sqlite3_errmsg(m_db)
+                  << std::endl;
+    }
+
+    sqlite3_finalize(stmt);
+    return events;
 }
 
 bool PcDatabase::upsertGatewayStatus(const GatewayStatus& gateway)

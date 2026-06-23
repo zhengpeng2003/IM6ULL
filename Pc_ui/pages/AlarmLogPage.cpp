@@ -103,12 +103,15 @@ AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
 
     auto *actions = new QHBoxLayout;
     actions->setSpacing(10);
-    auto *ackAllButton = new QPushButton(QStringLiteral("确认告警"), this);
+    auto *ackAllButton = new QPushButton(QStringLiteral("确认警告"), this);
     ackAllButton->setObjectName(QStringLiteral("AlarmDangerOutlineButton"));
-    auto *clearButton = new QPushButton(QStringLiteral("清空已恢复告警"), this);
-    clearButton->setObjectName(QStringLiteral("AlarmSecondaryButton"));
+    auto *clearAckButton = new QPushButton(QStringLiteral("清空已确认警告"), this);
+    clearAckButton->setObjectName(QStringLiteral("AlarmSecondaryButton"));
+    auto *clearRecoveredButton = new QPushButton(QStringLiteral("清空已恢复警告"), this);
+    clearRecoveredButton->setObjectName(QStringLiteral("AlarmSecondaryButton"));
     actions->addWidget(ackAllButton);
-    actions->addWidget(clearButton);
+    actions->addWidget(clearAckButton);
+    actions->addWidget(clearRecoveredButton);
     actions->addStretch();
     panelLayout->addLayout(actions);
 
@@ -117,11 +120,12 @@ AlarmLogPage::AlarmLogPage(AlarmManager *alarm, QWidget *parent)
     if (m_alarm) {
         connect(m_alarm, &AlarmManager::alarmsChanged, this, &AlarmLogPage::refreshTable);
         connect(m_table, &AlarmTableWidget::acknowledgeRequested,
-                m_alarm, &AlarmManager::acknowledgeAlarm);
+                this, &AlarmLogPage::acknowledgeAlarmRequested);
     }
     connect(queryButton, &QPushButton::clicked, this, &AlarmLogPage::refreshTable);
     connect(ackAllButton, &QPushButton::clicked, this, &AlarmLogPage::acknowledgeVisibleActiveAlarms);
-    connect(clearButton, &QPushButton::clicked, this, &AlarmLogPage::clearRecoveredAlarms);
+    connect(clearAckButton, &QPushButton::clicked, this, &AlarmLogPage::clearAcknowledgedAlarms);
+    connect(clearRecoveredButton, &QPushButton::clicked, this, &AlarmLogPage::clearRecoveredAlarms);
     refreshTable();
 }
 
@@ -143,11 +147,15 @@ void AlarmLogPage::acknowledgeVisibleActiveAlarms()
     const QList<AlarmRecord> alarms = filteredAlarms();
     for (const AlarmRecord &alarm : alarms) {
         if (alarm.state == "active") {
-            m_alarm->acknowledgeAlarm(alarm.alarmId);
+            emit acknowledgeAlarmRequested(alarm.alarmId);
         }
     }
 
-    refreshTable();
+}
+
+void AlarmLogPage::clearAcknowledgedAlarms()
+{
+    emit clearAcknowledgedAlarmsRequested();
 }
 
 void AlarmLogPage::clearRecoveredAlarms()

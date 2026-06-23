@@ -1,9 +1,10 @@
 # core/gateway_state.py
 # -*- coding: utf-8 -*-
 
+import time
 from typing import Any, Dict, List, Optional
 
-from core.gateway_config import PortConfig, default_threshold_config, legacy_default_config
+from core.gateway_config import PortConfig, legacy_default_config
 
 
 def mock_device_name(slave_id: int) -> str:
@@ -40,6 +41,7 @@ class GatewayState:
                     device_type=dev.device_type,
                     poll_interval_ms=dev.poll_interval_ms,
                     threshold_config=dev.threshold_config,
+                    threshold_config_source="scenario" if dev.threshold_config is not None else "",
                     device_options=dev.device_options,
                 )
 
@@ -53,6 +55,7 @@ class GatewayState:
                     device_type=dev.device_type,
                     poll_interval_ms=dev.poll_interval_ms,
                     threshold_config=dev.threshold_config,
+                    threshold_config_source="scenario" if dev.threshold_config is not None else "",
                     device_options=dev.device_options,
                 )
 
@@ -71,14 +74,13 @@ class GatewayState:
         device_type: str = "sensor_th",
         poll_interval_ms: int = 1000,
         threshold_config: Optional[Dict[str, Any]] = None,
+        threshold_config_source: str = "",
         device_options: Optional[Dict[str, Any]] = None,
         port_id: Optional[str] = None,
     ):
         port_id, slave_id = self._port_slave(args, port_id, slave_id)
         if slave_id is None:
             return
-        if threshold_config is None:
-            threshold_config = default_threshold_config()
         if device_options is None:
             device_options = {}
 
@@ -107,10 +109,14 @@ class GatewayState:
             "status": "online",
             "comm_status": "online",
             "data_status": "normal",
-            "threshold_enabled": True,
-            "thresholdEnabled": True,
+            "threshold_enabled": bool(threshold_config),
+            "thresholdEnabled": bool(threshold_config),
             "threshold_config": threshold_config,
             "thresholdConfig": threshold_config,
+            "threshold_config_source": threshold_config_source if threshold_config is not None else "",
+            "thresholdConfigSource": threshold_config_source if threshold_config is not None else "",
+            "added_at": time.time(),
+            "alarm_scenario_state": {},
         }
         if device_type == "relay":
             relay_states = [False] * relay_channel_count

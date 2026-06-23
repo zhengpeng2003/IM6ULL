@@ -20,7 +20,7 @@ class AddDeviceHandler(BaseHandler):
         port_id = self.get_port_id(data, gateway.port_id_from_topic(topic) or gateway.default_port_id())
         device_type = self.get_device_type(data)
         poll_interval_ms = self.get_poll_interval_ms(data)
-        threshold_config = self.get_threshold_config(data)
+        threshold_config = self.get_threshold_config(data) if self.has_threshold_config(data) else None
         device_options = self.get_device_options(data)
 
         print(
@@ -67,8 +67,10 @@ class AddDeviceHandler(BaseHandler):
                 device_type=final_device_type,
                 poll_interval_ms=poll_interval_ms,
                 threshold_config=threshold_config,
+                threshold_config_source="add_device" if threshold_config is not None else "",
                 device_options=device_options,
             )
+            self.log_add_device_threshold(gateway, port_id, slave_id, final_device_type, threshold_config)
             gateway.publish_ack(
                 cmd="add_device",
                 seq=seq,
@@ -87,3 +89,18 @@ class AddDeviceHandler(BaseHandler):
             complete_success()
 
         return True
+
+    def log_add_device_threshold(self, gateway, port_id, slave_id, device_type, threshold_config):
+        prefix = (
+            f"[ADD_DEVICE_THRESHOLD] gateway={gateway.config.gatewayId} "
+            f"port={port_id} slave_id={slave_id} device_type={device_type}"
+        )
+        if not isinstance(threshold_config, dict):
+            if slave_id in {9, 10}:
+                print(f"{prefix} threshold_enabled=false thresholds=null")
+            return
+
+        enabled = bool(threshold_config.get("threshold_enabled", threshold_config.get("thresholdEnabled", False)))
+        thresholds = threshold_config.get("thresholds")
+        if slave_id in {9, 10}:
+            print(f"{prefix} threshold_enabled={str(enabled).lower()} thresholds={thresholds}")

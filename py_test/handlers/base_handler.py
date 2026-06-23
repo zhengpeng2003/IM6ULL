@@ -107,19 +107,69 @@ class BaseHandler:
         except Exception:
             return 1000
 
-    def get_threshold_config(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def has_threshold_config(self, data: Dict[str, Any]) -> bool:
+        if self._raw_threshold_config(data) is not None:
+            return True
+        if "threshold_enabled" in data or "thresholdEnabled" in data:
+            return True
+        payload = data.get("payload")
+        return isinstance(payload, dict) and ("threshold_enabled" in payload or "thresholdEnabled" in payload)
+
+    def get_threshold_config(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raw = self._raw_threshold_config(data)
+        if raw is None:
+            return None
+        return self.normalize_threshold_config(raw)
+
+    def _raw_threshold_config(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         device = data.get("device")
 
         if isinstance(device, dict):
+            thresholds = device.get("thresholds")
+            if isinstance(thresholds, dict):
+                return {
+                    "threshold_enabled": device.get("threshold_enabled", device.get("thresholdEnabled", True)),
+                    "thresholdEnabled": device.get("thresholdEnabled", device.get("threshold_enabled", True)),
+                    "thresholds": thresholds,
+                }
             cfg = device.get("threshold_config") or device.get("thresholdConfig")
             if isinstance(cfg, dict):
-                return self.normalize_threshold_config(cfg)
+                return cfg
 
         cfg = data.get("threshold_config") or data.get("thresholdConfig")
         if isinstance(cfg, dict):
-            return self.normalize_threshold_config(cfg)
+            return cfg
 
-        return self.default_threshold_config()
+        thresholds = data.get("thresholds")
+        if isinstance(thresholds, dict):
+            return {
+                "threshold_enabled": data.get("threshold_enabled", data.get("thresholdEnabled", True)),
+                "thresholdEnabled": data.get("thresholdEnabled", data.get("threshold_enabled", True)),
+                "thresholds": thresholds,
+            }
+
+        payload = data.get("payload")
+        if isinstance(payload, dict):
+            thresholds = payload.get("thresholds")
+            if isinstance(thresholds, dict):
+                return {
+                    "threshold_enabled": payload.get("threshold_enabled", payload.get("thresholdEnabled", True)),
+                    "thresholdEnabled": payload.get("thresholdEnabled", payload.get("threshold_enabled", True)),
+                    "thresholds": thresholds,
+                }
+            cfg = payload.get("threshold_config") or payload.get("thresholdConfig")
+            if isinstance(cfg, dict):
+                return cfg
+
+        if "threshold_enabled" in data or "thresholdEnabled" in data:
+            enabled = data.get("threshold_enabled", data.get("thresholdEnabled", False))
+            return {"threshold_enabled": enabled, "thresholdEnabled": enabled, "thresholds": {}}
+
+        if isinstance(payload, dict) and ("threshold_enabled" in payload or "thresholdEnabled" in payload):
+            enabled = payload.get("threshold_enabled", payload.get("thresholdEnabled", False))
+            return {"threshold_enabled": enabled, "thresholdEnabled": enabled, "thresholds": {}}
+
+        return None
 
     def get_device_options(self, data: Dict[str, Any]) -> Dict[str, Any]:
         device = data.get("device")
@@ -147,32 +197,39 @@ class BaseHandler:
         }
         """
         if "thresholds" in cfg and isinstance(cfg["thresholds"], dict):
-            return cfg
+            normalized = dict(cfg)
+            enabled = bool(cfg.get("threshold_enabled", cfg.get("thresholdEnabled", True)))
+            normalized["threshold_enabled"] = enabled
+            normalized["thresholdEnabled"] = enabled
+            return normalized
 
         enable = bool(cfg.get("enable", cfg.get("enable_alarm", cfg.get("enableAlarm", True))))
-        temp_high = float(cfg.get("temp_high", cfg.get("tempHigh", cfg.get("alarm_high", 35.0))))
-        humi_high = float(cfg.get("humi_high", cfg.get("humiHigh", 80.0)))
-
-        return {
-            "thresholds": {
-                "temperature": {
-                    "enable_alarm": enable,
-                    "enableAlarm": enable,
-                    "alarm_low": 0.0,
-                    "alarmLow": 0.0,
-                    "alarm_high": temp_high,
-                    "alarmHigh": temp_high,
-                },
-                "humidity": {
-                    "enable_alarm": enable,
-                    "enableAlarm": enable,
-                    "alarm_low": 0.0,
-                    "alarmLow": 0.0,
-                    "alarm_high": humi_high,
-                    "alarmHigh": humi_high,
-                },
-            }
+        threshold_enabled = bool(cfg.get("threshold_enabled", cfg.get("thresholdEnabled", True)))
+        result = {
+            "threshold_enabled": threshold_enabled,
+            "thresholdEnabled": threshold_enabled,
+            "thresholds": {},
         }
+
+        if any(key in cfg for key in ["temp_high", "tempHigh", "alarm_high", "alarmHigh"]):
+            temp_high = float(cfg.get("temp_high", cfg.get("tempHigh", cfg.get("alarm_high", cfg.get("alarmHigh")))))
+            result["thresholds"]["temperature"] = {
+                "enable_alarm": enable,
+                "enableAlarm": enable,
+                "alarm_high": temp_high,
+                "alarmHigh": temp_high,
+            }
+
+        if any(key in cfg for key in ["humi_high", "humiHigh"]):
+            humi_high = float(cfg.get("humi_high", cfg.get("humiHigh")))
+            result["thresholds"]["humidity"] = {
+                "enable_alarm": enable,
+                "enableAlarm": enable,
+                "alarm_high": humi_high,
+                "alarmHigh": humi_high,
+            }
+
+        return result
 
     def default_threshold_config(self) -> Dict[str, Any]:
         return {

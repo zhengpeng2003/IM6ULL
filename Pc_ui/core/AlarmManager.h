@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include "model/AlarmModel.h"
 
@@ -15,6 +16,7 @@ public:
 
 public slots:
     void onAlarmMessage(const QJsonObject &obj);
+    void onAlarmSnapshot(const QJsonArray &alarms);
     void acknowledgeAlarm(const QString &alarmId);
     void recoverAlarm(const QString &alarmId);
     void removeDeviceAlarms(const QString &gatewayId, const QString &portId, int deviceId);

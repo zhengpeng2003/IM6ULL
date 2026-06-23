@@ -215,6 +215,15 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     target.insert(QStringLiteral("gatewayId"), gatewayId);
     target.insert(QStringLiteral("portId"), portId);
 
+    QVariantMap cleanDeviceOptions = deviceOptions;
+    const bool thresholdEnabled =
+        cleanDeviceOptions.contains(QStringLiteral("threshold_enabled"))
+            ? cleanDeviceOptions.take(QStringLiteral("threshold_enabled")).toBool()
+            : false;
+    const QVariant thresholdsValue = cleanDeviceOptions.take(QStringLiteral("thresholds"));
+    const QJsonObject thresholds = QJsonObject::fromVariantMap(thresholdsValue.toMap());
+    const bool hasThresholds = thresholdEnabled && !thresholds.isEmpty();
+
     QJsonObject device;
     device.insert(QStringLiteral("slave_id"), deviceId);
     device.insert(QStringLiteral("deviceId"), deviceId);
@@ -223,8 +232,8 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     device.insert(QStringLiteral("deviceType"), deviceType);
     device.insert(QStringLiteral("poll_interval_ms"), pollIntervalMs);
     device.insert(QStringLiteral("pollIntervalMs"), pollIntervalMs);
-    if (!deviceOptions.isEmpty()) {
-        device.insert(QStringLiteral("device_options"), QJsonObject::fromVariantMap(deviceOptions));
+    if (!cleanDeviceOptions.isEmpty()) {
+        device.insert(QStringLiteral("device_options"), QJsonObject::fromVariantMap(cleanDeviceOptions));
     }
 
     QJsonObject payload;
@@ -235,6 +244,10 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     payload.insert(QStringLiteral("deviceType"), deviceType);
     payload.insert(QStringLiteral("poll_interval_ms"), pollIntervalMs);
     payload.insert(QStringLiteral("pollIntervalMs"), pollIntervalMs);
+    if (hasThresholds) {
+        payload.insert(QStringLiteral("threshold_enabled"), true);
+        payload.insert(QStringLiteral("thresholds"), thresholds);
+    }
 
     QJsonObject obj;
     obj.insert(QStringLiteral("type"), QStringLiteral("command"));
@@ -254,6 +267,10 @@ void CommandManager::sendAddDeviceCommand(const QString &gatewayId, const QStrin
     obj.insert(QStringLiteral("deviceId"), deviceId);
     obj.insert(QStringLiteral("deviceType"), deviceType);
     obj.insert(QStringLiteral("slave_id"), deviceId);
+    if (hasThresholds) {
+        obj.insert(QStringLiteral("threshold_enabled"), true);
+        obj.insert(QStringLiteral("thresholds"), thresholds);
+    }
     obj.insert(QStringLiteral("payload"), payload);
 
     m_pending.insert(rec.cmdId, rec);
