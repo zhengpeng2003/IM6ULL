@@ -195,12 +195,14 @@ void TrendPage::refreshPointTree()
         return;
     }
 
-    m_tree->setRealtimeDevices(m_data->allRealtimeData(), true);
-    if (m_data->allRealtimeData().isEmpty()) {
+    const QList<RealtimeDeviceData> realtimeDevices = m_stateStore
+        ? m_stateStore->realtimeDataSnapshot()
+        : QList<RealtimeDeviceData>();
+    m_tree->setRealtimeDevices(realtimeDevices, true);
+    if (realtimeDevices.isEmpty()) {
         clearCurrentSelection(QStringLiteral("暂无可用测点"));
     }
 }
-
 void TrendPage::onPointSelected(const QString &pointId, const QString &deviceKey, const QString &pointName, const QString &unit)
 {
     m_currentPointId = pointId;

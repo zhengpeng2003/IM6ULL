@@ -45,6 +45,11 @@ public:
 
     QList<DeviceState> deviceStates() const;
     DeviceState deviceState(const QString &deviceKey) const;
+    QList<DeviceNode> deviceTreeSnapshot() const;
+    QList<RealtimeDeviceData> realtimeDataSnapshot() const;
+    RealtimeDeviceData realtimeData(const QString &deviceKey) const;
+    QList<GatewayNode> gatewaySnapshot() const;
+    QList<PortNode> portSnapshot() const;
     int onlineGatewayCount() const;
     int onlineDeviceCount() const;
     int onlineMasterCount() const;
@@ -58,6 +63,7 @@ private:
     QList<GatewayNode> parseGatewayStatusSnapshot(const QJsonObject &root) const;
     QList<PortNode> parsePortStatusSnapshot(const QJsonObject &root) const;
     void rebuildStateMirror(const QString &source);
+    void scheduleStateChanged();
     QString lifecycleFor(const DeviceState &state) const;
 
 private:
@@ -65,4 +71,5 @@ private:
     DeviceManager *m_deviceManager = nullptr;
     AlarmManager *m_alarmManager = nullptr;
     QHash<QString, DeviceState> m_devices;
+    bool m_stateChangePending = false;
 };

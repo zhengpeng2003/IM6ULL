@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QSet>
+#include <QTimer>
 
 UiStateStore::UiStateStore(DataManager *dataManager,
                            DeviceManager *deviceManager,
@@ -21,9 +22,9 @@ UiStateStore::UiStateStore(DataManager *dataManager,
 {
     if (m_alarmManager) {
         connect(m_alarmManager, &AlarmManager::alarmsChanged,
-                this, &UiStateStore::stateChanged);
+                this, &UiStateStore::scheduleStateChanged);
         connect(m_alarmManager, &AlarmManager::activeAlarmCountChanged,
-                this, [this](int) { emit stateChanged(); });
+                this, [this](int) { scheduleStateChanged(); });
     }
 }
 
@@ -38,8 +39,8 @@ bool UiStateStore::applyIpcMessage(const QJsonObject &root)
             m_dataManager->onLatestPointsMessage(root);
         }
         rebuildStateMirror(type);
-        qDebug() << "[DBG_UI_STATE] UiStateStore latest_points emit stateChanged";
-        emit stateChanged();
+        qDebug() << "[DBG_UI_STATE] UiStateStore latest_points schedule stateChanged";
+        scheduleStateChanged();
         return true;
     }
 
@@ -50,7 +51,7 @@ bool UiStateStore::applyIpcMessage(const QJsonObject &root)
             m_dataManager->onDevicesSnapshotMessage(root);
         }
         rebuildStateMirror(type);
-        emit stateChanged();
+        scheduleStateChanged();
         return true;
     }
 
@@ -59,7 +60,7 @@ bool UiStateStore::applyIpcMessage(const QJsonObject &root)
             m_deviceManager->setGateways(parseGatewayStatusSnapshot(root));
         }
         rebuildStateMirror(type);
-        emit stateChanged();
+        scheduleStateChanged();
         return true;
     }
 
@@ -68,7 +69,7 @@ bool UiStateStore::applyIpcMessage(const QJsonObject &root)
             m_deviceManager->setPorts(parsePortStatusSnapshot(root));
         }
         rebuildStateMirror(type);
-        emit stateChanged();
+        scheduleStateChanged();
         return true;
     }
 
@@ -85,7 +86,7 @@ void UiStateStore::refreshOfflineStates(qint64 timeoutMs)
         return;
     }
     rebuildStateMirror(QStringLiteral("offline_refresh"));
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 void UiStateStore::markAllDevicesOffline(const QString &reason)
@@ -94,7 +95,7 @@ void UiStateStore::markAllDevicesOffline(const QString &reason)
         m_dataManager->markAllDevicesOffline(reason);
     }
     rebuildStateMirror(reason);
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 void UiStateStore::removeDeviceData(const QString &gatewayId, const QString &portId, int deviceId)
@@ -103,7 +104,7 @@ void UiStateStore::removeDeviceData(const QString &gatewayId, const QString &por
         m_dataManager->removeDeviceData(gatewayId, portId, deviceId);
     }
     rebuildStateMirror(QStringLiteral("remove_device"));
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 void UiStateStore::removeMasterData(const QString &gatewayId, const QString &portId)
@@ -112,7 +113,7 @@ void UiStateStore::removeMasterData(const QString &gatewayId, const QString &por
         m_dataManager->removeMasterData(gatewayId, portId);
     }
     rebuildStateMirror(QStringLiteral("remove_master"));
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 void UiStateStore::forgetRemovedDevice(const QString &gatewayId, const QString &portId, int deviceId)
@@ -121,7 +122,7 @@ void UiStateStore::forgetRemovedDevice(const QString &gatewayId, const QString &
         m_dataManager->forgetRemovedDevice(gatewayId, portId, deviceId);
     }
     rebuildStateMirror(QStringLiteral("forget_removed_device"));
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 void UiStateStore::clearRuntimeData()
@@ -130,7 +131,7 @@ void UiStateStore::clearRuntimeData()
         m_dataManager->clearRuntimeData();
     }
     rebuildStateMirror(QStringLiteral("clear_runtime_data"));
-    emit stateChanged();
+    scheduleStateChanged();
 }
 
 QList<DeviceState> UiStateStore::deviceStates() const
@@ -141,6 +142,49 @@ QList<DeviceState> UiStateStore::deviceStates() const
 DeviceState UiStateStore::deviceState(const QString &deviceKey) const
 {
     return m_devices.value(deviceKey);
+}
+
+QList<DeviceNode> UiStateStore::deviceTreeSnapshot() const
+{
+    QList<DeviceNode> devices;
+    for (const DeviceState &state : m_devices) {
+        if (state.node.gatewayId.isEmpty() ||
+            state.node.port.isEmpty() ||
+            state.node.deviceId <= 0) {
+            continue;
+        }
+        devices.append(state.node);
+    }
+    return devices;
+}
+
+QList<RealtimeDeviceData> UiStateStore::realtimeDataSnapshot() const
+{
+    QList<RealtimeDeviceData> realtimeDevices;
+    for (const DeviceState &state : m_devices) {
+        if (state.realtime.node.gatewayId.isEmpty() ||
+            state.realtime.node.port.isEmpty() ||
+            state.realtime.node.deviceId <= 0) {
+            continue;
+        }
+        realtimeDevices.append(state.realtime);
+    }
+    return realtimeDevices;
+}
+
+RealtimeDeviceData UiStateStore::realtimeData(const QString &deviceKey) const
+{
+    return m_devices.value(deviceKey).realtime;
+}
+
+QList<GatewayNode> UiStateStore::gatewaySnapshot() const
+{
+    return m_deviceManager ? m_deviceManager->allGateways() : QList<GatewayNode>();
+}
+
+QList<PortNode> UiStateStore::portSnapshot() const
+{
+    return m_deviceManager ? m_deviceManager->allPorts() : QList<PortNode>();
 }
 
 int UiStateStore::onlineGatewayCount() const
@@ -289,6 +333,19 @@ void UiStateStore::rebuildStateMirror(const QString &source)
     }
 
     m_devices = next;
+}
+
+void UiStateStore::scheduleStateChanged()
+{
+    if (m_stateChangePending) {
+        return;
+    }
+
+    m_stateChangePending = true;
+    QTimer::singleShot(50, this, [this]() {
+        m_stateChangePending = false;
+        emit stateChanged();
+    });
 }
 
 QString UiStateStore::lifecycleFor(const DeviceState &state) const

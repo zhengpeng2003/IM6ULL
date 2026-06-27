@@ -219,20 +219,19 @@ DeviceConfigPage::DeviceConfigPage(DeviceManager *device, ConfigManager *config,
         connect(m_device, &DeviceManager::portStatusChanged,
                 this, &DeviceConfigPage::scheduleRefreshTables);
         connect(m_device, &DeviceManager::deviceOnlineStateChanged,
-                this, [this](const QString &, bool) { refreshRealtimeColumns(); });
+                this, [this](const QString &, bool) { scheduleRefreshTables(); });
     }
-    if (m_dataManager) {
-        connect(m_dataManager, &DataManager::deviceTreeChanged,
-                this, &DeviceConfigPage::scheduleRefreshTables);
-        connect(m_dataManager, &DataManager::realtimeDataUpdated,
+    if (m_stateStore) {
+        connect(m_stateStore, &UiStateStore::stateChanged,
                 this, [this]() {
+            scheduleRefreshTables();
             if (isVisible()) {
                 refreshRealtimeColumns();
             }
         });
     }
 
-    // DeviceManager owns structure changes. DataManager owns realtime cache updates.
+    // DeviceManager owns command/config side effects. UiStateStore owns UI snapshots.
 
     refreshTables();
 }
@@ -275,7 +274,7 @@ void DeviceConfigPage::hideEvent(QHideEvent *event)
 void DeviceConfigPage::refreshTables()
 {
     m_refreshDirty = false;
-    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
+    const QList<DeviceNode> devices = m_stateStore ? m_stateStore->deviceTreeSnapshot() : QList<DeviceNode>();
     const QList<MasterRow> masters = buildMasterRows();
     refreshGatewayPortCombos(masters);
     const QList<DeviceNode> visibleDevices = filterSlaveDevices(devices);
@@ -337,11 +336,11 @@ void DeviceConfigPage::refreshTables()
 
 void DeviceConfigPage::refreshRealtimeColumns()
 {
-    if (!m_slaveTable || !m_dataManager) {
+    if (!m_slaveTable || !m_stateStore) {
         return;
     }
 
-    const QList<DeviceNode> devices = m_dataManager->deviceTreeSnapshot();
+    const QList<DeviceNode> devices = m_stateStore->deviceTreeSnapshot();
     int updatedRows = 0;
     for (const DeviceNode &device : devices) {
         const int row = m_slaveRowByDeviceKey.value(device.key(), -1);
@@ -349,9 +348,7 @@ void DeviceConfigPage::refreshRealtimeColumns()
             continue;
         }
 
-        const RealtimeDeviceData realtime = m_dataManager
-            ? m_dataManager->deviceData(device.key())
-            : RealtimeDeviceData();
+        const RealtimeDeviceData realtime = m_stateStore->realtimeData(device.key());
         const bool hasRealtimeNode = !realtime.node.gatewayId.isEmpty() &&
                                      !realtime.node.port.isEmpty() &&
                                      realtime.node.deviceId > 0;
@@ -374,9 +371,9 @@ void DeviceConfigPage::refreshRealtimeColumns()
 QList<DeviceConfigPage::MasterRow> DeviceConfigPage::buildMasterRows() const
 {
     QMap<QString, MasterRow> rows;
-    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
-    const QList<GatewayNode> gateways = m_dataManager ? m_dataManager->gatewaySnapshot() : QList<GatewayNode>();
-    const QList<PortNode> ports = m_dataManager ? m_dataManager->portSnapshot() : QList<PortNode>();
+    const QList<DeviceNode> devices = m_stateStore ? m_stateStore->deviceTreeSnapshot() : QList<DeviceNode>();
+    const QList<GatewayNode> gateways = m_stateStore ? m_stateStore->gatewaySnapshot() : QList<GatewayNode>();
+    const QList<PortNode> ports = m_stateStore ? m_stateStore->portSnapshot() : QList<PortNode>();
     QMap<QString, GatewayNode> gatewayMap;
 
     for (const GatewayNode &gateway : gateways) {
@@ -584,8 +581,8 @@ void DeviceConfigPage::addDeleteButton(QTableWidget *table, int row, bool master
         button->setToolTip(QStringLiteral("该从站删除命令正在执行，请在命令任务中查看进度"));
     }
     bool serviceOffline = false;
-    if (m_dataManager) {
-        const QList<DeviceNode> devices = m_dataManager->deviceTreeSnapshot();
+    if (m_stateStore) {
+        const QList<DeviceNode> devices = m_stateStore->deviceTreeSnapshot();
         for (const DeviceNode &node : devices) {
             if (node.gatewayId != gatewayId || (!portId.isEmpty() && node.port != portId)) {
                 continue;
@@ -660,10 +657,10 @@ bool DeviceConfigPage::isFinishedCommandState(const QString &state) const
 
 QString DeviceConfigPage::realtimeTemperatureText(const QString &deviceKey) const
 {
-    if (!m_dataManager) {
+    if (!m_stateStore) {
         return QStringLiteral("-");
     }
-    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    const RealtimeDeviceData data = m_stateStore->realtimeData(deviceKey);
     if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("sensor_th")) {
         return QStringLiteral("-");
     }
@@ -672,10 +669,10 @@ QString DeviceConfigPage::realtimeTemperatureText(const QString &deviceKey) cons
 
 QString DeviceConfigPage::realtimeHumidityText(const QString &deviceKey) const
 {
-    if (!m_dataManager) {
+    if (!m_stateStore) {
         return QStringLiteral("-");
     }
-    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    const RealtimeDeviceData data = m_stateStore->realtimeData(deviceKey);
     if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("sensor_th")) {
         return QStringLiteral("-");
     }
@@ -684,10 +681,10 @@ QString DeviceConfigPage::realtimeHumidityText(const QString &deviceKey) const
 
 QString DeviceConfigPage::realtimeRelayText(const QString &deviceKey) const
 {
-    if (!m_dataManager) {
+    if (!m_stateStore) {
         return QStringLiteral("-");
     }
-    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    const RealtimeDeviceData data = m_stateStore->realtimeData(deviceKey);
     if (data.points.isEmpty() || data.node.deviceType != QStringLiteral("relay")) {
         return QStringLiteral("-");
     }
@@ -700,10 +697,10 @@ QString DeviceConfigPage::realtimeRelayText(const QString &deviceKey) const
 
 QString DeviceConfigPage::realtimeSourceText(const QString &deviceKey) const
 {
-    if (!m_dataManager) {
+    if (!m_stateStore) {
         return QStringLiteral("设备表");
     }
-    const RealtimeDeviceData data = m_dataManager->deviceData(deviceKey);
+    const RealtimeDeviceData data = m_stateStore->realtimeData(deviceKey);
     return data.points.isEmpty() ? QStringLiteral("设备表") : QStringLiteral("实时缓存");
 }
 
@@ -894,7 +891,7 @@ void DeviceConfigPage::onCommandTargetStateChanged(const QString &cmdId, const Q
 
 void DeviceConfigPage::showSyncConfigDialog()
 {
-    const QList<DeviceNode> devices = m_dataManager ? m_dataManager->deviceTreeSnapshot() : QList<DeviceNode>();
+    const QList<DeviceNode> devices = m_stateStore ? m_stateStore->deviceTreeSnapshot() : QList<DeviceNode>();
     if (devices.isEmpty()) {
         QMessageBox::information(this,
                                  QStringLiteral("配置同步"),

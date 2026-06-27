@@ -162,7 +162,7 @@ void MonitorPage::showEvent(QShowEvent *event)
 void MonitorPage::refreshDeviceTree()
 {
     m_treeRefreshDirty = false;
-    const QList<DeviceNode> devices = m_data->deviceTreeSnapshot();
+    const QList<DeviceNode> devices = m_stateStore ? m_stateStore->deviceTreeSnapshot() : QList<DeviceNode>();
     qDebug() << "[DBG_PAGE] MonitorPage refreshDeviceTree executed deviceCount:"
              << devices.size()
              << "currentKey:" << m_currentKey;
@@ -201,9 +201,9 @@ void MonitorPage::refreshDetail()
     m_detailRefreshDirty = false;
     qDebug() << "[DBG_PAGE] MonitorPage refreshDetail executed currentKey:"
              << m_currentKey
-             << "deviceCount:" << m_data->deviceTreeSnapshot().size();
+             << "deviceCount:" << (m_stateStore ? m_stateStore->deviceTreeSnapshot().size() : 0);
     if (m_currentKey.isEmpty()) {
-        if (m_data->deviceTreeSnapshot().isEmpty()) {
+        if (!m_stateStore || m_stateStore->deviceTreeSnapshot().isEmpty()) {
             m_emptyCard->setMessage(QStringLiteral("未收到 Pc_data 数据"));
         } else {
             m_emptyCard->setMessage(QStringLiteral("请选择左侧设备"));
@@ -212,7 +212,7 @@ void MonitorPage::refreshDetail()
         return;
     }
 
-    const auto d = m_data->deviceData(m_currentKey);
+    const auto d = m_stateStore ? m_stateStore->realtimeData(m_currentKey) : RealtimeDeviceData();
     const auto &n = d.node;
     if (n.factoryId.isEmpty()) {
         m_emptyCard->setMessage(QStringLiteral("当前设备暂无实时数据"));
@@ -241,7 +241,7 @@ void MonitorPage::refreshRelayPendingState()
         return;
     }
 
-    const RealtimeDeviceData data = m_data->deviceData(m_currentKey);
+    const RealtimeDeviceData data = m_stateStore ? m_stateStore->realtimeData(m_currentKey) : RealtimeDeviceData();
     if (data.node.deviceType != QStringLiteral("relay")) {
         return;
     }

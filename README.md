@@ -288,7 +288,7 @@ Python Mock / Linux_data
         │
         │  MQTT JSON 按行/单包消息
         ▼
-EMQX Broker
+EMQX Broker本机
 127.0.0.1:1883
         │
         ▼

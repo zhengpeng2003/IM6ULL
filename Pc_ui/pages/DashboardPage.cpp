@@ -228,8 +228,8 @@ void DashboardPage::showEvent(QShowEvent *event)
 void DashboardPage::refreshView()
 {
     m_refreshDirty = false;
-    const auto devices = m_data ? m_data->deviceTreeSnapshot() : QList<DeviceNode>();
-    const bool serviceOnline = m_data ? m_data->isServiceOnline() : false;
+    const auto devices = m_stateStore ? m_stateStore->deviceTreeSnapshot() : QList<DeviceNode>();
+    const bool serviceOnline = m_stateStore ? m_stateStore->isServiceOnline() : false;
     QSet<QString> gateways, masters;
     QSet<QString> onlineMasters;
     QHash<QString, int> masterDeviceCounts;
@@ -268,7 +268,7 @@ void DashboardPage::refreshView()
         m_alarmTable->setItem(i, 3, readonlyItem(alarms[i].state));
     }
 
-    const auto realtimeDevices = m_data ? m_data->allRealtimeData() : QList<RealtimeDeviceData>();
+    const auto realtimeDevices = m_stateStore ? m_stateStore->realtimeDataSnapshot() : QList<RealtimeDeviceData>();
     int errorCount = 0;
     for (const auto &device : realtimeDevices) {
         if (!device.valid || device.dataState == QStringLiteral("stale") ||
@@ -310,7 +310,7 @@ void DashboardPage::refreshTrendChart()
     }
 
     m_trendSeries->clear();
-    const auto realtimeDevices = m_data ? m_data->allRealtimeData() : QList<RealtimeDeviceData>();
+    const auto realtimeDevices = m_stateStore ? m_stateStore->realtimeDataSnapshot() : QList<RealtimeDeviceData>();
 
     double minValue = 0.0;
     double maxValue = 0.0;

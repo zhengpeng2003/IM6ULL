@@ -1,6 +1,6 @@
 #ifndef PC_UI_PUBLISHER_HPP
 #define PC_UI_PUBLISHER_HPP
-
+//PC前端发pull数据的处理
 class IpcServer;
 class PcDataService;
 class PcDatabase;

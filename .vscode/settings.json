@@ -123,5 +123,6 @@
         "xtr1common": "cpp",
         "xtree": "cpp",
         "xutility": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "S:/QT_object/IM6ULL_git/Pc_ui"
 }
